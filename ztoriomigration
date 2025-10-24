@@ -1,0 +1,52 @@
+---
+name: Migrating ZTORIO token from ZTORIO/SOL to ZTORIO/ZC pair
+about: Request to migrate ZTORIO liquidity from the ZTORIO/SOL pair to a new ZTORIO/ZC pair, re-deploy liquidity, and ensure a seamless transition for holders.
+title: '[Ztorio migration] Migrate liquidity to ZC pair'
+labels: 'work-request, ztorio-migration'
+---
+
+# Work Request
+
+**Note**: Use this for work requiring team access (permissioned protocol access, migrations, fee changes, etc.). If you're submitting code yourself, use "Code Contribution" instead.
+
+## What Should Be Built
+
+1. Remove liquidity from the current ZTORIO/SOL pool.
+2. Create a new liquidity pool for ZTORIO/ZC.
+3. Re-deploy the liquidity into the ZTORIO/ZC pool.
+4. If required, distribute migration compensation (airdrop or equivalent) to ensure holders remain unaffected.
+
+
+## Why Does This Matter?
+
+**Impact on the project:**
+
+Strengthens ZC as the base coordination asset
+
+Gives Ztorio a clearer role as cultural + narrative liquidity
+
+Creates a self-reinforcing internal market loop
+**Who benefits:**
+ztorio and zc
+
+**Expected outcome:**
+Seamless migration with no action required from holders.
+
+## Supporting Evidence
+
+**User demand / Data / Research:**
+<!-- Links to Discord feedback, similar projects, metrics, etc. -->
+
+
+---
+
+## Checklist
+
+- [v] Clear description of what to build
+- [v] Explained why this matters
+- [v] Provided supporting evidence
+- [v] Read [CONTRIBUTING.md](../../CONTRIBUTING.md)
+
+---
+
+**Note**: The ZC team currently reviews and prioritizes work requests. In the future, decision markets will determine which requests get built and rewards.
