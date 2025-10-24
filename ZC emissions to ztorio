@@ -1,0 +1,62 @@
+---
+name: ZC emissions to Ztorio
+about: 
+title: '[WORK REQUEST] Continuous ZC emissions to power Ztorio onboarding & contribution incentives'
+labels: work-request, ztorio, incentives
+---
+
+# Work Request
+
+We request the creation of a **continuous ZC token emission stream allocated to the Ztorio project.
+These emissions will be used to reward contributors, incentivize onboarding new developers, and fund ZC-aligned build activity happening inside the Ztorio coordination layer.
+
+This is an ongoing structured mechanism tied to measurable ecosystem growth.
+
+
+## What Should Be Built?
+
+1. Establish a ZC → Ztorio emissions allocation
+2. Ztorio will operate an engine that distributes ZC to:
+   - Bounty hunters bringing new high-quality devs into ZC
+   - Builders making code contributions / PRs across ZC ecosystem repos in ztorio area
+   - Community rewards
+   - Fund ztorio build activities
+
+
+## Why Does This Matter?
+
+Impact on the project:
+- Converts Ztorio into an active coordination layer that systematically pulls talent/new devs into ZC.
+- Aligns memetic energy with production energy.
+- Reduces onboarding friction and turns community “hype” into actual effort.
+
+**Who benefits:**
+- ZC protocol (more contributors & faster iteration)
+- New devs (clear path + incentives)
+- Ztorio holders (memetic power gains purpose)
+- The ecosystem (network effect of builders onboarding builders)
+
+
+## Expected outcome:
+
+- Continuous inflow of new developers into ZC via Ztorio bounty network.
+- Measurable increase in PRs, code review activity, and shipped features.
+
+## Supporting Evidence
+
+
+- Ztorio manually onboarding —> emissions allow scaling
+
+
+---
+
+## Checklist
+
+- [v] Clear description of what to build
+- [v] Explained why this matters
+- [v] Provided supporting evidence
+- [v] Read CONTRIBUTING.md
+
+---
+
+**Note:** When decision markets (Percent Markets) go live, they can be plugged directly into this flow to govern emissions distribution.
