@@ -1,0 +1,282 @@
+---
+title: "Get Presale Claim Info"
+description: "GET /presale/:tokenAddress/claims/:wallet - Get vesting schedule and claimable token amounts"
+---
+
+## Overview
+
+Retrieves comprehensive vesting information for a wallet's presale allocation, including total allocation, vested amounts, claimed amounts, and currently claimable tokens. This endpoint calculates vesting based on the presale launch time and vesting schedule.
+
+<CodeGroup>
+
+```bash curl
+curl -X GET "https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/claims/9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+```
+
+```javascript fetch
+const tokenAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const wallet = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+
+const response = await fetch(
+  `https://api.zcombinator.io/presale/${tokenAddress}/claims/${wallet}`
+);
+
+const vestingInfo = await response.json();
+```
+
+```python requests
+import requests
+
+token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+wallet = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+
+response = requests.get(
+    f'https://api.zcombinator.io/presale/{token_address}/claims/{wallet}'
+)
+
+vesting_info = response.json()
+```
+
+</CodeGroup>
+
+## URL Parameters
+
+<ParamField path="tokenAddress" type="string" required>
+  The Solana token mint address of the presale
+</ParamField>
+
+<ParamField path="wallet" type="string" required>
+  Base58 encoded public key of the wallet to check vesting for
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the operation was successful
+</ResponseField>
+
+<ResponseField name="totalAllocated" type="string">
+  Total tokens allocated to this wallet based on their presale contribution
+</ResponseField>
+
+<ResponseField name="totalVested" type="string">
+  Amount of tokens that have vested so far according to the vesting schedule
+</ResponseField>
+
+<ResponseField name="totalClaimed" type="string">
+  Amount of tokens already claimed by this wallet
+</ResponseField>
+
+<ResponseField name="claimableAmount" type="string">
+  Amount of tokens currently available to claim (vested minus claimed)
+</ResponseField>
+
+<ResponseField name="nextUnlockTime" type="string">
+  ISO 8601 timestamp of when the next vesting unlock occurs (null if fully vested)
+</ResponseField>
+
+<ResponseField name="vestingProgress" type="number">
+  Percentage of tokens that have vested (0-100)
+</ResponseField>
+
+<ResponseField name="launchTime" type="string">
+  ISO 8601 timestamp of when the presale was launched
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "totalAllocated": "1000000",
+  "totalVested": "500000",
+  "totalClaimed": "250000",
+  "claimableAmount": "250000",
+  "nextUnlockTime": "2024-02-15T10:30:00.000Z",
+  "vestingProgress": 50,
+  "launchTime": "2024-01-15T10:30:00.000Z"
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Missing Parameters">
+    ```json
+    {
+      "success": false,
+      "error": "Token address and wallet are required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Invalid Token Address">
+    ```json
+    {
+      "success": false,
+      "error": "Invalid token address format"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Invalid Wallet Address">
+    ```json
+    {
+      "success": false,
+      "error": "Invalid wallet address format"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Presale Not Launched">
+    ```json
+    {
+      "success": false,
+      "error": "Presale not launched yet"
+    }
+    ```
+
+    The presale must be launched before vesting information is available.
+  </Accordion>
+
+  <Accordion title="404 - No Allocation">
+    ```json
+    {
+      "success": false,
+      "error": "No allocation found for this wallet"
+    }
+    ```
+
+    This wallet did not contribute to the presale or has no allocation.
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "success": false,
+      "error": "Failed to fetch claim info"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Vesting Mechanics
+
+The vesting system operates on a time-based unlock schedule:
+
+### Vesting Schedule
+- **Immediate Unlock**: Percentage of tokens available immediately at launch
+- **Linear Vesting**: Remaining tokens unlock linearly over time
+- **Unlock Periods**: Tokens unlock at regular intervals (typically daily or weekly)
+
+### Calculation Logic
+The vesting calculation follows these steps:
+
+<Steps>
+<Step title="Get Total Allocation">
+Calculates total tokens allocated based on the wallet's presale contribution
+</Step>
+
+<Step title="Calculate Time Elapsed">
+Determines how much time has passed since presale launch
+</Step>
+
+<Step title="Calculate Vested Amount">
+Applies vesting schedule to determine how many tokens have unlocked
+</Step>
+
+<Step title="Subtract Claimed">
+Deducts already-claimed tokens to get the claimable amount
+</Step>
+
+<Step title="Determine Next Unlock">
+Calculates when the next batch of tokens will unlock
+</Step>
+</Steps>
+
+## Rate Limiting
+
+This endpoint is subject to rate limiting:
+- **30 requests per IP** per 1-minute window
+- Returns HTTP 429 when limit exceeded
+
+## Integration Tips
+
+<Tip>
+**Poll Before Claiming**: Check this endpoint before showing the claim UI to ensure users have tokens available to claim.
+</Tip>
+
+<Tip>
+**Show Progress**: Use `vestingProgress` to display a progress bar showing how much of the total allocation has vested.
+</Tip>
+
+<Warning>
+**Important**: Always check `claimableAmount` is greater than zero before allowing users to initiate a claim transaction.
+</Warning>
+
+## Use Cases
+
+### Display Vesting Dashboard
+Show users their complete vesting status:
+```javascript
+const info = await fetch(`/presale/${tokenAddress}/claims/${wallet}`)
+  .then(r => r.json());
+
+console.log(`Total Allocation: ${info.totalAllocated} tokens`);
+console.log(`Already Claimed: ${info.totalClaimed} tokens`);
+console.log(`Available to Claim: ${info.claimableAmount} tokens`);
+console.log(`Vesting Progress: ${info.vestingProgress}%`);
+```
+
+### Check If Can Claim
+Determine if the user can claim tokens now:
+```javascript
+const info = await fetch(`/presale/${tokenAddress}/claims/${wallet}`)
+  .then(r => r.json());
+
+const canClaim = parseInt(info.claimableAmount) > 0;
+
+if (canClaim) {
+  console.log(`You can claim ${info.claimableAmount} tokens now!`);
+} else if (info.nextUnlockTime) {
+  const timeUntil = new Date(info.nextUnlockTime) - new Date();
+  console.log(`Next unlock in ${Math.ceil(timeUntil / 3600000)} hours`);
+}
+```
+
+### Show Countdown Timer
+Display time until next unlock:
+```javascript
+if (info.nextUnlockTime) {
+  const nextUnlock = new Date(info.nextUnlockTime);
+  const now = new Date();
+  const timeRemaining = nextUnlock - now;
+
+  const hours = Math.floor(timeRemaining / 3600000);
+  const minutes = Math.floor((timeRemaining % 3600000) / 60000);
+
+  console.log(`Next unlock: ${hours}h ${minutes}m`);
+}
+```
+
+## Next Steps
+
+After checking vesting info:
+
+1. **If `claimableAmount` > 0**: Proceed to [`/presale/:tokenAddress/claims/prepare`](/api-reference/presale/claims-prepare)
+2. **If `claimableAmount` = 0**: Show countdown to `nextUnlockTime`
+3. **Track Progress**: Poll this endpoint periodically to update the UI when new tokens vest
+
+## Vesting Edge Cases
+
+<Info>
+**First Claim**: The first claim after launch may include the immediate unlock percentage plus any tokens that have vested since launch.
+</Info>
+
+<Info>
+**Fully Vested**: When `vestingProgress` reaches 100%, `nextUnlockTime` will be null, indicating all tokens have vested.
+</Info>
+
+<Warning>
+**Time Sensitivity**: Vesting calculations are performed in real-time. The `claimableAmount` may increase between checking this endpoint and preparing a claim transaction.
+</Warning>

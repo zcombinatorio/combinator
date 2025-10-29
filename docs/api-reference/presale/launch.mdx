@@ -1,0 +1,406 @@
+---
+title: "Prepare Presale Launch"
+description: "POST /presale/:tokenAddress/launch - Create transaction to launch presale and create Meteora pool"
+---
+
+## Overview
+
+Creates an unsigned transaction for launching a presale. This endpoint generates a complex transaction that transfers SOL to the escrow for fees, creates a Meteora dynamic bonding curve pool with the presale token, and executes the first buy using all $ZC tokens in the escrow. Only the presale creator can call this endpoint.
+
+<CodeGroup>
+
+```bash curl
+curl -X POST https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/launch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "payerPublicKey": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+  }'
+```
+
+```javascript fetch
+const response = await fetch(
+  'https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/launch',
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      payerPublicKey: wallet.publicKey.toString()
+    })
+  }
+);
+
+const result = await response.json();
+```
+
+```python requests
+import requests
+
+data = {
+    "payerPublicKey": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+}
+
+response = requests.post(
+    'https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/launch',
+    json=data,
+    headers={'Content-Type': 'application/json'}
+)
+
+result = response.json()
+```
+
+</CodeGroup>
+
+## URL Parameters
+
+<ParamField path="tokenAddress" type="string" required>
+  The Solana token mint address of the presale
+</ParamField>
+
+## Request Parameters
+
+<ParamField body="payerPublicKey" type="string" required>
+  Base58 encoded public key of the payer (must be the presale creator)
+</ParamField>
+
+## Response
+
+<ResponseField name="combinedTx" type="string">
+  Base58 encoded unsigned transaction containing all launch instructions
+</ResponseField>
+
+<ResponseField name="transactionId" type="string">
+  Unique identifier for this transaction (needed for confirmation)
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "combinedTx": "4MzR7dxJNJRVP1Q6k7Y3j8X...",
+  "transactionId": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Missing Token Address">
+    ```json
+    {
+      "error": "Token address is required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Missing Payer">
+    ```json
+    {
+      "error": "Payer public key is required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="404 - Presale Not Found">
+    ```json
+    {
+      "error": "Presale not found"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="403 - Not Creator">
+    ```json
+    {
+      "error": "Only the presale creator can launch"
+    }
+    ```
+
+    The payer must match the presale creator's wallet address.
+  </Accordion>
+
+  <Accordion title="400 - Already Launched">
+    ```json
+    {
+      "error": "Presale has already been launched or is not pending"
+    }
+    ```
+
+    The presale status must be 'pending' to launch.
+  </Accordion>
+
+  <Accordion title="400 - Missing Escrow Keys">
+    ```json
+    {
+      "error": "Escrow keypair not found for this presale"
+    }
+    ```
+
+    Or:
+
+    ```json
+    {
+      "error": "Base mint keypair not found"
+    }
+    ```
+
+    Critical presale configuration is missing.
+  </Accordion>
+
+  <Accordion title="400 - No $ZC Balance">
+    ```json
+    {
+      "error": "Escrow $ZC token account not found or has no balance"
+    }
+    ```
+
+    Or:
+
+    ```json
+    {
+      "error": "Escrow wallet has no $ZC tokens"
+    }
+    ```
+
+    The escrow must have $ZC tokens to buy from the pool during launch.
+  </Accordion>
+
+  <Accordion title="500 - Configuration Error">
+    ```json
+    {
+      "error": "RPC_URL and CONFIG_ADDRESS must be configured"
+    }
+    ```
+
+    Server configuration is incomplete.
+  </Accordion>
+
+  <Accordion title="500 - Verification Error">
+    ```json
+    {
+      "error": "Escrow keypair verification failed"
+    }
+    ```
+
+    Or:
+
+    ```json
+    {
+      "error": "Base mint keypair verification failed"
+    }
+    ```
+
+    Encrypted keypair decryption or verification failed.
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "error": "Failed to create presale launch transaction"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Launch Process
+
+The launch transaction performs three critical operations in a single atomic transaction:
+
+<Steps>
+<Step title="Validate Caller">
+Verifies the payer is the presale creator and presale status is 'pending'
+</Step>
+
+<Step title="Decrypt Keypairs">
+Decrypts and validates escrow and base mint keypairs
+</Step>
+
+<Step title="Check $ZC Balance">
+Fetches escrow's $ZC token account balance to use for the initial buy
+</Step>
+
+<Step title="Transfer SOL to Escrow">
+Creates instruction to send 0.005 SOL from payer to escrow for:
+- Token account rent (~0.002 SOL)
+- Transaction fees
+</Step>
+
+<Step title="Create Meteora Pool">
+Generates instructions to create a Meteora dynamic bonding curve pool:
+- Creates the token mint
+- Sets up pool configuration
+- Initializes bonding curve
+</Step>
+
+<Step title="Execute First Buy">
+Creates swap instructions to buy tokens from the pool using all $ZC in escrow:
+- Buyer: Escrow wallet
+- Buy amount: Full escrow $ZC balance
+- Minimum output: 0 (no slippage protection for first buy)
+</Step>
+
+<Step title="Combine Instructions">
+Merges all instructions into a single atomic transaction:
+1. SOL transfer
+2. Pool creation
+3. First swap/buy
+</Step>
+
+<Step title="Set Transaction Metadata">
+Adds recent blockhash and sets payer as fee payer
+</Step>
+
+<Step title="Store Transaction">
+Temporarily stores transaction details and keypairs for confirmation
+</Step>
+
+<Step title="Return Unsigned Transaction">
+Returns Base58 encoded transaction for creator signing
+</Step>
+</Steps>
+
+## Transaction Structure
+
+The combined transaction includes:
+
+### 1. SOL Transfer
+- **From**: Creator (payer)
+- **To**: Escrow
+- **Amount**: 0.005 SOL (5,000,000 lamports)
+- **Purpose**: Cover rent and fees
+
+### 2. Pool Creation (Meteora)
+- **Base Mint**: The presale token (created in transaction)
+- **Quote Mint**: $ZC tokens
+- **Config**: Flywheel config from environment
+- **Metadata**: Token name, symbol, and URI from presale
+
+### 3. First Buy
+- **Buyer**: Escrow wallet
+- **Amount**: Full $ZC balance in escrow
+- **Slippage**: None (0 minimum output)
+
+## Meteora Integration
+
+<Info>
+**Dynamic Bonding Curve**: The launch uses Meteora's dynamic bonding curve SDK to create a liquidity pool with automatic price discovery and bonding curve mechanics.
+</Info>
+
+### Pool Configuration
+- **Quote Token**: $ZC (not SOL)
+- **Config Address**: Specified in environment variable `FLYWHEEL_CONFIG_ADDRESS`
+- **Pool Creator**: The presale creator (payer)
+
+## Signatures Required
+
+The transaction needs three signatures:
+
+1. **Creator**: Signs to approve SOL transfer and pool creation (added by user)
+2. **Escrow**: Signs to approve $ZC spending (added by API during confirmation)
+3. **Base Mint**: Signs to authorize mint creation (added by API during confirmation)
+
+## Transaction ID
+
+<Warning>
+**Save Transaction ID**: Store the returned `transactionId` - it's required for the confirmation step and identifies this specific launch transaction.
+</Warning>
+
+The transaction ID:
+- Is a unique 32-character hex string
+- Maps to stored transaction data
+- Expires if not used for confirmation
+- Is single-use (deleted after confirmation)
+
+## SOL Requirements
+
+The creator must have:
+- **0.005 SOL** for escrow funding
+- **Additional SOL** for transaction fees (~0.001-0.002 SOL)
+- **Total**: ~0.006-0.007 SOL minimum
+
+## $ZC Requirements
+
+The escrow must have:
+- **$ZC Balance**: Any amount (all will be used for first buy)
+- **Source**: Accumulated from presale contributions
+
+<Tip>
+**All-In Buy**: The launch uses 100% of the escrow's $ZC balance for the initial pool buy. Ensure adequate contributions before launching.
+</Tip>
+
+## Integration Example
+
+```javascript
+import { Transaction } from '@solana/web3.js';
+import bs58 from 'bs58';
+
+// 1. Prepare the launch
+const launchResponse = await fetch(
+  `/presale/${tokenAddress}/launch`,
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      payerPublicKey: wallet.publicKey.toString()
+    })
+  }
+);
+
+const { combinedTx, transactionId } = await launchResponse.json();
+
+// 2. Deserialize and sign
+const tx = Transaction.from(bs58.decode(combinedTx));
+const signedTx = await wallet.signTransaction(tx);
+
+// 3. Confirm (next endpoint)
+const confirmResponse = await fetch(
+  `/presale/${tokenAddress}/launch-confirm`,
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      signedTransaction: bs58.encode(signedTx.serialize()),
+      transactionId
+    })
+  }
+);
+
+const result = await confirmResponse.json();
+if (result.success) {
+  console.log(`Presale launched! Signature: ${result.signature}`);
+}
+```
+
+## Pre-Launch Checklist
+
+Before calling this endpoint:
+
+- ✅ Presale has contributions (escrow has $ZC balance)
+- ✅ Creator wallet has ~0.007 SOL
+- ✅ Token metadata is correct and accessible
+- ✅ Presale status is 'pending'
+- ✅ You are the presale creator
+
+## Next Steps
+
+After receiving the unsigned transaction:
+
+1. **Deserialize** using `@solana/web3.js`
+2. **Review** transaction details (optional but recommended)
+3. **Sign** with creator wallet
+4. **Submit** to [`/presale/:tokenAddress/launch-confirm`](/api-reference/presale/launch-confirm)
+
+## Important Notes
+
+<Warning>
+**Irreversible**: Once confirmed, the launch cannot be undone. The pool will be created and tokens will be bought.
+</Warning>
+
+<Warning>
+**Atomic Transaction**: All operations happen atomically - if any instruction fails, the entire transaction fails and nothing changes.
+</Warning>
+
+<Info>
+**Vesting Starts**: After successful launch, the vesting period begins and participants can start claiming their tokens according to the vesting schedule.
+</Info>

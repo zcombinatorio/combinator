@@ -1,0 +1,361 @@
+---
+title: "Prepare Presale Claim"
+description: "POST /presale/:tokenAddress/claims/prepare - Create unsigned transaction for claiming vested presale tokens"
+---
+
+## Overview
+
+Creates an unsigned transaction for claiming vested presale tokens. This endpoint validates the wallet's vesting eligibility, calculates the claimable amount, and returns a transaction ready for user signing. The transaction transfers tokens from the presale escrow to the user's wallet.
+
+<CodeGroup>
+
+```bash curl
+curl -X POST https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/claims/prepare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userWallet": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+  }'
+```
+
+```javascript fetch
+const response = await fetch(
+  'https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/claims/prepare',
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      userWallet: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+    })
+  }
+);
+
+const result = await response.json();
+```
+
+```python requests
+import requests
+
+data = {
+    "userWallet": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+}
+
+response = requests.post(
+    'https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/claims/prepare',
+    json=data,
+    headers={'Content-Type': 'application/json'}
+)
+
+result = response.json()
+```
+
+</CodeGroup>
+
+## URL Parameters
+
+<ParamField path="tokenAddress" type="string" required>
+  The Solana token mint address of the presale
+</ParamField>
+
+## Request Parameters
+
+<ParamField body="userWallet" type="string" required>
+  Base58 encoded public key of the user's wallet claiming tokens
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the operation was successful
+</ResponseField>
+
+<ResponseField name="transaction" type="string">
+  Base58 encoded unsigned transaction ready for user signing
+</ResponseField>
+
+<ResponseField name="timestamp" type="number">
+  Unix timestamp (milliseconds) identifying this transaction (needed for confirmation)
+</ResponseField>
+
+<ResponseField name="claimAmount" type="string">
+  Amount of tokens being claimed in this transaction (smallest units)
+</ResponseField>
+
+<ResponseField name="decimals" type="number">
+  Number of decimal places for the token
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "transaction": "4MzR7dxJNJRVP1Q6k7Y3j8X...",
+  "timestamp": 1642248400000,
+  "claimAmount": "250000000000",
+  "decimals": 9
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Missing User Wallet">
+    ```json
+    {
+      "error": "User wallet is required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Invalid Token Address">
+    ```json
+    {
+      "error": "Invalid token address format"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Invalid Wallet Address">
+    ```json
+    {
+      "error": "Invalid user wallet address format"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Presale Not Launched">
+    ```json
+    {
+      "error": "Presale not found or not launched"
+    }
+    ```
+
+    The presale must have status 'launched' before claims can be processed.
+  </Accordion>
+
+  <Accordion title="400 - No Allocation">
+    ```json
+    {
+      "error": "No token allocation found for this wallet"
+    }
+    ```
+
+    Or:
+
+    ```json
+    {
+      "error": "No contribution found for this wallet"
+    }
+    ```
+
+    The wallet did not participate in this presale.
+  </Accordion>
+
+  <Accordion title="400 - Not Yet Unlocked">
+    ```json
+    {
+      "error": "Cannot claim yet. Next unlock in 45 minutes at 2024-01-16T10:30:00.000Z",
+      "nextUnlockTime": "2024-01-16T10:30:00.000Z",
+      "minutesRemaining": 45
+    }
+    ```
+
+    Tokens are still vesting. User must wait until the next unlock time.
+  </Accordion>
+
+  <Accordion title="400 - No Tokens Available">
+    ```json
+    {
+      "error": "No tokens available to claim at this time"
+    }
+    ```
+
+    All vested tokens have already been claimed or nothing has vested yet.
+  </Accordion>
+
+  <Accordion title="400 - Presale Configuration Incomplete">
+    ```json
+    {
+      "error": "Presale configuration incomplete"
+    }
+    ```
+
+    The presale is missing required data (base mint address or escrow keys).
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "error": "Failed to prepare claim"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Process Flow
+
+This endpoint performs several validations and setup steps:
+
+<Steps>
+<Step title="Acquire Lock">
+Acquires a presale-specific lock to prevent concurrent claim processing
+</Step>
+
+<Step title="Validate Parameters">
+Ensures token address and user wallet are valid Solana addresses
+</Step>
+
+<Step title="Fetch Presale">
+Retrieves presale data and verifies it has been launched
+</Step>
+
+<Step title="Calculate Vesting">
+Computes total allocation, vested amount, and claimable tokens
+</Step>
+
+<Step title="Validate Allocation">
+Confirms the wallet has a valid contribution and allocation
+</Step>
+
+<Step title="Enforce Unlock Time">
+Checks if tokens are available based on the vesting schedule
+</Step>
+
+<Step title="Validate Claimable Amount">
+Ensures there are tokens available to claim (positive, non-zero)
+</Step>
+
+<Step title="Setup Token Accounts">
+Determines if user's and escrow's token accounts exist or need creation
+</Step>
+
+<Step title="Build Transaction">
+Creates transaction with:
+- Token account creation instructions (if needed)
+- Transfer instruction from escrow to user
+- Sets user as fee payer and adds recent blockhash
+</Step>
+
+<Step title="Store Transaction Data">
+Temporarily stores transaction details for confirmation step
+</Step>
+
+<Step title="Return Unsigned Transaction">
+Returns Base58 encoded transaction for user signing
+</Step>
+</Steps>
+
+## Transaction Structure
+
+The returned transaction includes:
+
+### Instructions
+1. **Create User ATA** (optional): Creates user's associated token account if it doesn't exist
+2. **Create Escrow ATA** (optional): Creates escrow's associated token account if it doesn't exist
+3. **Transfer**: Transfers claimable tokens from escrow to user
+
+### Fee Payer
+- **User Pays**: The claiming user pays for transaction fees and any account creation costs
+
+### Signatures Required
+- **User Signature**: Must sign the transaction before confirmation
+- **Escrow Signature**: Added by the API during confirmation
+
+## Timestamp Expiry
+
+<Warning>
+**5 Minute Expiration**: Transaction data is stored for 5 minutes. You must call `/claims/confirm` within this window or create a new transaction.
+</Warning>
+
+The `timestamp` returned in the response is critical:
+- Used to identify the transaction in the confirmation step
+- Transactions expire after 5 minutes
+- Automatic cleanup removes expired transactions
+
+## Rate Limiting
+
+This endpoint is subject to rate limiting:
+- **30 requests per IP** per 1-minute window
+- Returns HTTP 429 when limit exceeded
+
+## Security Validations
+
+<Warning>
+**Vesting Enforcement**: The API strictly enforces vesting schedules. Users cannot claim tokens before they vest, even if they modify the transaction.
+</Warning>
+
+### Validations Performed
+- ✅ Wallet has a valid presale contribution
+- ✅ Presale has been launched
+- ✅ Current time is past the next unlock time
+- ✅ Claimable amount is positive and available
+- ✅ All Solana addresses are valid
+
+## Token Account Creation
+
+The API automatically handles associated token account (ATA) creation:
+
+<Info>
+**User Pays for ATAs**: If the user's or escrow's token account doesn't exist, creation instructions are added. The user pays the rent (~0.002 SOL per account).
+</Info>
+
+## Integration Tips
+
+<Tip>
+**Check Eligibility First**: Always call [`/presale/:tokenAddress/claims/:wallet`](/api-reference/presale/claims-info) before prepare to ensure claimable tokens are available.
+</Tip>
+
+<Tip>
+**Handle Expiry**: If the user takes longer than 5 minutes to sign, you'll need to call prepare again to get a fresh transaction.
+</Tip>
+
+## Next Steps
+
+After receiving the unsigned transaction:
+
+1. **Deserialize** the transaction using `@solana/web3.js`
+2. **Sign** with user's wallet (via Phantom, Solflare, etc.)
+3. **Submit** to [`/presale/:tokenAddress/claims/confirm`](/api-reference/presale/claims-confirm)
+
+## Example Integration
+
+```javascript
+import { Transaction } from '@solana/web3.js';
+import bs58 from 'bs58';
+
+// 1. Prepare the claim
+const prepareResponse = await fetch(
+  `/presale/${tokenAddress}/claims/prepare`,
+  {
+    method: 'POST',
+    body: JSON.stringify({ userWallet: wallet.publicKey.toString() })
+  }
+);
+
+const { transaction, timestamp } = await prepareResponse.json();
+
+// 2. Deserialize and sign
+const tx = Transaction.from(bs58.decode(transaction));
+const signedTx = await wallet.signTransaction(tx);
+
+// 3. Confirm (next endpoint)
+const confirmResponse = await fetch(
+  `/presale/${tokenAddress}/claims/confirm`,
+  {
+    method: 'POST',
+    body: JSON.stringify({
+      signedTransaction: bs58.encode(signedTx.serialize()),
+      timestamp
+    })
+  }
+);
+```
+
+## Decimal Handling
+
+Token amounts use the token's decimal precision:
+- **claimAmount**: In smallest units (e.g., 250000000000 for 250 tokens with 9 decimals)
+- **decimals**: Number to divide by (e.g., 9 means divide by 1,000,000,000)
+- **Display**: `claimAmount / (10 ** decimals)` for human-readable format

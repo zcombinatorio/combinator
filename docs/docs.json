@@ -45,28 +45,56 @@
         "tab": "API Reference",
         "groups": [
           {
-            "group": "Launch endpoints",
+            "group": "Launch tokens",
             "pages": [
               "api-reference/launch/create",
               "api-reference/launch/confirm"
             ]
           },
           {
-            "group": "Presale endpoints",
-            "pages": [
-              "api-reference/presale/create",
-              "api-reference/presale/get-details",
-              "api-reference/presale/list-by-creator",
-              "api-reference/presale/max-contribution",
-              "api-reference/presale/user-contribution"
-            ]
-          },
-          {
-            "group": "Claims endpoints",
+            "group": "Claim tokens",
             "pages": [
               "api-reference/claims/eligibility",
               "api-reference/claims/mint",
               "api-reference/claims/confirm"
+            ]
+          },
+          {
+            "group": "Create presales",
+            "pages": [
+              "api-reference/presale/create",
+              "api-reference/presale/get-details",
+              "api-reference/presale/list-by-creator"
+            ]
+          },
+          {
+            "group": "Presale Contributions",
+            "pages": [
+              "api-reference/presale/max-contribution",
+              "api-reference/presale/user-contribution",
+              "api-reference/presale/bids-get",
+              "api-reference/presale/bids-post"
+            ]
+          },
+          {
+            "group": "Presale Launch",
+            "pages": [
+              "api-reference/presale/launch",
+              "api-reference/presale/launch-confirm"
+            ]
+          },
+          {
+            "group": "Presale Claims",
+            "pages": [
+              "api-reference/presale/claims-info",
+              "api-reference/presale/claims-prepare",
+              "api-reference/presale/claims-confirm"
+            ]
+          },
+          {
+            "group": "Presale Monitoring",
+            "pages": [
+              "api-reference/presale/stats"
             ]
           },
           {

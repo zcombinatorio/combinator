@@ -1,0 +1,262 @@
+---
+title: "Get Presale Stats"
+description: "GET /presale/:tokenAddress/stats - Get aggregate statistics for a presale"
+---
+
+## Overview
+
+Retrieves comprehensive statistics for a presale including total participants, allocated tokens, claimed tokens, and vesting progress. This endpoint provides aggregate data useful for dashboards and presale overview pages.
+
+<CodeGroup>
+
+```bash curl
+curl -X GET "https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/stats"
+```
+
+```javascript fetch
+const tokenAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+const response = await fetch(
+  `https://api.zcombinator.io/presale/${tokenAddress}/stats`
+);
+
+const stats = await response.json();
+```
+
+```python requests
+import requests
+
+token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+response = requests.get(
+    f'https://api.zcombinator.io/presale/{token_address}/stats'
+)
+
+stats = response.json()
+```
+
+</CodeGroup>
+
+## URL Parameters
+
+<ParamField path="tokenAddress" type="string" required>
+  The Solana token mint address of the presale
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the operation was successful
+</ResponseField>
+
+<ResponseField name="totalParticipants" type="number">
+  Number of unique wallets that have allocations in this presale
+</ResponseField>
+
+<ResponseField name="totalAllocated" type="string">
+  Total tokens allocated to all participants (in smallest units)
+</ResponseField>
+
+<ResponseField name="totalClaimed" type="string">
+  Total tokens already claimed by all participants (in smallest units)
+</ResponseField>
+
+<ResponseField name="claimedPercentage" type="number">
+  Percentage of allocated tokens that have been claimed (0-100)
+</ResponseField>
+
+<ResponseField name="vestingDurationHours" type="number">
+  Duration of the vesting period in hours (typically 336 hours = 2 weeks)
+</ResponseField>
+
+<ResponseField name="launchedAt" type="string">
+  ISO 8601 timestamp of when the presale was launched (null if not launched)
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current status of the presale: 'pending', 'launched', or other status values
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "totalParticipants": 47,
+  "totalAllocated": "10000000000000",
+  "totalClaimed": "2500000000000",
+  "claimedPercentage": 25,
+  "vestingDurationHours": 336,
+  "launchedAt": "2024-01-15T10:30:00.000Z",
+  "status": "launched"
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Invalid Token Address">
+    ```json
+    {
+      "error": "Invalid token address format"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="404 - Presale Not Found">
+    ```json
+    {
+      "error": "Presale not found"
+    }
+    ```
+
+    No presale exists for this token address.
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "error": "Failed to fetch stats"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Statistics Breakdown
+
+### Participant Count
+- **totalParticipants**: Unique count of wallets with token allocations
+- Counted from the presale_claims table
+- Only includes wallets that contributed to the presale
+
+### Token Allocation
+- **totalAllocated**: Sum of all tokens allocated to participants
+- Based on pro-rata distribution of tokens bought during launch
+- Expressed in smallest token units (account for decimals)
+
+### Claimed Tokens
+- **totalClaimed**: Sum of all tokens claimed across all participants
+- Updated each time a participant successfully claims tokens
+- Always ≤ totalAllocated
+
+### Claiming Progress
+- **claimedPercentage**: `(totalClaimed / totalAllocated) * 100`
+- Indicates overall claiming progress
+- Useful for visualizing how much of the presale has been claimed
+
+## Vesting Information
+
+<Info>
+**Vesting Duration**: The standard vesting period is 336 hours (14 days or 2 weeks). Tokens unlock linearly over this period after launch.
+</Info>
+
+## Use Cases
+
+### Presale Dashboard
+Display aggregate presale information:
+```javascript
+const stats = await fetch(`/presale/${tokenAddress}/stats`)
+  .then(r => r.json());
+
+console.log(`Participants: ${stats.totalParticipants}`);
+console.log(`Claimed: ${stats.claimedPercentage.toFixed(1)}%`);
+console.log(`Status: ${stats.status}`);
+
+if (stats.launchedAt) {
+  const launchDate = new Date(stats.launchedAt);
+  console.log(`Launched: ${launchDate.toLocaleDateString()}`);
+}
+```
+
+### Progress Visualization
+Show claiming progress:
+```javascript
+const progressBar = document.getElementById('progress');
+progressBar.style.width = `${stats.claimedPercentage}%`;
+progressBar.textContent = `${stats.claimedPercentage.toFixed(1)}% Claimed`;
+```
+
+### Calculate Unclaimed Tokens
+Determine how many tokens remain to be claimed:
+```javascript
+const totalAllocated = BigInt(stats.totalAllocated);
+const totalClaimed = BigInt(stats.totalClaimed);
+const unclaimed = totalAllocated - totalClaimed;
+
+console.log(`Unclaimed: ${unclaimed.toString()} tokens`);
+```
+
+### Vesting Timeline
+Calculate vesting end time:
+```javascript
+if (stats.launchedAt) {
+  const launchTime = new Date(stats.launchedAt);
+  const vestingEndTime = new Date(
+    launchTime.getTime() + (stats.vestingDurationHours * 60 * 60 * 1000)
+  );
+
+  console.log(`Vesting ends: ${vestingEndTime.toLocaleString()}`);
+
+  const now = new Date();
+  const isFullyVested = now >= vestingEndTime;
+  console.log(`Fully vested: ${isFullyVested}`);
+}
+```
+
+## Decimal Handling
+
+<Warning>
+**Raw Token Amounts**: The `totalAllocated` and `totalClaimed` fields return values in the token's smallest units. You must divide by 10^decimals to get human-readable amounts.
+</Warning>
+
+Example with 9 decimals:
+```javascript
+const decimals = 9;
+const allocated = BigInt(stats.totalAllocated);
+const allocatedTokens = Number(allocated) / Math.pow(10, decimals);
+
+console.log(`Total allocated: ${allocatedTokens.toLocaleString()} tokens`);
+```
+
+## Status Values
+
+The `status` field can have the following values:
+
+- **pending**: Presale created but not yet launched
+- **launched**: Presale successfully launched, vesting active
+- Other status values may exist based on presale lifecycle
+
+## Integration Tips
+
+<Tip>
+**Real-time Updates**: Poll this endpoint periodically to update dashboard statistics as users claim their tokens.
+</Tip>
+
+<Tip>
+**Combine with Bids**: Use [`/presale/:tokenAddress/bids`](/api-reference/presale/bids-get) to get detailed contribution data alongside these aggregate stats.
+</Tip>
+
+## Zero State
+
+If the presale has no participants yet:
+
+```json
+{
+  "success": true,
+  "totalParticipants": 0,
+  "totalAllocated": "0",
+  "totalClaimed": "0",
+  "claimedPercentage": 0,
+  "vestingDurationHours": 336,
+  "launchedAt": null,
+  "status": "pending"
+}
+```
+
+## Next Steps
+
+After retrieving stats:
+
+1. **Show Participant Details**: Use [`/presale/:tokenAddress/bids`](/api-reference/presale/bids-get) for individual contributions
+2. **Check Individual Claims**: Use [`/presale/:tokenAddress/claims/:wallet`](/api-reference/presale/claims-info) for wallet-specific vesting info
+3. **Monitor Progress**: Poll regularly to track claiming activity
