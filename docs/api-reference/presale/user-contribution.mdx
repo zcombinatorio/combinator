@@ -1,0 +1,201 @@
+---
+title: "Get User Contribution"
+description: "GET /presale/:tokenAddress/contribution - Get user's contribution to a presale"
+---
+
+## Overview
+
+Retrieves the total amount a specific wallet has contributed to a presale. Returns the contribution amount in both SOL and the underlying $ZC token format.
+
+<CodeGroup>
+
+```bash curl
+curl -X GET "https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/contribution?walletAddress=9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+```
+
+```javascript fetch
+const tokenAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const walletAddress = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+
+const response = await fetch(
+  `https://api.zcombinator.io/presale/${tokenAddress}/contribution?walletAddress=${walletAddress}`
+);
+
+const contribution = await response.json();
+```
+
+```python requests
+import requests
+
+token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+wallet_address = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+
+response = requests.get(
+    f'https://api.zcombinator.io/presale/{token_address}/contribution',
+    params={'walletAddress': wallet_address}
+)
+
+contribution = response.json()
+```
+
+</CodeGroup>
+
+## URL Parameters
+
+<ParamField path="tokenAddress" type="string" required>
+  The Solana token mint address of the presale
+</ParamField>
+
+## Query Parameters
+
+<ParamField query="walletAddress" type="string" required>
+  Base58 encoded public key of the wallet to check
+</ParamField>
+
+## Response
+
+<ResponseField name="contributionSol" type="number">
+  Total contribution amount in $ZC tokens (using 6 decimals, displayed as SOL-equivalent for readability)
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "contributionSol": 150000.5
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Missing Token Address">
+    ```json
+    {
+      "error": "Token address is required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Missing Wallet Address">
+    ```json
+    {
+      "error": "Wallet address is required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "error": "Failed to fetch user contribution"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## How It Works
+
+The contribution is calculated as follows:
+
+<Steps>
+<Step title="Validate Parameters">
+Ensures both token address and wallet address are provided
+</Step>
+
+<Step title="Query Database">
+Fetches the user's contribution record from the database for this presale
+</Step>
+
+<Step title="Convert from Lamports">
+Converts the stored contribution from lamports (raw $ZC format with 6 decimals) to decimal format
+</Step>
+
+<Step title="Return Amount">
+Returns the contribution in a human-readable decimal format
+</Step>
+</Steps>
+
+## Contribution Format
+
+<Info>
+**Decimal Conversion**: Contributions are stored in the database using 6 decimals (lamports format for $ZC tokens). The API divides by 1,000,000 to return the human-readable amount.
+</Info>
+
+### Example Conversion
+- **Stored in DB**: `150000500000` (lamports)
+- **Returned by API**: `150000.5` (decimal)
+
+## Rate Limiting
+
+This endpoint is subject to rate limiting:
+- **8 requests per IP** per 2-minute window
+- Returns HTTP 429 when limit exceeded
+
+## Integration Tips
+
+<Tip>
+**Track Progress**: Use this endpoint to display how much a user has already contributed to a presale.
+</Tip>
+
+<Tip>
+**Remaining Allocation**: Combine with max-contribution endpoint to show how much more a user can contribute.
+</Tip>
+
+## Use Cases
+
+### Display User's Contribution
+Show the user how much they've contributed:
+```javascript
+const result = await fetch(
+  `/presale/${tokenAddress}/contribution?walletAddress=${wallet}`
+).then(r => r.json());
+
+console.log(`You have contributed ${result.contributionSol.toLocaleString()} $ZC`);
+```
+
+### Calculate Remaining Allocation
+Combine with max contribution to show available balance:
+```javascript
+// Get max contribution
+const maxResult = await fetch(
+  `/presale/max-contribution?walletAddress=${wallet}&whitelistedTokens=${tokens}`
+).then(r => r.json());
+
+// Get current contribution
+const contribResult = await fetch(
+  `/presale/${tokenAddress}/contribution?walletAddress=${wallet}`
+).then(r => r.json());
+
+const remaining = maxResult.maxContributionZC - contribResult.contributionSol;
+console.log(`You can contribute ${remaining.toLocaleString()} more $ZC`);
+```
+
+### Show Progress Bar
+Display contribution progress:
+```javascript
+const contribution = result.contributionSol;
+const presaleGoal = 1000000; // Total presale goal
+const percentage = (contribution / presaleGoal) * 100;
+
+console.log(`Progress: ${percentage.toFixed(2)}%`);
+```
+
+## Zero Contributions
+
+If a wallet has not contributed to the presale, the API returns:
+```json
+{
+  "contributionSol": 0
+}
+```
+
+This is a valid response and indicates the user is eligible to make their first contribution.
+
+## Next Steps
+
+After checking user contribution:
+
+1. **Calculate Remaining**: Subtract from [`/presale/max-contribution`](/api-reference/presale/max-contribution) to get remaining allocation
+2. **Update UI**: Show contribution progress and remaining balance
+3. **Accept More**: Allow users to contribute up to their remaining limit

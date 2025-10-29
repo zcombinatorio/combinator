@@ -52,6 +52,16 @@
             ]
           },
           {
+            "group": "Presale endpoints",
+            "pages": [
+              "api-reference/presale/create",
+              "api-reference/presale/get-details",
+              "api-reference/presale/list-by-creator",
+              "api-reference/presale/max-contribution",
+              "api-reference/presale/user-contribution"
+            ]
+          },
+          {
             "group": "Claims endpoints",
             "pages": [
               "api-reference/claims/eligibility",

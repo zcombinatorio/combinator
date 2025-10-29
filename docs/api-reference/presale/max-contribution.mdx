@@ -1,0 +1,274 @@
+---
+title: "Calculate Max Contribution"
+description: "GET /presale/max-contribution - Calculate maximum contribution based on wallet holdings"
+---
+
+## Overview
+
+Calculates the maximum amount a wallet can contribute to a presale based on their holdings of whitelisted tokens. The API fetches token balances, converts them to USD values, and returns the equivalent in $ZC tokens.
+
+<CodeGroup>
+
+```bash curl
+curl -X GET "https://api.zcombinator.io/presale/max-contribution?walletAddress=9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM&whitelistedTokens=So11111111111111111111111111111111111111112,GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC"
+```
+
+```javascript fetch
+const walletAddress = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+const whitelistedTokens = [
+  "So11111111111111111111111111111111111111112", // SOL
+  "GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC" // ZC
+].join(',');
+
+const response = await fetch(
+  `https://api.zcombinator.io/presale/max-contribution?walletAddress=${walletAddress}&whitelistedTokens=${whitelistedTokens}`
+);
+
+const maxContribution = await response.json();
+```
+
+```python requests
+import requests
+
+wallet_address = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+whitelisted_tokens = "So11111111111111111111111111111111111111112,GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC"
+
+response = requests.get(
+    'https://api.zcombinator.io/presale/max-contribution',
+    params={
+        'walletAddress': wallet_address,
+        'whitelistedTokens': whitelisted_tokens
+    }
+)
+
+max_contribution = response.json()
+```
+
+</CodeGroup>
+
+## Query Parameters
+
+<ParamField query="walletAddress" type="string" required>
+  Base58 encoded public key of the wallet to check
+</ParamField>
+
+<ParamField query="whitelistedTokens" type="string" required>
+  Comma-separated list of token mint addresses to include in the calculation
+</ParamField>
+
+## Response
+
+<ResponseField name="walletAddress" type="string">
+  The wallet address that was queried
+</ResponseField>
+
+<ResponseField name="maxContributionZC" type="number">
+  Maximum contribution amount in $ZC tokens (floored to integer)
+</ResponseField>
+
+<ResponseField name="breakdown" type="object">
+  Object mapping each token address to its balance and USD value:
+  - `balance` (number): Token balance in wallet
+  - `usdValue` (number): USD value of the balance
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "walletAddress": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+  "maxContributionZC": 728930,
+  "breakdown": {
+    "So11111111111111111111111111111111111111112": {
+      "balance": 5.2,
+      "usdValue": 520.0
+    },
+    "GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC": {
+      "balance": 500000,
+      "usdValue": 480.5
+    }
+  }
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Missing Wallet Address">
+    ```json
+    {
+      "error": "Wallet address is required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Missing Whitelisted Tokens">
+    ```json
+    {
+      "error": "Whitelisted tokens are required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - No Tokens Provided">
+    ```json
+    {
+      "error": "At least one whitelisted token is required"
+    }
+    ```
+
+    This occurs when the whitelistedTokens parameter is empty after parsing.
+  </Accordion>
+
+  <Accordion title="400 - Invalid Wallet Address">
+    ```json
+    {
+      "error": "Invalid wallet address"
+    }
+    ```
+
+    The provided wallet address is not a valid Solana public key.
+  </Accordion>
+
+  <Accordion title="500 - Price Fetch Failed">
+    ```json
+    {
+      "error": "Failed to fetch token prices"
+    }
+    ```
+
+    Unable to fetch token prices from Jupiter API.
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "error": "Failed to calculate max contribution"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## How It Works
+
+The calculation process follows these steps:
+
+<Steps>
+<Step title="Validate Parameters">
+Ensures wallet address and whitelisted tokens are provided and valid
+</Step>
+
+<Step title="Fetch Token Balances">
+Retrieves balances for all whitelisted tokens:
+- **SOL**: Direct balance query via Solana RPC
+- **SPL Tokens**: Token account balance via SPL Token program
+- **Vault Share Tokens**: Special handling using vault snapshots and previewRedeem
+</Step>
+
+<Step title="Fetch Token Prices">
+Gets USD prices for tokens:
+- **$ZC and $OOG**: Uses hardcoded prices
+- **Other Tokens**: Fetches from Jupiter Price API
+</Step>
+
+<Step title="Calculate USD Values">
+Multiplies each token balance by its USD price
+</Step>
+
+<Step title="Sum Total USD">
+Adds up USD values from all tokens
+</Step>
+
+<Step title="Convert to $ZC">
+Divides total USD value by $ZC price to get max contribution in $ZC tokens
+</Step>
+
+<Step title="Floor to Integer">
+Floors the result to the nearest integer for display
+</Step>
+</Steps>
+
+## Special Token Types
+
+### SOL Balance
+SOL (Native Solana) is handled specially:
+- **Token Address**: `So11111111111111111111111111111111111111112`
+- **Fetched via**: `getBalance()` RPC call
+- **Decimals**: 9 (converted to SOL from lamports)
+
+### Vault Share Tokens
+Special vault tokens have their own handling:
+- **sZC Vault**: `7WTkGrztjkcwUWt9T3ivZacimmJVWeYyZUXy8EoBQNQ7`
+- **OOG Vault**: `BmpqPiXwGshSQg7WoYjuuUmo1At9kNdYYQQNDMBCFd1z`
+- **Balance Source**: Snapshot files (szc-token-holders.json, oog-token-holders.json)
+- **Calculation**: Uses `previewRedeem()` to convert shares to underlying assets
+
+<Info>
+**Vault Shares**: If a wallet doesn't appear in the snapshot file, their vault share balance is treated as 0.
+</Info>
+
+## Pricing
+
+Token prices are fetched from multiple sources:
+
+### Hardcoded Prices
+- **$ZC**: $0.001372
+- **$OOG**: $0.000122
+
+### Jupiter API
+All other tokens use real-time prices from Jupiter's Price API v3.
+
+<Warning>
+**Price Accuracy**: Prices are fetched at request time. For precise contribution calculations, fetch this endpoint immediately before accepting contributions.
+</Warning>
+
+## Rate Limiting
+
+This endpoint is subject to rate limiting:
+- **8 requests per IP** per 2-minute window
+- Returns HTTP 429 when limit exceeded
+
+## Integration Tips
+
+<Tip>
+**Real-time Updates**: Fetch max contribution when users visit the presale page to ensure accurate limits based on current token prices and balances.
+</Tip>
+
+<Tip>
+**Display Breakdown**: Show users the breakdown of their holdings to help them understand how the max contribution is calculated.
+</Tip>
+
+## Use Cases
+
+### Show Max Contribution UI
+Display the maximum amount a user can contribute:
+```javascript
+const result = await fetch(`/presale/max-contribution?walletAddress=${wallet}&whitelistedTokens=${tokens}`).then(r => r.json());
+
+console.log(`You can contribute up to ${result.maxContributionZC.toLocaleString()} $ZC`);
+```
+
+### Display Token Breakdown
+Show users their eligible holdings:
+```javascript
+Object.entries(result.breakdown).forEach(([token, data]) => {
+  console.log(`${token}: ${data.balance} tokens ($${data.usdValue.toFixed(2)})`);
+});
+```
+
+### Validate Contribution Amount
+Check if user's desired contribution is within limits:
+```javascript
+const desiredContribution = 100000; // $ZC
+if (desiredContribution > result.maxContributionZC) {
+  alert(`Maximum contribution is ${result.maxContributionZC} $ZC`);
+}
+```
+
+## Next Steps
+
+After calculating max contribution:
+
+1. **Check Current Contribution**: Use [`/presale/:tokenAddress/contribution`](/api-reference/presale/user-contribution) to see how much the user has already contributed
+2. **Accept Contribution**: Build UI to accept contributions within the calculated limit
+3. **Update in Real-time**: Re-fetch when wallet balances or token prices change significantly
