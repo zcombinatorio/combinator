@@ -1,0 +1,203 @@
+---
+title: "Get Presale Details"
+description: "GET /presale/:tokenAddress - Get presale information by token address"
+---
+
+## Overview
+
+Retrieves detailed information about a specific presale by its token address. Returns all public presale data including token metadata, creator information, and whitelisted tokens.
+
+<CodeGroup>
+
+```bash curl
+curl -X GET "https://api.zcombinator.io/presale/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+```
+
+```javascript fetch
+const tokenAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+const response = await fetch(
+  `https://api.zcombinator.io/presale/${tokenAddress}`
+);
+
+const presale = await response.json();
+```
+
+```python requests
+import requests
+
+token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+response = requests.get(
+    f'https://api.zcombinator.io/presale/{token_address}'
+)
+
+presale = response.json()
+```
+
+</CodeGroup>
+
+## URL Parameters
+
+<ParamField path="tokenAddress" type="string" required>
+  The Solana token mint address of the presale
+</ParamField>
+
+## Response
+
+<ResponseField name="token_address" type="string">
+  The token mint address
+</ResponseField>
+
+<ResponseField name="creator_wallet" type="string">
+  The wallet address of the presale creator
+</ResponseField>
+
+<ResponseField name="token_name" type="string">
+  The token name
+</ResponseField>
+
+<ResponseField name="token_symbol" type="string">
+  The token symbol
+</ResponseField>
+
+<ResponseField name="token_metadata_url" type="string">
+  The URI pointing to the token's metadata JSON
+</ResponseField>
+
+<ResponseField name="presale_tokens" type="string[]">
+  Array of whitelisted token mint addresses that can be used for contributions
+</ResponseField>
+
+<ResponseField name="ca_ending" type="string">
+  Custom ending used for the token address (if any)
+</ResponseField>
+
+<ResponseField name="creator_twitter" type="string">
+  Creator's Twitter handle (if provided)
+</ResponseField>
+
+<ResponseField name="creator_github" type="string">
+  Creator's GitHub username (if provided)
+</ResponseField>
+
+<ResponseField name="escrow_pub_key" type="string">
+  The public key of the escrow account holding presale contributions
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 timestamp of when the presale was created
+</ResponseField>
+
+<ResponseField name="updated_at" type="string">
+  ISO 8601 timestamp of when the presale was last updated
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "token_address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "creator_wallet": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+  "token_name": "MyToken",
+  "token_symbol": "MTK",
+  "token_metadata_url": "https://example.com/metadata.json",
+  "presale_tokens": [
+    "So11111111111111111111111111111111111111112",
+    "GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC"
+  ],
+  "ca_ending": "ABC",
+  "creator_twitter": "myhandle",
+  "creator_github": "myusername",
+  "escrow_pub_key": "5FHneW5m8k3oVLLqVEzF9xjtDMNXSqKPwv6LhH4Fxhcb",
+  "created_at": "2024-01-15T10:30:00.000Z",
+  "updated_at": "2024-01-15T10:30:00.000Z"
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Missing Token Address">
+    ```json
+    {
+      "error": "Token address is required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="404 - Presale Not Found">
+    ```json
+    {
+      "error": "Presale not found"
+    }
+    ```
+
+    This occurs when no presale exists for the specified token address.
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "error": "Failed to fetch presale"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Security
+
+<Warning>
+**Private Keys Protected**: The API automatically filters out private keys (escrow_priv_key, base_mint_priv_key) from the response. These sensitive fields are never exposed to clients.
+</Warning>
+
+## Rate Limiting
+
+This endpoint is subject to rate limiting:
+- **8 requests per IP** per 2-minute window
+- Returns HTTP 429 when limit exceeded
+
+## Integration Tips
+
+<Tip>
+**Display Presale Info**: Use this endpoint to display presale details on your frontend, including creator information and accepted tokens.
+</Tip>
+
+## Use Cases
+
+### Display Presale Page
+Fetch presale details to show on a dedicated presale page:
+```javascript
+const presale = await fetch(`/presale/${tokenAddress}`).then(r => r.json());
+
+// Display token info
+console.log(`${presale.token_name} (${presale.token_symbol})`);
+console.log(`Creator: ${presale.creator_wallet}`);
+console.log(`Accepted tokens: ${presale.presale_tokens.join(', ')}`);
+```
+
+### Validate Contribution Token
+Check if a token is whitelisted for contributions:
+```javascript
+const presale = await fetch(`/presale/${tokenAddress}`).then(r => r.json());
+const isWhitelisted = presale.presale_tokens.includes(contributionTokenAddress);
+```
+
+### Show Creator Socials
+Display creator social links:
+```javascript
+if (presale.creator_twitter) {
+  console.log(`Twitter: @${presale.creator_twitter}`);
+}
+if (presale.creator_github) {
+  console.log(`GitHub: ${presale.creator_github}`);
+}
+```
+
+## Next Steps
+
+After retrieving presale details:
+
+1. **Calculate Max Contribution**: Use [`/presale/max-contribution`](/api-reference/presale/max-contribution) to determine how much a user can contribute
+2. **Check User Contribution**: Use [`/presale/:tokenAddress/contribution`](/api-reference/presale/user-contribution) to see existing contributions
+3. **List Creator's Presales**: Use [`/presale?creator=<wallet>`](/api-reference/presale/list-by-creator) to see all presales by this creator

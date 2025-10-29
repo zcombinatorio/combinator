@@ -1,0 +1,237 @@
+---
+title: "List Presales by Creator"
+description: "GET /presale - Get all presales created by a specific wallet"
+---
+
+## Overview
+
+Retrieves a list of all presales created by a specific wallet address. Returns public information for each presale, excluding sensitive private keys.
+
+<CodeGroup>
+
+```bash curl
+curl -X GET "https://api.zcombinator.io/presale?creator=9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM&limit=50"
+```
+
+```javascript fetch
+const creatorWallet = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+const limit = 50;
+
+const response = await fetch(
+  `https://api.zcombinator.io/presale?creator=${creatorWallet}&limit=${limit}`
+);
+
+const result = await response.json();
+```
+
+```python requests
+import requests
+
+creator_wallet = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+limit = 50
+
+response = requests.get(
+    'https://api.zcombinator.io/presale',
+    params={
+        'creator': creator_wallet,
+        'limit': limit
+    }
+)
+
+result = response.json()
+```
+
+</CodeGroup>
+
+## Query Parameters
+
+<ParamField query="creator" type="string" required>
+  Base58 encoded public key of the creator wallet to filter by
+</ParamField>
+
+<ParamField query="limit" type="number">
+  Maximum number of presales to return (default: 100, max: 100)
+</ParamField>
+
+## Response
+
+<ResponseField name="presales" type="array">
+  Array of presale objects, each containing:
+  - `token_address` (string): The token mint address
+  - `creator_wallet` (string): The creator's wallet address
+  - `token_name` (string): The token name
+  - `token_symbol` (string): The token symbol
+  - `token_metadata_url` (string): The metadata URI
+  - `presale_tokens` (string[]): Whitelisted token addresses
+  - `ca_ending` (string): Custom address ending (if any)
+  - `creator_twitter` (string): Twitter handle (if any)
+  - `creator_github` (string): GitHub username (if any)
+  - `escrow_pub_key` (string): Escrow public key
+  - `created_at` (string): ISO 8601 timestamp
+  - `updated_at` (string): ISO 8601 timestamp
+</ResponseField>
+
+<ResponseField name="count" type="number">
+  Total number of presales returned
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "presales": [
+    {
+      "token_address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "creator_wallet": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      "token_name": "MyToken",
+      "token_symbol": "MTK",
+      "token_metadata_url": "https://example.com/metadata.json",
+      "presale_tokens": [
+        "So11111111111111111111111111111111111111112"
+      ],
+      "ca_ending": "ABC",
+      "creator_twitter": "myhandle",
+      "creator_github": "myusername",
+      "escrow_pub_key": "5FHneW5m8k3oVLLqVEzF9xjtDMNXSqKPwv6LhH4Fxhcb",
+      "created_at": "2024-01-15T10:30:00.000Z",
+      "updated_at": "2024-01-15T10:30:00.000Z"
+    },
+    {
+      "token_address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+      "creator_wallet": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      "token_name": "AnotherToken",
+      "token_symbol": "ATK",
+      "token_metadata_url": "https://example.com/metadata2.json",
+      "presale_tokens": [
+        "So11111111111111111111111111111111111111112",
+        "GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC"
+      ],
+      "ca_ending": null,
+      "creator_twitter": "myhandle",
+      "creator_github": null,
+      "escrow_pub_key": "8mQTqHpQ1hMkNXVQKqrW3p4K9Sx7YxZJjhYfGhF3vL2d",
+      "created_at": "2024-01-16T14:20:00.000Z",
+      "updated_at": "2024-01-16T14:20:00.000Z"
+    }
+  ],
+  "count": 2
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Missing Creator Parameter">
+    ```json
+    {
+      "error": "Creator wallet parameter is required"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "error": "Failed to fetch presales"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Security
+
+<Warning>
+**Private Keys Protected**: The API automatically filters out sensitive fields (escrow_priv_key, base_mint_priv_key) from all presales in the response.
+</Warning>
+
+## Rate Limiting
+
+This endpoint is subject to rate limiting:
+- **8 requests per IP** per 2-minute window
+- Returns HTTP 429 when limit exceeded
+
+## Integration Tips
+
+<Tip>
+**Creator Dashboard**: Use this endpoint to build a dashboard showing all presales created by a user.
+</Tip>
+
+<Tip>
+**Pagination**: Use the `limit` parameter to control response size. For large numbers of presales, consider implementing pagination in your UI.
+</Tip>
+
+## Use Cases
+
+### Creator Dashboard
+Display all presales for the connected wallet:
+```javascript
+const result = await fetch(
+  `/presale?creator=${connectedWallet}&limit=20`
+).then(r => r.json());
+
+result.presales.forEach(presale => {
+  console.log(`${presale.token_name} (${presale.token_symbol})`);
+  console.log(`Created: ${new Date(presale.created_at).toLocaleDateString()}`);
+});
+```
+
+### Portfolio View
+Show presale portfolio with key metrics:
+```javascript
+const { presales, count } = await fetch(
+  `/presale?creator=${wallet}`
+).then(r => r.json());
+
+console.log(`Total presales created: ${count}`);
+
+presales.forEach(presale => {
+  console.log(`- ${presale.token_name}: ${presale.token_address}`);
+});
+```
+
+### Filter by Recent
+Get the most recent presales:
+```javascript
+const result = await fetch(
+  `/presale?creator=${wallet}&limit=5`
+).then(r => r.json());
+
+// Sort by created_at (newest first)
+const sorted = result.presales.sort((a, b) =>
+  new Date(b.created_at) - new Date(a.created_at)
+);
+```
+
+## Empty Results
+
+If a creator has no presales, the API returns:
+```json
+{
+  "presales": [],
+  "count": 0
+}
+```
+
+This is a valid response and indicates the creator hasn't created any presales yet.
+
+## Sorting
+
+Results are returned in database order (typically by creation time). For custom sorting, process the array client-side:
+
+### Sort by Name
+```javascript
+presales.sort((a, b) => a.token_name.localeCompare(b.token_name));
+```
+
+### Sort by Date (Newest First)
+```javascript
+presales.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+```
+
+## Next Steps
+
+After retrieving a creator's presales:
+
+1. **Get Details**: Use [`/presale/:tokenAddress`](/api-reference/presale/get-details) for full details on each presale
+2. **Check Contributions**: Use [`/presale/:tokenAddress/contribution`](/api-reference/presale/user-contribution) to track contributions
+3. **Monitor Progress**: Build a dashboard to track all active presales

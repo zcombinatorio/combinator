@@ -1,0 +1,335 @@
+---
+title: "Create Presale"
+description: "POST /presale - Create a new token presale with escrow"
+---
+
+## Overview
+
+Creates a new token presale on the Z Combinator platform. This endpoint generates the token keypair, sets up an escrow account, and stores all presale configuration in the database.
+
+<CodeGroup>
+
+```bash curl
+curl -X POST https://api.zcombinator.io/presale \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "MyToken",
+    "symbol": "MTK",
+    "uri": "https://example.com/metadata.json",
+    "creatorWallet": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+    "presaleTokens": ["So11111111111111111111111111111111111111112"],
+    "caEnding": "ABC",
+    "creatorTwitter": "myhandle",
+    "creatorGithub": "myusername"
+  }'
+```
+
+```javascript fetch
+const response = await fetch('https://api.zcombinator.io/presale', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    name: "MyToken",
+    symbol: "MTK",
+    uri: "https://example.com/metadata.json",
+    creatorWallet: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+    presaleTokens: ["So11111111111111111111111111111111111111112"],
+    caEnding: "ABC",
+    creatorTwitter: "myhandle",
+    creatorGithub: "myusername"
+  })
+});
+
+const result = await response.json();
+```
+
+```python requests
+import requests
+
+data = {
+    "name": "MyToken",
+    "symbol": "MTK",
+    "uri": "https://example.com/metadata.json",
+    "creatorWallet": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+    "presaleTokens": ["So11111111111111111111111111111111111111112"],
+    "caEnding": "ABC",
+    "creatorTwitter": "myhandle",
+    "creatorGithub": "myusername"
+}
+
+response = requests.post(
+    'https://api.zcombinator.io/presale',
+    json=data,
+    headers={'Content-Type': 'application/json'}
+)
+
+result = response.json()
+```
+
+</CodeGroup>
+
+## Request Parameters
+
+<ParamField body="name" type="string" required>
+  The token name (max 32 characters after sanitization)
+</ParamField>
+
+<ParamField body="symbol" type="string" required>
+  The token symbol (max 10 characters after sanitization)
+</ParamField>
+
+<ParamField body="uri" type="string" required>
+  The token metadata URI (must be a valid URL pointing to token metadata JSON)
+</ParamField>
+
+<ParamField body="creatorWallet" type="string" required>
+  Base58 encoded public key of the presale creator's wallet
+</ParamField>
+
+<ParamField body="presaleTokens" type="string[]">
+  Array of whitelisted token mint addresses that can be used to contribute to the presale
+</ParamField>
+
+<ParamField body="caEnding" type="string">
+  Custom ending for the token address (1-3 characters, Base58 compatible - excludes 0, O, I, l)
+</ParamField>
+
+<ParamField body="creatorTwitter" type="string">
+  Creator's Twitter handle (without @, max 15 characters)
+</ParamField>
+
+<ParamField body="creatorGithub" type="string">
+  Creator's GitHub username (max 39 characters)
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the operation was successful
+</ResponseField>
+
+<ResponseField name="tokenAddress" type="string">
+  The generated Solana token mint address for this presale
+</ResponseField>
+
+<ResponseField name="escrowPublicKey" type="string">
+  The public key of the escrow account that will hold presale contributions
+</ResponseField>
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "tokenAddress": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "escrowPublicKey": "5FHneW5m8k3oVLLqVEzF9xjtDMNXSqKPwv6LhH4Fxhcb"
+}
+```
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="400 - Missing Parameters">
+    ```json
+    {
+      "error": "Missing required parameters"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Invalid Wallet Address">
+    ```json
+    {
+      "error": "Invalid creator wallet address format"
+    }
+    ```
+
+    The creator wallet address is not a valid Solana public key.
+  </Accordion>
+
+  <Accordion title="400 - Invalid Metadata">
+    ```json
+    {
+      "error": "Token name is required, Token symbol is required"
+    }
+    ```
+
+    Token metadata validation failed. Check name, symbol, and URI format.
+  </Accordion>
+
+  <Accordion title="400 - Invalid Social Handle">
+    ```json
+    {
+      "error": "Invalid Twitter handle format"
+    }
+    ```
+
+    Or:
+
+    ```json
+    {
+      "error": "Invalid GitHub username format"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="400 - Invalid Presale Token">
+    ```json
+    {
+      "error": "Invalid presale token address: <token>"
+    }
+    ```
+
+    One of the presale tokens is not a valid Solana token mint address.
+  </Accordion>
+
+  <Accordion title="400 - Invalid CA Ending">
+    ```json
+    {
+      "error": "CA ending must be 1-3 characters"
+    }
+    ```
+
+    Or:
+
+    ```json
+    {
+      "error": "CA ending contains invalid characters (0, O, I, l are not allowed in Base58)"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="500 - Server Error">
+    ```json
+    {
+      "error": "Failed to create presale"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Process Flow
+
+This endpoint performs several setup steps:
+
+<Steps>
+<Step title="Validate Parameters">
+Validates all required parameters and checks format constraints
+</Step>
+
+<Step title="Validate Wallet Address">
+Ensures the creator wallet is a valid Solana public key
+</Step>
+
+<Step title="Validate Token Metadata">
+Checks that name, symbol, and URI meet requirements
+</Step>
+
+<Step title="Validate Social Handles">
+Verifies Twitter and GitHub handles match platform requirements
+</Step>
+
+<Step title="Validate Presale Tokens">
+Ensures all whitelisted tokens are valid Solana token mints
+</Step>
+
+<Step title="Validate CA Ending">
+Checks custom address ending is Base58 compatible (1-3 chars)
+</Step>
+
+<Step title="Sanitize Strings">
+Sanitizes name, symbol, and social handles for database storage
+</Step>
+
+<Step title="Generate Escrow Keypair">
+Creates a new escrow account keypair and encrypts the private key
+</Step>
+
+<Step title="Generate Token Keypair">
+Creates a new token mint keypair (optionally with custom ending)
+</Step>
+
+<Step title="Store in Database">
+Saves all presale configuration with encrypted private keys
+</Step>
+
+<Step title="Return Public Data">
+Returns token address and escrow public key
+</Step>
+</Steps>
+
+## Security Features
+
+<Warning>
+**Private Key Protection**: All private keys (escrow and token mint) are encrypted before storage using AES-256-GCM encryption. The API never returns private keys in responses.
+</Warning>
+
+### Key Storage
+- **Escrow Private Key**: Encrypted and stored securely
+- **Token Mint Private Key**: Encrypted and stored securely
+- **Never Exposed**: Private keys are never returned in API responses
+
+### Input Sanitization
+All user input is sanitized before database storage:
+- **Name**: Sanitized to max 32 characters
+- **Symbol**: Sanitized to max 10 characters
+- **Social Handles**: Sanitized to platform limits
+
+## Custom Token Address
+
+The `caEnding` parameter allows you to create a vanity address:
+- **Length**: 1-3 characters
+- **Characters**: Must be Base58 compatible (excludes 0, O, I, l)
+- **Example**: "ABC" might generate an address ending in "ABC"
+- **Note**: Generation time increases with longer endings
+
+<Tip>
+**Vanity Addresses**: Custom endings make your token address more memorable and brandable. Keep it short (1-2 chars) for faster generation.
+</Tip>
+
+## Presale Tokens
+
+The `presaleTokens` array defines which tokens contributors can use:
+- **SOL**: `So11111111111111111111111111111111111111112`
+- **Other SPL Tokens**: Any valid token mint address
+- **Vault Share Tokens**: Supported for special contribution calculations
+
+<Info>
+**Empty Array**: If you pass an empty array or omit this parameter, no tokens will be whitelisted and contributions may be restricted.
+</Info>
+
+## Rate Limiting
+
+This endpoint is subject to rate limiting:
+- **8 requests per IP** per 2-minute window
+- Returns HTTP 429 when limit exceeded
+
+## Integration Tips
+
+<Tip>
+**Metadata Requirements**: Ensure your metadata URI points to valid JSON that follows Solana token metadata standards.
+</Tip>
+
+<Warning>
+**Important**: Store the returned `tokenAddress` and `escrowPublicKey` - you'll need these for subsequent operations like launching the token or accepting contributions.
+</Warning>
+
+## Next Steps
+
+After creating a presale:
+
+1. **Get Presale Details**: Use [`/presale/:tokenAddress`](/api-reference/presale/get-details) to retrieve presale info
+2. **Accept Contributions**: Configure your frontend to accept contributions to the escrow
+3. **Monitor Progress**: Track contributions and prepare for launch
+4. **Launch Token**: Use the launch endpoints when presale is complete
+
+## Database Record
+
+The presale is stored with the following fields:
+- Token address and metadata
+- Creator wallet and social links
+- Encrypted private keys
+- Whitelisted presale tokens
+- Timestamps (created_at, updated_at)
