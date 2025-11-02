@@ -4,7 +4,7 @@ import { useState, useRef, DragEvent } from 'react';
 import Image from 'next/image';
 
 interface ImageUploadProps {
-  onImageUpload: (url: string) => void;
+  onImageUpload: (url: string, filename?: string) => void;
   currentImage?: string;
   name?: string;
 }
@@ -13,6 +13,7 @@ export function ImageUpload({ onImageUpload, currentImage, name = 'token' }: Ima
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<string>(currentImage || '');
+  const [filename, setFilename] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
 
@@ -170,7 +171,8 @@ export function ImageUpload({ onImageUpload, currentImage, name = 'token' }: Ima
       }
 
       setUploadedImage(data.url);
-      onImageUpload(data.url);
+      setFilename(file.name);
+      onImageUpload(data.url, file.name);
 
       // Reset file input
       if (fileInputRef.current) {
@@ -189,70 +191,25 @@ export function ImageUpload({ onImageUpload, currentImage, name = 'token' }: Ima
   };
 
   return (
-    <div className="w-full">
-      <div
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+      <span
         onClick={triggerFileInput}
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        className={`
-          relative w-[200px] h-[200px] border-2 border-dashed rounded-lg
-          transition-all duration-200 cursor-pointer overflow-hidden
-          ${isDragging ? 'border-white bg-white/10 scale-105' : 'border-gray-800 hover:border-gray-600'}
-          ${isUploading ? 'pointer-events-none opacity-50' : ''}
-        `}
+        className={`cursor-pointer ${
+          isUploading ? 'opacity-50 pointer-events-none' : ''
+        } ${
+          uploadedImage ? 'text-[#b2e9fe] hover:underline' : 'text-gray-500 hover:text-[#b2e9fe]'
+        }`}
+        style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileSelect}
-          className="hidden"
-        />
-
-        {uploadedImage ? (
-          <div className="relative w-full h-full group">
-            <Image
-              src={uploadedImage}
-              alt="Uploaded"
-              fill
-              className="object-cover"
-            />
-            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <p className="text-white text-sm font-medium">Click to replace</p>
-            </div>
-          </div>
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
-            {isUploading ? (
-              <>
-                <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin mb-2" />
-                <p className="text-gray-300 text-sm">Uploading...</p>
-              </>
-            ) : (
-              <>
-                <svg
-                  className="w-8 h-8 text-gray-300 mb-2"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
-                <p className="text-gray-300 text-lg text-center">
-                  {isDragging ? 'Token Image*' : 'Token Image*'}
-                </p>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+        {isUploading ? 'Uploading...' : uploadedImage ? filename : 'Click to select'}
+      </span>
+    </>
   );
 }

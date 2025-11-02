@@ -135,14 +135,6 @@ export function Navigation() {
             >
               Discord
             </a>
-            <a
-              href="https://github.com/zcombinatorio/zcombinator"
-              target="_blank"
-              rel="noopener noreferrer"
-              className={externalLinkClasses}
-            >
-              GitHub
-            </a>
           </div>
           </div>
         </div>

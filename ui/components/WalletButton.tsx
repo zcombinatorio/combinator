@@ -46,9 +46,10 @@ export const WalletButton = ({ onLaunch, disabled = false, isLaunching = false, 
     return (
       <button
         disabled
-        className="text-xl text-gray-300 opacity-50 cursor-not-allowed"
+        className="text-[14px] text-gray-300 opacity-50 cursor-not-allowed"
+        style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
       >
-        Connecting...
+        [CONNECTING...]
       </button>
     );
   }
@@ -60,9 +61,10 @@ export const WalletButton = ({ onLaunch, disabled = false, isLaunching = false, 
         <div className="text-red-400 text-sm">{error}</div>
         <button
           onClick={() => setError(null)}
-          className="text-xl text-gray-300 hover:text-white transition-colors cursor-pointer"
+          className="text-[14px] text-[#b2e9fe] hover:text-[#d0f2ff] transition-colors cursor-pointer"
+          style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
         >
-          Try Again
+          [TRY AGAIN]
         </button>
       </div>
     );
@@ -73,17 +75,18 @@ export const WalletButton = ({ onLaunch, disabled = false, isLaunching = false, 
     <button
       onClick={handleButtonClick}
       disabled={connecting || disabled}
-      className={`text-xl font-bold transition-colors cursor-pointer disabled:opacity-50 ${
-        externalWallet || isLaunching || isGeneratingCA ? 'text-[#b2e9fe] hover:text-[#d0f2ff]' : 'text-gray-300 hover:text-white'
-      }`}
+      className="text-[14px] text-[#b2e9fe] hover:text-[#d0f2ff] transition-colors cursor-pointer"
+      style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
     >
       {isGeneratingCA
-        ? 'Generating CA...'
+        ? '[GENERATING CA...]'
         : isLaunching
-        ? 'Launching...'
+        ? '[LAUNCHING...]'
         : externalWallet
-        ? isPresale ? 'LAUNCH PRESALE' : 'LAUNCH'
-        : 'CONNECT WALLET'}
+        ? disabled
+          ? '[FILL OUT REQUIRED FIELDS TO LAUNCH]'
+          : isPresale ? '[CLICK TO LAUNCH PRESALE]' : '[CLICK TO LAUNCH]'
+        : '[CLICK TO CONNECT WALLET]'}
     </button>
   );
 };

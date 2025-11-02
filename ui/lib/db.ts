@@ -29,6 +29,7 @@ import type {
   PresaleBid,
   PresaleClaim,
   PresaleClaimTransaction,
+  Contribution,
 } from './db/types';
 import * as emissionSplitsModule from './db/emission-splits';
 import * as presalesModule from './db/presales';
@@ -46,6 +47,7 @@ export type {
   PresaleBid,
   PresaleClaim,
   PresaleClaimTransaction,
+  Contribution,
 } from './db/types';
 
 let pool: Pool | null = null;
@@ -1514,4 +1516,30 @@ export async function hasClaimRights(
 
 export async function getTokensWithClaimRights(walletAddress: string): Promise<TokenLaunch[]> {
   return emissionSplitsModule.getTokensWithClaimRights(getPool(), walletAddress);
+}
+
+// Contributions
+export async function getContributions(): Promise<Contribution[]> {
+  const pool = getPool();
+
+  const query = `
+    SELECT
+      id,
+      discord_id,
+      pr,
+      reward_zc,
+      reward_usd,
+      time,
+      created_at
+    FROM zc_contributions
+    ORDER BY time DESC
+  `;
+
+  try {
+    const result = await pool.query(query);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching contributions:', error);
+    throw error;
+  }
 }

@@ -24,11 +24,12 @@ interface ClaimButtonProps {
   onSuccess?: () => void;
   disabled?: boolean;
   disabledReason?: string;
+  isMobile?: boolean;
 }
 
 type ClaimInfo = ClaimInfoResponse;
 
-export function ClaimButton({ tokenAddress, tokenSymbol, onSuccess, disabled = false, disabledReason }: ClaimButtonProps) {
+export function ClaimButton({ tokenAddress, tokenSymbol, onSuccess, disabled = false, disabledReason, isMobile = false }: ClaimButtonProps) {
   const { wallet, activeWallet } = useWallet();
   const { signTransaction } = useSignTransaction();
   const [claimInfo, setClaimInfo] = useState<ClaimInfo | null>(null);
@@ -74,6 +75,17 @@ export function ClaimButton({ tokenAddress, tokenSymbol, onSuccess, disabled = f
       return `${hours}h ${minutes}m`;
     }
     return `${minutes}m`;
+  };
+
+  const formatNumberShort = (value: number) => {
+    if (value >= 1_000_000_000) {
+      return `${(value / 1_000_000_000).toFixed(2)}B`;
+    } else if (value >= 1_000_000) {
+      return `${(value / 1_000_000).toFixed(2)}M`;
+    } else if (value >= 1_000) {
+      return `${(value / 1_000).toFixed(2)}K`;
+    }
+    return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   };
 
   useEffect(() => {
@@ -259,24 +271,24 @@ export function ClaimButton({ tokenAddress, tokenSymbol, onSuccess, disabled = f
 
   if (disabled) {
     return (
-      <div className="text-xl text-gray-300-temp cursor-not-allowed" title={disabledReason}>
-        Claim
+      <div className="text-[14px] text-gray-300 cursor-not-allowed" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }} title={disabledReason}>
+        [Claim]
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="text-gray-300">
-        Loading claim info...
+      <div className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+        [Loading claim info...]
       </div>
     );
   }
 
   if (!claimInfo) {
     return (
-      <div className="text-red-400">
-        Failed to load claim information
+      <div className="text-[14px] text-red-400" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+        {isMobile ? '[Failed]' : '[Failed to load claim information]'}
       </div>
     );
   }
@@ -287,24 +299,27 @@ export function ClaimButton({ tokenAddress, tokenSymbol, onSuccess, disabled = f
   return (
     <div className="flex items-center">
       {!claimInfo.canClaimNow && timeRemaining ? (
-        <div className="text-xl text-gray-300">
-          Next Claim: {timeRemaining}
+        <div className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+          [Next Claim: {timeRemaining}]
         </div>
       ) : (
         <button
           onClick={handleClaim}
           disabled={claiming || !claimInfo.canClaimNow || availableToClaim <= 0}
-          className={`text-xl transition-colors cursor-pointer ${
+          className={`text-[14px] transition-colors cursor-pointer ${
             claiming || !claimInfo.canClaimNow || availableToClaim <= 0
-              ? 'text-gray-300-temp cursor-not-allowed'
-              : 'text-gray-300 hover:text-white'
+              ? 'text-gray-300 cursor-not-allowed'
+              : 'text-gray-300 hover:text-[#b2e9fe]'
           }`}
+          style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
         >
           {claiming
-            ? 'Claiming...'
+            ? '[Claiming...]'
             : availableToClaim <= 0
-            ? 'All Tokens Claimed'
-            : `Claim ${amountUserReceives.toLocaleString()}`
+            ? '[All Tokens Claimed]'
+            : isMobile
+            ? `[Claim ${formatNumberShort(amountUserReceives)}]`
+            : `[Claim ${amountUserReceives.toLocaleString()}]`
           }
         </button>
       )}

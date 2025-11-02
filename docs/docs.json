@@ -38,6 +38,13 @@
               "errors/overview",
               "errors/status-codes"
             ]
+          },
+          {
+            "group": "Governance",
+            "pages": [
+              "governance",
+              "addresses"
+            ]
           }
         ]
       },

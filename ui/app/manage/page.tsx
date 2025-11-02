@@ -2,8 +2,6 @@
 
 import { useWallet } from '@/components/WalletProvider';
 import { ClaimButton } from '@/components/ClaimButton';
-import { TransferModal } from '@/components/TransferModal';
-import { BurnModal } from '@/components/BurnModal';
 import { Navigation } from '@/components/Navigation';
 import { SecureVerificationModal } from '@/components/SecureVerificationModal';
 import { useState, useEffect } from 'react';
@@ -51,21 +49,8 @@ export default function ManagePage() {
   const [launches, setLaunches] = useState<VerifiedTokenLaunch[]>([]);
   const [presales, setPresales] = useState<Presale[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingPresales, setLoadingPresales] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasVerified, setHasVerified] = useState(false);
-  const [transferModal, setTransferModal] = useState<{ isOpen: boolean; tokenAddress: string; tokenSymbol: string; userBalance: string }>({
-    isOpen: false,
-    tokenAddress: '',
-    tokenSymbol: '',
-    userBalance: '0'
-  });
-  const [burnModal, setBurnModal] = useState<{ isOpen: boolean; tokenAddress: string; tokenSymbol: string; userBalance: string }>({
-    isOpen: false,
-    tokenAddress: '',
-    tokenSymbol: '',
-    userBalance: '0'
-  });
   const [loadingBalances, setLoadingBalances] = useState<Set<string>>(new Set());
   const [copiedWallet, setCopiedWallet] = useState(false);
   const [copiedTokens, setCopiedTokens] = useState<Set<string>>(new Set());
@@ -255,11 +240,8 @@ export default function ManagePage() {
     const fetchPresales = async () => {
       if (!wallet) {
         setPresales([]);
-        setLoadingPresales(false);
         return;
       }
-
-      setLoadingPresales(true);
 
       try {
         const response = await fetch(`/api/presale?creator=${wallet.toString()}`);
@@ -274,8 +256,6 @@ export default function ManagePage() {
       } catch (error) {
         console.error('Error fetching presales:', error);
         setPresales([]);
-      } finally {
-        setLoadingPresales(false);
       }
     };
 
@@ -291,32 +271,6 @@ export default function ManagePage() {
       hour: '2-digit',
       minute: '2-digit'
     });
-  };
-
-  const openTransferModal = (tokenAddress: string, tokenSymbol: string, userBalance: string) => {
-    setTransferModal({
-      isOpen: true,
-      tokenAddress,
-      tokenSymbol,
-      userBalance
-    });
-  };
-
-  const closeTransferModal = () => {
-    setTransferModal(prev => ({ ...prev, isOpen: false }));
-  };
-
-  const openBurnModal = (tokenAddress: string, tokenSymbol: string, userBalance: string) => {
-    setBurnModal({
-      isOpen: true,
-      tokenAddress,
-      tokenSymbol,
-      userBalance
-    });
-  };
-
-  const closeBurnModal = () => {
-    setBurnModal(prev => ({ ...prev, isOpen: false }));
   };
 
   const refreshTokenBalance = async (tokenAddress: string, delayMs: number = 0) => {
@@ -624,24 +578,24 @@ export default function ManagePage() {
                       </Link>
                     </div>
                     <div className="flex items-center gap-4 ml-16">
-                      <button
-                        onClick={() => openTransferModal(launch.token_address, launch.token_symbol || 'TOKEN', launch.userBalance === '--' ? '0' : (launch.userBalance || '0'))}
+                      <Link
+                        href={`/transfer/${launch.token_address}`}
                         className="text-lg text-gray-300 hover:text-white transition-colors cursor-pointer"
                       >
                         Transfer
-                      </button>
+                      </Link>
                       <button
                         onClick={() => window.open(`https://jup.ag/swap?sell=${launch.token_address}&buy=So11111111111111111111111111111111111111112`, '_blank')}
                         className="text-lg text-gray-300 hover:text-white transition-colors cursor-pointer"
                       >
                         Sell
                       </button>
-                      <button
-                        onClick={() => openBurnModal(launch.token_address, launch.token_symbol || 'TOKEN', launch.userBalance === '--' ? '0' : (launch.userBalance || '0'))}
+                      <Link
+                        href={`/burn/${launch.token_address}`}
                         className="text-lg text-gray-300 hover:text-white transition-colors cursor-pointer"
                       >
                         Burn
-                      </button>
+                      </Link>
                     </div>
                     <div className="ml-auto">
                       <ClaimButton
@@ -713,24 +667,6 @@ export default function ManagePage() {
             )}
           </>
         )}
-
-        <TransferModal
-          isOpen={transferModal.isOpen}
-          onClose={closeTransferModal}
-          tokenAddress={transferModal.tokenAddress}
-          tokenSymbol={transferModal.tokenSymbol}
-          userBalance={transferModal.userBalance}
-          onSuccess={() => refreshTokenBalance(transferModal.tokenAddress, 5000)}
-        />
-
-        <BurnModal
-          isOpen={burnModal.isOpen}
-          onClose={closeBurnModal}
-          tokenAddress={burnModal.tokenAddress}
-          tokenSymbol={burnModal.tokenSymbol}
-          userBalance={burnModal.userBalance}
-          onSuccess={() => refreshTokenBalance(burnModal.tokenAddress, 5000)}
-        />
 
         <SecureVerificationModal
           isOpen={showVerificationModal}

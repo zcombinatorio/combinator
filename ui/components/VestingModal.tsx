@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useWallet } from './WalletProvider';
 import { usePrivy } from '@privy-io/react-auth';
 import { Transaction } from '@solana/web3.js';
-import { InfoTooltip } from '@/components/InfoTooltip';
 import bs58 from 'bs58';
 
 interface VestingModalProps {
@@ -153,23 +152,21 @@ export function VestingModal({
 
   if (!vestingInfo) {
     return (
-      <div className="space-y-8">
-        <div className="border-b border-gray-800 pb-6">
-          <h2 className="text-2xl font-bold mb-4">Vesting</h2>
-          {!wallet ? (
-            <p className="text-gray-300 text-lg">Connect your wallet to view vesting information</p>
-          ) : (
-            <p className="text-gray-300 text-lg">No vesting allocation found for your wallet</p>
-          )}
-        </div>
-
-        {!wallet && (
-          <button
-            onClick={handleConnectWallet}
-            className="w-full py-3 text-xl font-bold bg-white text-black hover:bg-gray-200 transition-colors"
-          >
-            Connect Wallet
-          </button>
+      <div>
+        <p className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Vesting</p>
+        {!wallet ? (
+          <>
+            <p className="mt-6 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Connect your wallet to view vesting information</p>
+            <button
+              onClick={handleConnectWallet}
+              className="mt-6 text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+            >
+              [CONNECT WALLET]
+            </button>
+          </>
+        ) : (
+          <p className="mt-6 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>No vesting allocation found for your wallet</p>
         )}
       </div>
     );
@@ -198,84 +195,74 @@ export function VestingModal({
   const timeUntilUnlock = getTimeUntilUnlock();
 
   return (
-    <div className="space-y-8">
-      <div className="border-b border-gray-800 pb-6">
-        <h2 className="text-2xl font-bold mb-4">Vesting</h2>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-gray-300 text-lg">
-            <span>Your allocation: <span className="text-white font-bold">{formatTokenAmount(vestingInfo.totalAllocated)} {tokenSymbol}</span></span>
-            <InfoTooltip text="Total tokens allocated to you from the presale, vesting linearly over 2 weeks" />
-          </div>
-          <div className="text-gray-300 text-lg">
-            Already claimed: <span className="text-white font-bold">{formatTokenAmount(vestingInfo.totalClaimed)} {tokenSymbol}</span>
-          </div>
-          <div className="text-gray-300 text-lg">
-            Vesting progress: <span className="text-white font-bold">{vestingInfo.vestingProgress.toFixed(1)}%</span>
-            {vestingInfo.isFullyVested ? (
-              <span className="text-green-400 ml-2">✓ Fully Vested</span>
-            ) : (
-              <span className="text-gray-400 ml-2">({hoursRemaining} hours left)</span>
-            )}
-          </div>
-        </div>
+    <div>
+      <p className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Vesting</p>
+
+      <div className="mt-0.5">
+        <p className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+          Your allocation: <span className="text-white">{formatTokenAmount(vestingInfo.totalAllocated)} {tokenSymbol}</span>
+        </p>
+        <p className="mt-0.5 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+          Already claimed: <span className="text-white">{formatTokenAmount(vestingInfo.totalClaimed)} {tokenSymbol}</span>
+        </p>
+        <p className="mt-1 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+          Vesting progress: <span className="text-white">{vestingInfo.vestingProgress.toFixed(1)}%</span>
+          {vestingInfo.isFullyVested ? (
+            <span className="text-green-400 ml-2">✓ Fully Vested</span>
+          ) : (
+            <span className="text-gray-500 ml-2">({hoursRemaining} hours left)</span>
+          )}
+        </p>
       </div>
 
-      <div className="space-y-6">
-        <div className="space-y-2">
-          <label className="text-lg text-gray-300">
-            Available to Claim
-            {isInCooldown && <span className="text-yellow-400 text-sm ml-2">(Cooldown active)</span>}
-          </label>
-          <div className="relative">
-            <div className="w-full py-3 border-b border-gray-800 text-xl">
-              <span className={`${canClaimNow ? 'text-white' : 'text-gray-500'}`}>
-                {formatTokenAmount(vestingInfo.claimableAmount)}
-              </span>
-              <span className="text-gray-300 ml-2">{tokenSymbol}</span>
-            </div>
-          </div>
-          <div className="h-5">
-            {claimError && (
-              <p className="text-sm text-red-400">
-                {claimError}
-              </p>
-            )}
-            {claimSuccess && (
-              <p className="text-sm text-green-400">
-                Tokens claimed successfully! ✓
-              </p>
-            )}
-          </div>
+      <div className="mt-0.5">
+        <div>
+          <p className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            Available to Claim: <span className={`${canClaimNow ? 'text-white' : 'text-gray-500'}`}>
+              {formatTokenAmount(vestingInfo.claimableAmount)} {tokenSymbol}
+            </span>
+            {' '}
+            {isInCooldown && <span className="text-yellow-400 text-[14px]">(Cooldown active)</span>}
+          </p>
+          {claimError && (
+            <p className="mt-2 text-[14px] text-red-400" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+              {claimError}
+            </p>
+          )}
+          {claimSuccess && (
+            <p className="mt-2 text-[14px] text-green-400" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+              Tokens claimed successfully! ✓
+            </p>
+          )}
         </div>
 
-        <div className="space-y-4">
-          <div className="flex justify-between items-center text-gray-300">
-            <span>Remaining to vest:</span>
-            <span className="font-mono">{formatTokenAmount(remainingTokens.toString())} {tokenSymbol}</span>
-          </div>
+        <div className="mt-1">
+          <p className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            Remaining to vest: <span className="text-white">{formatTokenAmount(remainingTokens.toString())} {tokenSymbol}</span>
+          </p>
           {!vestingInfo.isFullyVested && vestingInfo.nextUnlockTime && (
-            <div className={`flex justify-between items-center ${isInCooldown ? 'text-yellow-400' : 'text-gray-300'}`}>
-              <span>Next unlock:</span>
-              <span className="font-mono">
+            <p className={`mt-0.5 text-[14px] ${isInCooldown ? 'text-yellow-400' : 'text-gray-300'}`} style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+              Next unlock: <span className="text-white">
                 {isInCooldown ? (
                   <>In {timeUntilUnlock} ({new Date(vestingInfo.nextUnlockTime).toLocaleTimeString()})</>
                 ) : (
                   new Date(vestingInfo.nextUnlockTime).toLocaleTimeString()
                 )}
               </span>
-            </div>
+            </p>
           )}
         </div>
 
         <button
           onClick={handleClaim}
           disabled={isClaiming || !canClaimNow}
-          className="w-full py-3 text-xl font-bold bg-white text-black hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="mt-6.5 text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
         >
-          {isClaiming ? 'Processing...' :
-           isInCooldown ? `Claim available in ${timeUntilUnlock}` :
-           hasTokensToClaimNow ? `Claim ${formatTokenAmount(vestingInfo.claimableAmount)} ${tokenSymbol}` :
-           'No Tokens Available'}
+          {isClaiming ? '[PROCESSING...]' :
+           isInCooldown ? `[CLAIM AVAILABLE IN ${timeUntilUnlock}]` :
+           hasTokensToClaimNow ? `[CLAIM ${formatTokenAmount(vestingInfo.claimableAmount)} ${tokenSymbol}]` :
+           '[NO TOKENS AVAILABLE]'}
         </button>
       </div>
     </div>

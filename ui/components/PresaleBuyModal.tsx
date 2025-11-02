@@ -3,14 +3,11 @@
 import { useState } from 'react';
 import { useWallet } from '@/components/WalletProvider';
 import { usePrivy } from '@privy-io/react-auth';
-import { InfoTooltip } from '@/components/InfoTooltip';
 import { Transaction, PublicKey, Connection } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
-  createTransferInstruction,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID
+  createTransferInstruction
 } from '@solana/spl-token';
 import { useParams } from 'next/navigation';
 
@@ -281,24 +278,33 @@ export function PresaleBuyModal({ tokenSymbol, status, maxContribution = 10, use
   const isUnlimited = maxContribution === Infinity;
 
   return (
-    <div className="space-y-8">
-      <div className="border-b border-gray-800 pb-6">
-        <h2 className="text-2xl font-bold mb-4">Buy</h2>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-gray-300 text-lg">
-            <span>Your max contribution: <span className="text-white font-bold">{isUnlimited ? 'Unlimited' : `${maxContribution.toFixed(0)} $ZC`}</span></span>
-            <InfoTooltip text={isUnlimited ? "No limit on buy size - presale is open to everyone" : "Maximum buy size based on your holdings of the required tokens"} />
-          </div>
-            <div className="text-gray-300 text-lg">
-            Your contribution: <span className="text-white font-bold">{userContribution.toFixed(0)} $ZC</span>
-          </div>
+    <div>
+      <p className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Enter the presale</p>
+
+      <div className="mt-1 space-y-4">
+        {/* Info Section */}
+        <div className="bg-[#2B2B2A] rounded-xl p-4 space-y-1">
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Max contribution</span>
+          <span className="text-sm font-semibold text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            {isUnlimited ? 'Unlimited' : `${maxContribution.toFixed(0)} $ZC`}
+          </span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Your contribution</span>
+          <span className="text-sm font-semibold text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            {userContribution.toFixed(0)} $ZC
+          </span>
         </div>
       </div>
 
-      <div className="space-y-6">
-        <div className="space-y-2">
-          <label className="text-lg text-gray-300">Amount ($ZC)</label>
-          <div className="relative">
+      {/* Amount Input */}
+      <div className="bg-[#2B2B2A] rounded-xl p-4">
+        <div className="flex justify-between mb-2">
+          <label className="text-sm text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Amount</label>
+        </div>
+        <div className="flex items-center gap-3 relative">
+          <div className="flex-1 relative">
             <input
               type="number"
               value={amount}
@@ -307,7 +313,8 @@ export function PresaleBuyModal({ tokenSymbol, status, maxContribution = 10, use
               disabled={isDisabled}
               min="0"
               step="1"
-              className={`w-full py-3 bg-transparent border-0 border-b border-gray-800 focus:outline-none focus:border-white transition-colors text-xl placeholder:text-gray-300 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50 disabled:cursor-not-allowed`}
+              className="w-full bg-transparent text-3xl font-semibold focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50 disabled:cursor-not-allowed pr-16"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
               autoComplete="off"
             />
             {!isUnlimited && (
@@ -315,93 +322,109 @@ export function PresaleBuyModal({ tokenSymbol, status, maxContribution = 10, use
                 type="button"
                 onClick={() => setPercentage(100)}
                 disabled={isDisabled}
-                className="absolute right-2 top-2 text-lg text-gray-300 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#F7FCFE] bg-[#1E1E1E] hover:bg-[#141414] px-2 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                 tabIndex={-1}
               >
                 MAX
               </button>
             )}
           </div>
-          <div className="h-5">
-            {errors.amount && (
-              <p className="text-sm text-red-400">
-                {errors.amount}
-              </p>
-            )}
+          <div className="flex items-center gap-2 bg-[#1E1E1E] rounded-xl px-4 py-2">
+            <span className="font-semibold" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>$ZC</span>
           </div>
         </div>
+        {errors.amount && (
+          <p className="text-sm text-red-400 mt-2" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            {errors.amount}
+          </p>
+        )}
+      </div>
 
+      {/* Quick Select Buttons */}
+      <div className="grid grid-cols-4 gap-2">
         {isUnlimited ? (
-          <div className="grid grid-cols-4 gap-3">
+          <>
             <button
               onClick={() => setFixedAmount(0.1)}
               disabled={isDisabled}
-              className="py-2 text-lg text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-[#2B2B2A] hover:bg-[#333333] rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               0.1
             </button>
             <button
               onClick={() => setFixedAmount(0.2)}
               disabled={isDisabled}
-              className="py-2 text-lg text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-[#2B2B2A] hover:bg-[#333333] rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               0.2
             </button>
             <button
               onClick={() => setFixedAmount(0.5)}
               disabled={isDisabled}
-              className="py-2 text-lg text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-[#2B2B2A] hover:bg-[#333333] rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               0.5
             </button>
             <button
               onClick={() => setFixedAmount(1)}
               disabled={isDisabled}
-              className="py-2 text-lg text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-[#2B2B2A] hover:bg-[#333333] rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               1
             </button>
-          </div>
+          </>
         ) : (
-          <div className="grid grid-cols-4 gap-3">
+          <>
             <button
               onClick={() => setPercentage(10)}
               disabled={isDisabled}
-              className="py-2 text-lg text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-[#2B2B2A] hover:bg-[#333333] rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               10%
             </button>
             <button
               onClick={() => setPercentage(25)}
               disabled={isDisabled}
-              className="py-2 text-lg text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-[#2B2B2A] hover:bg-[#333333] rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               25%
             </button>
             <button
               onClick={() => setPercentage(50)}
               disabled={isDisabled}
-              className="py-2 text-lg text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-[#2B2B2A] hover:bg-[#333333] rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               50%
             </button>
             <button
               onClick={() => setPercentage(75)}
               disabled={isDisabled}
-              className="py-2 text-lg text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-[#2B2B2A] hover:bg-[#333333] rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               75%
             </button>
-          </div>
+          </>
         )}
+      </div>
 
-        <button
-          onClick={handleBuy}
-          disabled={isContributing || connecting || (isDisabled && !!wallet) || (isAmountInvalid && !!wallet)}
-          className="w-full py-3 text-xl font-bold bg-white text-black hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {connecting ? 'Connecting...' : isContributing ? 'Processing...' : !wallet ? 'Connect Wallet' : status !== 'pending' ? 'Presale Closed' : 'Buy'}
-        </button>
+      {/* Buy Button */}
+      <button
+        onClick={handleBuy}
+        disabled={isContributing || connecting || (isDisabled && !!wallet) || (isAmountInvalid && !!wallet)}
+        className="w-full py-3 text-[14px] font-bold bg-white text-black hover:bg-gray-200 rounded-xl transition-colors disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+        style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+      >
+        {connecting ? 'Connecting...' : isContributing ? 'Processing...' : !wallet ? 'Connect Wallet' : status !== 'pending' ? 'Presale Closed' : 'Buy'}
+      </button>
       </div>
     </div>
   );

@@ -4,7 +4,6 @@ import "./globals.css";
 import { PrivyProviderWrapper } from "@/components/PrivyProviderWrapper";
 import { WalletContextProvider } from "@/components/WalletProvider";
 import { ToastContainer } from "@/components/Toast";
-import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -46,7 +45,6 @@ export default function RootLayout({
       >
         <PrivyProviderWrapper>
           <WalletContextProvider>
-            <AnnouncementBanner />
             {children}
             <ToastContainer />
           </WalletContextProvider>

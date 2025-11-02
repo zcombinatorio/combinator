@@ -163,3 +163,13 @@ export interface PresaleClaimTransaction {
   verified_at: Date;
   created_at?: Date;
 }
+
+export interface Contribution {
+  id?: number;
+  discord_id: string;
+  pr: string;
+  reward_zc: string;
+  reward_usd: string;
+  time: number;
+  created_at?: Date;
+}
