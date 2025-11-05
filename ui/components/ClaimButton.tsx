@@ -309,7 +309,7 @@ export function ClaimButton({ tokenAddress, tokenSymbol, onSuccess, disabled = f
           className={`text-[14px] transition-colors cursor-pointer ${
             claiming || !claimInfo.canClaimNow || availableToClaim <= 0
               ? 'text-gray-300 cursor-not-allowed'
-              : 'text-gray-300 hover:text-[#b2e9fe]'
+              : 'text-gray-300 hover:text-[#EF6400]'
           }`}
           style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
         >

@@ -1,4 +1,4 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is the Z Combinator UI - a modern, product-grade interface built with [Next.js](https://nextjs.org).
 
 ## Getting Started
 
@@ -16,9 +16,72 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+You can start editing the page by modifying `app/(vscode)/page.tsx`. The page auto-updates as you edit the file.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Features
+
+- **Modern Product Design**: Clean, professional interface with card-based layouts and proper typography
+- **Dual Theme System**: Seamless light and dark mode with toggle in top navigation
+- **Orange Accent Color**: Vibrant orange (`#EF6400`) brand color used throughout
+- **Responsive Layout**: Mobile-first design that scales beautifully across all devices
+- **Accessibility First**: WCAG AA compliant with full keyboard navigation and screen reader support
+- **Component Library**: Reusable UI components (Button, Card, Callout, Container)
+- **Tailwind CSS v4**: Latest Tailwind CSS for modern styling
+
+## UI System
+
+The application features a modern component-based design system. See documentation:
+
+- **[UI_MODERNIZATION.md](./UI_MODERNIZATION.md)**: Complete modernization guide
+  - Overview of changes from VSCode-style to product design
+  - Component usage patterns
+  - Migration guide
+  - Best practices
+
+- **[COMPONENTS.md](./COMPONENTS.md)**: Detailed component documentation
+  - Props and usage for each component
+  - Code examples
+  - Layout patterns
+  - Accessibility notes
+
+- **[THEME.md](./THEME.md)**: Theme system documentation
+  - Light and dark color schemes
+  - CSS variable usage
+  - Implementation details
+
+## Theme System
+
+**Default Theme**: Light mode
+**Theme Toggle**: Located in the top navigation bar (next to login/portfolio button)
+
+Light and dark themes with:
+- Proper contrast ratios (WCAG AA)
+- Smooth transitions
+- Persistent user preference
+- CSS variable-based system
+
+## Color Scheme
+
+- **White/Light Gray**: Light theme backgrounds
+- **Dark Gray/Black**: Dark theme backgrounds
+- **Orange** (`#EF6400`): Primary accent color for:
+  - Buttons and CTAs
+  - Links and interactive elements
+  - Focus indicators
+  - Brand highlights
+
+## Component Library
+
+Core UI components in `/components/ui/`:
+
+- **Button**: Primary, secondary, ghost, and outline variants
+- **Card**: Content containers with headers, descriptions, and footers
+- **Callout**: Info, success, warning, and error notifications
+- **Container**: Responsive max-width wrappers
+- **TopNav**: Sticky navigation header
+- **SiteFooter**: Comprehensive site footer
+
+See [COMPONENTS.md](./COMPONENTS.md) for detailed usage.
 
 ## Learn More
 

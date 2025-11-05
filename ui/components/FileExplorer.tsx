@@ -9,7 +9,7 @@ export function FileExplorer({ className }: { className?: string }) {
     <div
       className={`flex-1 overflow-y-auto ${className || ''}`}
       style={{
-        backgroundColor: '#181818',
+        backgroundColor: 'var(--background)',
         fontFamily: 'Monaco, Menlo, "Courier New", monospace',
         fontSize: '13px'
       }}

@@ -49,7 +49,7 @@ export function ClaimContent() {
         <div className="flex flex-row gap-4 mt-6.5 items-start">
           <button
             onClick={() => handleSocialLogin('twitter')}
-            className="text-[14px] text-[#b2e9fe] hover:text-[#d0f2ff] transition-colors cursor-pointer text-left"
+            className="text-[14px] text-[#EF6400] hover:text-[#d0f2ff] transition-colors cursor-pointer text-left"
             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
           >
             [CLICK TO CONNECT X]
@@ -57,7 +57,7 @@ export function ClaimContent() {
 
           <button
             onClick={() => handleSocialLogin('github')}
-            className="text-[14px] text-[#b2e9fe] hover:text-[#d0f2ff] transition-colors cursor-pointer text-left"
+            className="text-[14px] text-[#EF6400] hover:text-[#d0f2ff] transition-colors cursor-pointer text-left"
             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
           >
             [CLICK TO CONNECT GITHUB]

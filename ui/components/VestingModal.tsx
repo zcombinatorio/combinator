@@ -159,7 +159,7 @@ export function VestingModal({
             <p className="mt-6 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Connect your wallet to view vesting information</p>
             <button
               onClick={handleConnectWallet}
-              className="mt-6 text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors"
+              className="mt-6 text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors"
               style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
               [CONNECT WALLET]
@@ -256,7 +256,7 @@ export function VestingModal({
         <button
           onClick={handleClaim}
           disabled={isClaiming || !canClaimNow}
-          className="mt-6.5 text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="mt-6.5 text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
         >
           {isClaiming ? '[PROCESSING...]' :

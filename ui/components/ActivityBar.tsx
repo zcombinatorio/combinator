@@ -1,15 +1,18 @@
 'use client';
 
+import { ThemeToggle } from './ThemeToggle';
+
 export function ActivityBar() {
   return (
     <div
-      className="flex flex-col items-center pt-2"
+      className="flex flex-col items-center justify-between pt-2 pb-2"
       style={{
         width: '40px',
         backgroundColor: '#0E0E0E',
         flexShrink: 0
       }}
     >
+      <div className="flex flex-col items-center">
       {/* Files Icon - Active */}
       <div className="relative mb-2">
         <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-white"></div>
@@ -53,6 +56,12 @@ export function ActivityBar() {
           <rect x="1" y="9" width="6" height="6" stroke="#C5C5C5" strokeWidth="1"/>
           <rect x="9" y="9" width="6" height="6" fill="#C5C5C5"/>
         </svg>
+      </div>
+      </div>
+
+      {/* Theme Toggle at Bottom */}
+      <div className="w-10 flex items-center justify-center">
+        <ThemeToggle />
       </div>
     </div>
   );

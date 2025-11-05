@@ -339,7 +339,7 @@ export function TransferContent({ tokenAddress, tokenSymbol: initialSymbol, user
             onClick={() => {
               navigator.clipboard.writeText(tokenAddress);
             }}
-            className="text-gray-300 cursor-pointer hover:text-[#b2e9fe] transition-colors"
+            className="text-gray-300 cursor-pointer hover:text-[#EF6400] transition-colors"
             title="Click to copy full address"
           >
             {tokenAddress.slice(0, 6)}...{tokenAddress.slice(-6)}

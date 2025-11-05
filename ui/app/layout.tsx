@@ -5,6 +5,7 @@ import { PrivyProviderWrapper } from "@/components/PrivyProviderWrapper";
 import { WalletContextProvider } from "@/components/WalletProvider";
 import { ToastContainer } from "@/components/Toast";
 import { DemoModeBanner } from "@/components/DemoModeBanner";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -44,13 +45,15 @@ export default function RootLayout({
       <body
         className={`${inter.className} antialiased`}
       >
-        <DemoModeBanner />
-        <PrivyProviderWrapper>
-          <WalletContextProvider>
-            {children}
-            <ToastContainer />
-          </WalletContextProvider>
-        </PrivyProviderWrapper>
+        <ThemeProvider>
+          <DemoModeBanner />
+          <PrivyProviderWrapper>
+            <WalletContextProvider>
+              {children}
+              <ToastContainer />
+            </WalletContextProvider>
+          </PrivyProviderWrapper>
+        </ThemeProvider>
       </body>
     </html>
   );

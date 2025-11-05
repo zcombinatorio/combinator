@@ -433,7 +433,7 @@ export function PresaleContent() {
           <button
             onClick={handleLaunch}
             disabled={isLaunching}
-            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
           >
             {isLaunching ? '[LAUNCHING...]' : '[LAUNCH]'}
@@ -474,7 +474,7 @@ export function PresaleContent() {
         )}
         <div>
           <p className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-white">${presale.token_symbol}</span> {presale.token_name} <span className="text-gray-500 ml-4">Status:</span> <span className={`${presale.status === 'launched' ? 'text-[#b2e9fe]' : presale.status === 'pending' ? 'text-yellow-400' : 'text-red-400'}`} style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{presale.status.toUpperCase()}</span>
+            <span className="text-white">${presale.token_symbol}</span> {presale.token_name} <span className="text-gray-500 ml-4">Status:</span> <span className={`${presale.status === 'launched' ? 'text-[#EF6400]' : presale.status === 'pending' ? 'text-yellow-400' : 'text-red-400'}`} style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{presale.status.toUpperCase()}</span>
           </p>
           {metadata?.description && (
             <p className="mt-0.5 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
@@ -498,7 +498,7 @@ export function PresaleContent() {
             <span className="text-white">${presale.token_symbol}</span> {presale.token_name}
           </p>
           <p className="text-[14px] text-gray-300 mt-0.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-500">Status:</span> <span className={`${presale.status === 'launched' ? 'text-[#b2e9fe]' : presale.status === 'pending' ? 'text-yellow-400' : 'text-red-400'}`}>{presale.status.toUpperCase()}</span>
+            <span className="text-gray-500">Status:</span> <span className={`${presale.status === 'launched' ? 'text-[#EF6400]' : presale.status === 'pending' ? 'text-yellow-400' : 'text-red-400'}`}>{presale.status.toUpperCase()}</span>
           </p>
           {metadata?.description && (
             <p className="mt-0.5 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
@@ -588,14 +588,14 @@ export function PresaleContent() {
         <p className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
           {'//'}Total raised
         </p>
-        <p className="mt-0.5 text-[14px] text-[#b2e9fe] font-semibold" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+        <p className="mt-0.5 text-[14px] text-[#EF6400] font-semibold" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
           {bidsData ? bidsData.totalRaised.toFixed(0) : '0'} $ZC{' '}
           {presale.escrow_pub_key && (
             <a
               href={`https://solscan.io/account/${presale.escrow_pub_key}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-gray-300 hover:text-[#b2e9fe] font-normal"
+              className="text-gray-300 hover:text-[#EF6400] font-normal"
               title="View escrow wallet on Solscan"
             >
               [View Escrow]
@@ -618,7 +618,7 @@ export function PresaleContent() {
                 >
                   <button
                     onClick={() => copyToClipboard(contribution.wallet)}
-                    className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors"
+                    className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors"
                   >
                     {copiedAddress === contribution.wallet ? '✓ Copied' : (
                       <>

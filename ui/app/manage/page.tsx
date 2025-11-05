@@ -522,7 +522,7 @@ export default function ManagePage() {
                           {launch.token_name || 'Unnamed Token'}
                         </span>
                         {launch.is_creator_designated && (
-                          <span className="px-2 py-0.5 text-sm font-medium bg-[#b2e9fe]/20 text-[#b2e9fe] rounded-md" title="You're designated as a creator for this token">
+                          <span className="px-2 py-0.5 text-sm font-medium bg-[#EF6400]/20 text-[#EF6400] rounded-md" title="You're designated as a creator for this token">
                             Designated
                           </span>
                         )}

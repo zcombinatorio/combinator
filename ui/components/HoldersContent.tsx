@@ -283,7 +283,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
             className={`text-[14px] transition-colors cursor-pointer ${
               syncing
                 ? 'text-gray-300 cursor-not-allowed opacity-50'
-                : 'text-gray-300 hover:text-[#b2e9fe]'
+                : 'text-gray-300 hover:text-[#EF6400]'
             }`}
             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
           >
@@ -307,7 +307,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoComplete="off"
-              className="bg-transparent border-0 focus:outline-none placeholder:text-gray-500 text-[#b2e9fe]"
+              className="bg-transparent border-0 focus:outline-none placeholder:text-gray-500 text-[#EF6400]"
               style={{
                 fontFamily: 'Monaco, Menlo, "Courier New", monospace',
                 width: searchQuery ? `${searchQuery.length}ch` : '15ch'
@@ -335,7 +335,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
                   {formatAddressMobile(holder.wallet_address)}
                 </span>
                 {wallet && holder.wallet_address === wallet.toBase58() && (
-                  <span className="hidden md:inline text-[14px] text-[#b2e9fe] bg-[#b2e9fe]/10 px-1 py-0.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                  <span className="hidden md:inline text-[14px] text-[#EF6400] bg-[#EF6400]/10 px-1 py-0.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
                     You
                   </span>
                 )}
@@ -359,7 +359,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
                 </span>
                 <button
                   onClick={() => handleEditClick(holder)}
-                  className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                  className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                   style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                 >
                   [Labels]
@@ -375,7 +375,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
                     placeholder="Telegram username"
                     value={editForm.telegram_username}
                     onChange={(e) => handleInputChange('telegram_username', e.target.value)}
-                    className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[14px] text-white placeholder:text-gray-300 focus:outline-none focus:border-[#b2e9fe]"
+                    className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[14px] text-white placeholder:text-gray-300 focus:outline-none focus:border-[#EF6400]"
                     style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                   />
                   <input
@@ -383,7 +383,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
                     placeholder="Discord username"
                     value={editForm.discord_username}
                     onChange={(e) => handleInputChange('discord_username', e.target.value)}
-                    className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[14px] text-white placeholder:text-gray-300 focus:outline-none focus:border-[#b2e9fe]"
+                    className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[14px] text-white placeholder:text-gray-300 focus:outline-none focus:border-[#EF6400]"
                     style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                   />
                   <input
@@ -391,7 +391,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
                     placeholder="X username"
                     value={editForm.x_username}
                     onChange={(e) => handleInputChange('x_username', e.target.value)}
-                    className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[14px] text-white placeholder:text-gray-300 focus:outline-none focus:border-[#b2e9fe]"
+                    className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[14px] text-white placeholder:text-gray-300 focus:outline-none focus:border-[#EF6400]"
                     style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                   />
                   <input
@@ -399,21 +399,21 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
                     placeholder="Custom label"
                     value={editForm.custom_label}
                     onChange={(e) => handleInputChange('custom_label', e.target.value)}
-                    className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[14px] text-white placeholder:text-gray-300 focus:outline-none focus:border-[#b2e9fe]"
+                    className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[14px] text-white placeholder:text-gray-300 focus:outline-none focus:border-[#EF6400]"
                     style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                   />
                 </div>
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => handleSaveEdit(holder.wallet_address)}
-                    className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                    className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                     style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                   >
                     [Save]
                   </button>
                   <button
                     onClick={handleCancelEdit}
-                    className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                    className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                     style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                   >
                     [Cancel]
@@ -455,7 +455,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
             className={`text-[14px] transition-colors cursor-pointer ${
               currentPage === 0
                 ? 'text-gray-300 cursor-not-allowed opacity-50'
-                : 'text-gray-300 hover:text-[#b2e9fe]'
+                : 'text-gray-300 hover:text-[#EF6400]'
             }`}
             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
           >
@@ -470,7 +470,7 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
             className={`text-[14px] transition-colors cursor-pointer ${
               currentPage === totalPages - 1
                 ? 'text-gray-300 cursor-not-allowed opacity-50'
-                : 'text-gray-300 hover:text-[#b2e9fe]'
+                : 'text-gray-300 hover:text-[#EF6400]'
             }`}
             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
           >

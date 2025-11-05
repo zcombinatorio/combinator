@@ -7,6 +7,9 @@ import { useState, useEffect } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { useTabContext } from '@/contexts/TabContext';
 import { useRouter, usePathname } from 'next/navigation';
+import { Container } from '@/components/ui/Container';
+import { Card, CardContent } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
 
 interface TokenLaunch {
   id: number;
@@ -438,130 +441,194 @@ export default function PortfolioPage() {
   };
 
   return (
-    <>
-      <h1 className="text-7xl font-bold">Portfolio</h1>
-
-      {needsVerification && !hasVerified && (
-        <div className="mt-7 p-4 bg-yellow-900/20 border border-yellow-600">
-          <h3 className="font-bold text-yellow-300 mb-2">Verification Required</h3>
-          <p className="text-yellow-200 mb-3">
-            You have designated tokens waiting to be claimed. Please verify your wallet to access them.
+    <div className="min-h-screen py-12" style={{ backgroundColor: 'var(--background)' }}>
+      <Container>
+        {/* Hero Section */}
+        <div className="mb-12">
+          <h1 className="text-4xl md:text-5xl font-bold mb-3" style={{ color: 'var(--foreground)' }}>
+            Your Portfolio
+          </h1>
+          <p className="text-lg" style={{ color: 'var(--foreground-secondary)' }}>
+            Manage and track your launched tokens
           </p>
-          <button
-            onClick={() => setShowVerificationModal(true)}
-            className="px-4 py-2 bg-yellow-600 text-white hover:bg-yellow-700"
-          >
-            Verify Now
-          </button>
         </div>
-      )}
 
-      <p className="mt-7 text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Your launched ZC tokens</p>
-
-      {wallet && (
-        <div className="mt-7">
-          <div className="flex items-center">
-            <p className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-              Active Wallet {externalWallet ? '(Connected)' : '(Embedded)'}:
-            </p>
-            <button
-              onClick={copyWalletAddress}
-              className="flex items-center gap-1 ml-2 hover:opacity-80 transition-opacity cursor-pointer"
-              title="Copy wallet address"
-            >
-              <span className="text-[14px] text-[#b2e9fe] font-mono md:hidden" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                {wallet.toString().slice(0, 6)}
-              </span>
-              <span className="hidden md:inline text-[14px] text-[#b2e9fe] font-mono" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                {wallet.toString().slice(0, 6)}...{wallet.toString().slice(-6)}
-              </span>
-              {copiedWallet ? (
-                <svg className="w-4 h-4 text-[#b2e9fe]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        {needsVerification && !hasVerified && (
+          <Card variant="bordered" className="mb-8 border-2" style={{ borderColor: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)' }}>
+            <CardContent className="p-6">
+              <div className="flex items-start gap-4">
+                <svg className="w-6 h-6 flex-shrink-0 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-              ) : (
-                <svg className="w-4 h-4 text-[#b2e9fe]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              )}
-            </button>
-          </div>
-        </div>
-      )}
+                <div className="flex-1">
+                  <h3 className="font-semibold text-yellow-600 dark:text-yellow-400 mb-2">Verification Required</h3>
+                  <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
+                    You have designated tokens waiting to be claimed. Please verify your wallet to access them.
+                  </p>
+                  <Button
+                    onClick={() => setShowVerificationModal(true)}
+                    size="sm"
+                    className="bg-yellow-600 hover:bg-yellow-700 text-white"
+                  >
+                    Verify Now
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-      {!ready || connecting ? (
-        <p className="mt-7 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Connecting to wallet...</p>
-      ) : !isPrivyAuthenticated ? (
-        <p className="mt-7 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Please login to view your launches</p>
-      ) : !wallet ? (
-        <button
-          onClick={handleConnectWallet}
-          className="mt-7 text-[14px] text-[#b2e9fe] hover:text-[#d0f2ff] transition-colors cursor-pointer"
-          style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-        >
-          [CLICK TO CONNECT WALLET]
-        </button>
-      ) : loading ? (
-        <p className="mt-6.5 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Loading your tokens...</p>
-      ) : error ? (
-        <div className="mt-7 space-y-4">
-          <p className="text-[14px] text-red-400" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{error}</p>
-          <button
-            onClick={() => setRetryCount(prev => prev + 1)}
-            className="text-[14px] text-[#b2e9fe] hover:text-[#d0f2ff] transition-colors cursor-pointer"
-            style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-          >
-            [TRY AGAIN]
-          </button>
-        </div>
-      ) : (
+        {wallet && (
+          <Card variant="bordered" className="mb-8">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium mb-1" style={{ color: 'var(--foreground-secondary)' }}>
+                    Active Wallet {externalWallet ? '(Connected)' : '(Embedded)'}
+                  </p>
+                  <button
+                    onClick={copyWalletAddress}
+                    className="flex items-center gap-2 group transition-colors"
+                    title="Copy wallet address"
+                  >
+                    <span className="font-mono text-sm md:hidden" style={{ color: 'var(--accent)' }}>
+                      {wallet.toString().slice(0, 6)}
+                    </span>
+                    <span className="hidden md:inline font-mono text-sm" style={{ color: 'var(--accent)' }}>
+                      {wallet.toString().slice(0, 6)}...{wallet.toString().slice(-6)}
+                    </span>
+                    {copiedWallet ? (
+                      <svg className="w-4 h-4" style={{ color: 'var(--accent)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 group-hover:scale-110 transition-transform" style={{ color: 'var(--accent)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                <svg className="w-10 h-10" style={{ color: 'var(--accent)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                </svg>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {!ready || connecting ? (
+          <Card variant="bordered">
+            <CardContent className="p-12 text-center">
+              <div className="inline-flex items-center gap-3">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2" style={{ borderColor: 'var(--accent)' }}></div>
+                <p style={{ color: 'var(--foreground-secondary)' }}>Connecting to wallet...</p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : !isPrivyAuthenticated ? (
+          <Card variant="bordered">
+            <CardContent className="p-12 text-center">
+              <p style={{ color: 'var(--foreground-secondary)' }}>Please login to view your launches</p>
+            </CardContent>
+          </Card>
+        ) : !wallet ? (
+          <Card variant="bordered">
+            <CardContent className="p-12 text-center">
+              <Button
+                onClick={handleConnectWallet}
+                variant="primary"
+                size="lg"
+              >
+                Connect Wallet
+              </Button>
+            </CardContent>
+          </Card>
+        ) : loading ? (
+          <Card variant="bordered">
+            <CardContent className="p-12 text-center">
+              <div className="inline-flex items-center gap-3">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2" style={{ borderColor: 'var(--accent)' }}></div>
+                <p style={{ color: 'var(--foreground-secondary)' }}>Loading your tokens...</p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : error ? (
+          <Card variant="bordered" className="border-red-500/50">
+            <CardContent className="p-8 text-center">
+              <svg className="w-12 h-12 mx-auto mb-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-red-500 mb-4">{error}</p>
+              <Button
+                onClick={() => setRetryCount(prev => prev + 1)}
+                variant="secondary"
+              >
+                Try Again
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
         <>
           {launches.length > 0 && (() => {
             return (
-              <div className="mt-6.5">
-                <div className="flex items-center gap-4">
-                  <button
-                    onClick={() => setViewMode('verified')}
-                    className={`text-[14px] transition-colors cursor-pointer ${
-                      viewMode === 'verified'
-                        ? 'text-[#b2e9fe]'
-                        : 'text-gray-300 hover:text-[#b2e9fe]'
-                    }`}
-                    style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-                  >
-                    [Verified]
-                  </button>
-                  <button
-                    onClick={() => setViewMode('all')}
-                    className={`text-[14px] transition-colors cursor-pointer ${
-                      viewMode === 'all'
-                        ? 'text-[#b2e9fe]'
-                        : 'text-gray-300 hover:text-[#b2e9fe]'
-                    }`}
-                    style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-                  >
-                    [All]
-                  </button>
-                  <button
-                    onClick={() => setViewMode('presale')}
-                    className={`text-[14px] transition-colors cursor-pointer ${
-                      viewMode === 'presale'
-                        ? 'text-[#b2e9fe]'
-                        : 'text-gray-300 hover:text-[#b2e9fe]'
-                    }`}
-                    style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-                  >
-                    [Presale]
-                  </button>
+              <div className="mb-6">
+                <div className="flex items-center justify-between flex-wrap gap-4">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setViewMode('verified')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        viewMode === 'verified'
+                          ? 'text-white shadow-md'
+                          : 'hover:opacity-80'
+                      }`}
+                      style={{
+                        backgroundColor: viewMode === 'verified' ? 'var(--accent)' : 'var(--background-secondary)',
+                        color: viewMode === 'verified' ? 'white' : 'var(--foreground-secondary)'
+                      }}
+                    >
+                      Verified
+                    </button>
+                    <button
+                      onClick={() => setViewMode('all')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        viewMode === 'all'
+                          ? 'text-white shadow-md'
+                          : 'hover:opacity-80'
+                      }`}
+                      style={{
+                        backgroundColor: viewMode === 'all' ? 'var(--accent)' : 'var(--background-secondary)',
+                        color: viewMode === 'all' ? 'white' : 'var(--foreground-secondary)'
+                      }}
+                    >
+                      All Tokens
+                    </button>
+                    <button
+                      onClick={() => setViewMode('presale')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        viewMode === 'presale'
+                          ? 'text-white shadow-md'
+                          : 'hover:opacity-80'
+                      }`}
+                      style={{
+                        backgroundColor: viewMode === 'presale' ? 'var(--accent)' : 'var(--background-secondary)',
+                        color: viewMode === 'presale' ? 'white' : 'var(--foreground-secondary)'
+                      }}
+                    >
+                      Presales
+                    </button>
+                  </div>
                   {wallet && (
                     <button
                       onClick={forceRefresh}
                       disabled={loading}
-                      className="hidden md:block text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ backgroundColor: 'var(--background-secondary)', color: 'var(--foreground-secondary)' }}
                       title="Refresh data"
                     >
-                      {loading ? '[REFRESHING...]' : '[REFRESH]'}
+                      <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Refresh
                     </button>
                   )}
                 </div>
@@ -569,14 +636,21 @@ export default function PortfolioPage() {
             );
           })()}
 
-          <div className="mt-7">
+          <div>
             {(() => {
               // Handle presale view
               if (viewMode === 'presale') {
                 return presales.length === 0 ? (
-                  <p className="mt-1 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>No presales yet</p>
+                  <Card variant="bordered">
+                    <CardContent className="p-12 text-center">
+                      <svg className="w-16 h-16 mx-auto mb-4 opacity-50" style={{ color: 'var(--foreground-secondary)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                      </svg>
+                      <p style={{ color: 'var(--foreground-secondary)' }}>No presales yet</p>
+                    </CardContent>
+                  </Card>
                 ) : (
-                  <div className="mt-4 space-y-1 max-w-5xl">
+                  <div className="space-y-4">
                     {presales.map((presale) => {
                       const getStatusColor = (status: string) => {
                         switch (status.toLowerCase()) {
@@ -634,7 +708,7 @@ export default function PortfolioPage() {
                                     addTab(tabType, presale.token_address, presale.token_symbol || 'Unknown', pathname);
                                     router.push(`/presale/${presale.token_address}`);
                                   }}
-                                  className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                                  className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                                   style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                                 >
                                   <span className="md:hidden">{presale.status === 'launched' ? '[Vesting]' : '[Presale]'}</span>
@@ -656,9 +730,16 @@ export default function PortfolioPage() {
                 : launches;
 
               return filteredLaunches.length === 0 ? (
-                <p className="mt-1 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>No tokens {viewMode === 'verified' ? 'verified' : 'launched'} yet</p>
+                <Card variant="bordered">
+                  <CardContent className="p-12 text-center">
+                    <svg className="w-16 h-16 mx-auto mb-4 opacity-50" style={{ color: 'var(--foreground-secondary)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                    </svg>
+                    <p style={{ color: 'var(--foreground-secondary)' }}>No tokens {viewMode === 'verified' ? 'verified' : 'launched'} yet</p>
+                  </CardContent>
+                </Card>
               ) : (
-                <div className="mt-4 space-y-1 max-w-5xl">
+                <div className="space-y-4">
                   {filteredLaunches.map((launch) => (
                     <div key={launch.id} className="pb-6">
                       <div className="flex items-center gap-4">
@@ -688,7 +769,7 @@ export default function PortfolioPage() {
                                     {launch.token_name || 'Unnamed Token'}
                                   </span>
                                   {launch.is_creator_designated && (
-                                    <span className="px-1 py-0.5 text-xs font-medium bg-[#b2e9fe]/20 text-[#b2e9fe]" title="You're designated as a creator for this token">
+                                    <span className="px-1 py-0.5 text-xs font-medium bg-[#EF6400]/20 text-[#EF6400]" title="You're designated as a creator for this token">
                                       Designated
                                     </span>
                                   )}
@@ -754,7 +835,7 @@ export default function PortfolioPage() {
                                 )}
                               </button>
                               {launch.is_creator_designated && (
-                                <span className="px-1 py-0.5 text-xs font-medium bg-[#b2e9fe]/20 text-[#b2e9fe]" title="You're designated as a creator for this token">
+                                <span className="px-1 py-0.5 text-xs font-medium bg-[#EF6400]/20 text-[#EF6400]" title="You're designated as a creator for this token">
                                   Designated
                                 </span>
                               )}
@@ -794,7 +875,7 @@ export default function PortfolioPage() {
                               addTab('holders', launch.token_address, launch.token_symbol || 'Unknown', pathname);
                               router.push(`/holders/${launch.token_address}`);
                             }}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [Manage Holders]
@@ -804,7 +885,7 @@ export default function PortfolioPage() {
                               addTab('history', launch.token_address, launch.token_symbol || 'Unknown', pathname);
                               router.push(`/history/${launch.token_address}`);
                             }}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [View History]
@@ -816,14 +897,14 @@ export default function PortfolioPage() {
                               addTab('transfer', launch.token_address, launch.token_symbol || 'Unknown', pathname);
                               router.push(`/transfer/${launch.token_address}`);
                             }}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [Transfer]
                           </button>
                           <button
                             onClick={() => window.open(`https://jup.ag/swap?sell=${launch.token_address}&buy=So11111111111111111111111111111111111111112`, '_blank')}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [Sell]
@@ -833,7 +914,7 @@ export default function PortfolioPage() {
                               addTab('burn', launch.token_address, launch.token_symbol || 'Unknown', pathname);
                               router.push(`/burn/${launch.token_address}`);
                             }}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [Burn]
@@ -859,7 +940,7 @@ export default function PortfolioPage() {
                               addTab('holders', launch.token_address, launch.token_symbol || 'Unknown', pathname);
                               router.push(`/holders/${launch.token_address}`);
                             }}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [Holders]
@@ -869,7 +950,7 @@ export default function PortfolioPage() {
                               addTab('history', launch.token_address, launch.token_symbol || 'Unknown', pathname);
                               router.push(`/history/${launch.token_address}`);
                             }}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [History]
@@ -883,14 +964,14 @@ export default function PortfolioPage() {
                               addTab('transfer', launch.token_address, launch.token_symbol || 'Unknown', pathname);
                               router.push(`/transfer/${launch.token_address}`);
                             }}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [Transfer]
                           </button>
                           <button
                             onClick={() => window.open(`https://jup.ag/swap?sell=${launch.token_address}&buy=So11111111111111111111111111111111111111112`, '_blank')}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [Sell]
@@ -900,7 +981,7 @@ export default function PortfolioPage() {
                               addTab('burn', launch.token_address, launch.token_symbol || 'Unknown', pathname);
                               router.push(`/burn/${launch.token_address}`);
                             }}
-                            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                            className="text-[14px] text-gray-300 hover:text-[#EF6400] transition-colors cursor-pointer"
                             style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
                           >
                             [Burn]
@@ -928,6 +1009,7 @@ export default function PortfolioPage() {
           window.location.reload();
         }}
       />
-    </>
+      </Container>
+    </div>
   );
 }

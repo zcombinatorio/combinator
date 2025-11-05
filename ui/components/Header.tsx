@@ -7,8 +7,8 @@ export function Header() {
     <header
       className="sticky top-0 z-10"
       style={{
-        backgroundColor: '#181818',
-        borderBottom: '1px solid #2B2B2B'
+        backgroundColor: 'var(--background)',
+        borderBottom: '1px solid var(--border)'
       }}
     >
       <TabBar />

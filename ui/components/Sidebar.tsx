@@ -8,7 +8,7 @@ export function Sidebar() {
     <aside
       className="fixed left-0 top-0 h-screen overflow-hidden flex w-[40px] md:w-[300px]"
       style={{
-        borderRight: '1px solid #2B2B2B'
+        borderRight: '1px solid var(--border)'
       }}
     >
       <ActivityBar />

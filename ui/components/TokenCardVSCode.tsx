@@ -115,15 +115,15 @@ export function TokenCardVSCode({
         <div className="flex-1 min-w-0">
           {/* Name, Symbol, Market Cap, Time */}
           <div className="flex items-baseline gap-3 mb-1">
-            {/* Mobile: Show only symbol in white */}
-            <h3 className="md:hidden text-[14px] font-bold text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            {/* Mobile: Show only symbol */}
+            <h3 className="md:hidden text-[14px] font-bold" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground)' }}>
               {tokenSymbol || '-'}
             </h3>
             {/* Mobile: CA inline with symbol */}
             <button
               onClick={(e) => handleCopyAddress(e)}
-              className="md:hidden text-gray-300 hover:text-[#b2e9fe] transition-colors flex items-center gap-1 text-[14px]"
-              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+              className="md:hidden transition-colors flex items-center gap-1 text-[14px]"
+              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)' }}
             >
               {tokenAddress.slice(0, 6)}
               {copiedAddress ? (
@@ -137,19 +137,19 @@ export function TokenCardVSCode({
               )}
             </button>
             {/* Desktop: Show name and symbol */}
-            <h3 className="hidden md:block text-[14px] font-bold text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            <h3 className="hidden md:block text-[14px] font-bold" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground)' }}>
               {tokenName || '-'}
             </h3>
-            <span className="hidden md:inline text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            <span className="hidden md:inline text-[14px]" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)' }}>
               ({tokenSymbol || '-'})
             </span>
             {marketCap !== undefined && (
-              <span className="text-[14px] text-[#b2e9fe] font-semibold" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+              <span className="text-[14px] font-semibold" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--accent)' }}>
                 {formatMarketCap(marketCap)}
               </span>
             )}
             {launchTime && (
-              <span className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+              <span className="text-[14px]" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)', opacity: 0.7 }}>
                 <span className="md:hidden">{formatTime(launchTime, false)}</span>
                 <span className="hidden md:inline">{formatTime(launchTime, true)}</span>
               </span>
@@ -158,8 +158,8 @@ export function TokenCardVSCode({
               <Link
                 href="/portfolio"
                 onClick={(e) => e.stopPropagation()}
-                className="hidden md:inline text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors"
-                style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+                className="hidden md:inline text-[14px] transition-colors"
+                style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)' }}
               >
                 [Manage]
               </Link>
@@ -168,7 +168,7 @@ export function TokenCardVSCode({
 
           {/* Description */}
           {metadata?.description && (
-            <p className="text-[14px] text-gray-300 mb-1 line-clamp-2 md:line-clamp-none" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            <p className="text-[14px] mb-1 line-clamp-2 md:line-clamp-none" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)' }}>
               {metadata.description}
             </p>
           )}
@@ -178,7 +178,8 @@ export function TokenCardVSCode({
             {/* CA - Desktop only (mobile shows inline with symbol) */}
             <button
               onClick={(e) => handleCopyAddress(e)}
-              className="hidden md:flex text-gray-300 hover:text-[#b2e9fe] transition-colors items-center gap-1"
+              className="hidden md:flex transition-colors items-center gap-1"
+              style={{ color: 'var(--foreground-secondary)' }}
             >
               CA: {formatAddress(tokenAddress)}
               {copiedAddress ? (
@@ -193,7 +194,7 @@ export function TokenCardVSCode({
             </button>
 
             {/* Creator Socials */}
-            <span className="text-gray-300">
+            <span style={{ color: 'var(--foreground-secondary)' }}>
               <span className="md:hidden">{formatSocials(creatorTwitter, creatorGithub)}</span>
               <span className="hidden md:inline">Creator: {formatSocials(creatorTwitter, creatorGithub)}</span>
             </span>
@@ -205,7 +206,8 @@ export function TokenCardVSCode({
                   href={metadata.website}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-gray-300 hover:text-[#b2e9fe] transition-colors"
+                  className="transition-colors"
+                  style={{ color: 'var(--foreground-secondary)' }}
                   title="Website"
                 >
                   [web]
@@ -216,7 +218,8 @@ export function TokenCardVSCode({
                   href={metadata.twitter}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-gray-300 hover:text-[#b2e9fe] transition-colors"
+                  className="transition-colors"
+                  style={{ color: 'var(--foreground-secondary)' }}
                   title="Twitter"
                 >
                   [x]

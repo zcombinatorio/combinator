@@ -34,8 +34,8 @@ export function AnnouncementBanner() {
         <div className="px-8 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="relative">
-              <div className="w-2.5 h-2.5 bg-[#b2e9fe] rounded-full animate-pulse shadow-[0_0_10px_#b2e9fe,0_0_20px_#b2e9fe50]"></div>
-              <div className="absolute inset-0 w-2.5 h-2.5 bg-[#b2e9fe] rounded-full animate-ping opacity-75"></div>
+              <div className="w-2.5 h-2.5 bg-[#EF6400] rounded-full animate-pulse shadow-[0_0_10px_#EF6400,0_0_20px_#EF640050]"></div>
+              <div className="absolute inset-0 w-2.5 h-2.5 bg-[#EF6400] rounded-full animate-ping opacity-75"></div>
             </div>
             <span className="text-md bg-gradient-to-r from-gray-500 via-[#F7FCFE] to-gray-500 group-hover:from-gray-300 group-hover:via-[#F7FCFE] group-hover:to-gray-300 bg-clip-text text-transparent animate-shimmer bg-[length:200%_100%] transition-all">ACCEPTING ZC1 DEVS</span>
           </div>

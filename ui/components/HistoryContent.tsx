@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet } from '@/components/WalletProvider';
 import { useLaunchInfo, useTokenInfo, useDesignatedClaims, useTransactions } from '@/hooks/useTokenData';
+import { Container } from '@/components/ui/Container';
+import { Button } from '@/components/ui/Button';
 
 interface Transaction {
   signature: string;
@@ -324,12 +326,12 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case 'transfer': return 'text-[#b2e9fe]';
-      case 'buy': return 'text-[#b2e9fe]';
-      case 'sell': return 'text-[#b2e9fe]';
-      case 'burn': return 'text-[#b2e9fe]';
-      case 'mint': return 'text-[#b2e9fe]';
-      default: return 'text-gray-300';
+      case 'transfer': return { color: 'var(--accent)' };
+      case 'buy': return { color: 'var(--accent)' };
+      case 'sell': return { color: 'var(--accent)' };
+      case 'burn': return { color: 'var(--accent)' };
+      case 'mint': return { color: 'var(--accent)' };
+      default: return { color: 'var(--foreground-secondary)' };
     }
   };
 
@@ -375,80 +377,83 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
   };
 
   return (
-    <div>
-      {/* Header */}
-      <h1 className="text-7xl font-bold">Txn History</h1>
-      <p className="mt-7 text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-        {'//'}Transaction history for ${tokenInfo.symbol}
-      </p>
+    <Container>
+      <div className="max-w-3xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 style={{ color: 'var(--foreground)' }}>Transaction History</h1>
+          <p className="text-lg mt-2" style={{ color: 'var(--foreground-secondary)' }}>
+            Transaction history for ${tokenInfo.symbol}
+          </p>
+        </div>
 
-      <div className="mt-5.5">
-        <div className="flex items-center gap-3 text-[14px]" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+        {/* Token Info */}
+        <div className="flex items-center gap-3 mb-6 pb-6 border-b" style={{ borderColor: 'var(--border)' }}>
           {tokenInfo.imageUri && (
             <img
               src={tokenInfo.imageUri}
               alt={tokenInfo.symbol}
-              className="w-8 h-8 rounded-full"
+              className="w-12 h-12 rounded-full"
               onError={(e) => {
                 e.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="gray"><circle cx="12" cy="12" r="10"/></svg>';
               }}
             />
           )}
-          <span className="font-bold text-white">{tokenInfo.symbol}</span>
-          <span className="text-white">{tokenInfo.name}</span>
-          <span
-            onClick={() => {
-              navigator.clipboard.writeText(tokenInfo.address);
-            }}
-            className="text-gray-300 cursor-pointer hover:text-[#b2e9fe] transition-colors"
-            title="Click to copy full address"
-          >
-            {tokenInfo.address.slice(0, 6)}...{tokenInfo.address.slice(-6)}
-          </span>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>{tokenInfo.symbol}</span>
+              <span style={{ color: 'var(--foreground-secondary)' }}>{tokenInfo.name}</span>
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(tokenInfo.address);
+              }}
+              className="text-sm transition-colors cursor-pointer"
+              style={{ color: 'var(--foreground-secondary)' }}
+              title="Click to copy full address"
+            >
+              {tokenInfo.address.slice(0, 6)}...{tokenInfo.address.slice(-6)}
+            </button>
+          </div>
+          {!loading && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                // Clear local pagination state
+                setTransactionPages([]);
+                setCurrentPage(0);
+                setLastSignature(null);
+                // Revalidate all cached data
+                mutateLaunch();
+                mutateSupply();
+                mutateDesignated();
+                mutateTransactions();
+              }}
+            >
+              Refresh
+            </Button>
+          )}
         </div>
-      </div>
 
-      {/* Refresh Button */}
-      {!loading && (
-        <div className="mt-5">
-          <button
-            onClick={() => {
-              // Clear local pagination state
-              setTransactionPages([]);
-              setCurrentPage(0);
-              setLastSignature(null);
-              // Revalidate all cached data
-              mutateLaunch();
-              mutateSupply();
-              mutateDesignated();
-              mutateTransactions();
-            }}
-            className="text-[14px] text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
-            style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-          >
-            [Refresh]
-          </button>
-        </div>
-      )}
-
-      {/* Transactions */}
-      {loading ? (
-        <p className="text-[14px] text-gray-300 mt-5.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-          [Loading...]
-        </p>
-      ) : (
-        <div className="space-y-0 mt-6 max-w-2xl">
-          {currentTransactions.length === 0 ? (
-            <p className="text-[14px] text-gray-300 text-center py-12" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-              No transactions found
-            </p>
-          ) : (
+        {/* Transactions */}
+        {loading ? (
+          <p className="text-center py-12" style={{ color: 'var(--foreground-secondary)' }}>
+            Loading...
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {currentTransactions.length === 0 ? (
+              <p className="text-center py-12" style={{ color: 'var(--foreground-secondary)' }}>
+                No transactions found
+              </p>
+            ) : (
             currentTransactions.map((tx: Transaction) => {
               const isExpanded = expandedTransactions.has(tx.signature);
               const hasMemo = tx.memo && tx.memo.trim().length > 0;
 
               return (
-                <div key={tx.signature} className="pb-1">
+                <div key={tx.signature} className="pb-4 border-b" style={{ borderColor: 'var(--border)' }}>
                   {/* Transaction Row - Desktop */}
                   <div className="hidden md:flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -464,19 +469,20 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
                             setExpandedTransactions(newExpanded);
                           }
                         }}
-                        className={`text-white ${hasMemo ? 'cursor-pointer hover:opacity-80' : 'cursor-default'} transition-opacity`}
+                        className={`${hasMemo ? 'cursor-pointer hover:opacity-80' : 'cursor-default'} transition-opacity`}
+                        style={{ color: 'var(--foreground)' }}
                         aria-label={hasMemo ? (isExpanded ? "Collapse memo" : "Expand memo") : tx.type}
                         disabled={!hasMemo}
                       >
                         {getTypeIcon(tx.type)}
                       </button>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[14px] text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                        <span style={{ color: 'var(--foreground)' }}>
                           {(() => {
                             const desc = getTransactionDescription(tx);
                             return (
                               <>
-                                <span className={getTypeColor(tx.type)}>{desc.action}</span>
+                                <span style={getTypeColor(tx.type)}>{desc.action}</span>
                                 : {desc.description}
                                 {desc.toUser && (
                                   <span className={desc.toUserIsSocial ? 'font-bold' : ''}>
@@ -487,20 +493,21 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
                             );
                           })()}
                         </span>
-                        <span className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                        <span className="text-sm" style={{ color: 'var(--foreground-secondary)' }}>
                           ({calculateSupplyPercentage(tx.amount)}%)
                         </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                      <span className="text-sm" style={{ color: 'var(--foreground-secondary)' }}>
                         {formatDate(tx.timestamp)}
                       </span>
                       <a
                         href={`https://solscan.io/tx/${tx.signature}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                        className="transition-colors cursor-pointer"
+                        style={{ color: 'var(--foreground-secondary)' }}
                         title="View on Solscan"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -527,19 +534,20 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
                               setExpandedTransactions(newExpanded);
                             }
                           }}
-                          className={`text-white ${hasMemo ? 'cursor-pointer hover:opacity-80' : 'cursor-default'} transition-opacity`}
+                          className={`${hasMemo ? 'cursor-pointer hover:opacity-80' : 'cursor-default'} transition-opacity`}
+                          style={{ color: 'var(--foreground)' }}
                           aria-label={hasMemo ? (isExpanded ? "Collapse memo" : "Expand memo") : tx.type}
                           disabled={!hasMemo}
                         >
                           {getTypeIcon(tx.type)}
                         </button>
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[14px] text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                          <span className="text-[14px]" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground)' }}>
                             {(() => {
                               const desc = getTransactionDescription(tx);
                               return (
                                 <>
-                                  <span className={getTypeColor(tx.type)}>{desc.action}</span>
+                                  <span style={getTypeColor(tx.type)}>{desc.action}</span>
                                   : {desc.description}
                                   {desc.toUser && (
                                     <span className={desc.toUserIsSocial ? 'font-bold' : ''}>
@@ -550,7 +558,7 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
                               );
                             })()}
                           </span>
-                          <span className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                          <span className="text-[14px]" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)' }}>
                             ({parseFloat(calculateSupplyPercentage(tx.amount)).toFixed(1)}%)
                           </span>
                         </div>
@@ -559,7 +567,8 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
                         href={`https://solscan.io/tx/${tx.signature}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-gray-300 hover:text-[#b2e9fe] transition-colors cursor-pointer"
+                        className="transition-colors cursor-pointer hover:opacity-80"
+                        style={{ color: 'var(--foreground-secondary)' }}
                         title="View on Solscan"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -569,15 +578,15 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
                     </div>
                     {/* Second Row: Timestamp */}
                     <div className="ml-8 mt-0.5">
-                      <span className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                      <span className="text-[14px]" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)' }}>
                         {formatDate(tx.timestamp)}
                       </span>
                     </div>
                   </div>
                   {/* Memo Expansion */}
                   {hasMemo && isExpanded && (
-                    <div className="mt-3 ml-8 pl-4 border-l-2 border-gray-700">
-                      <p className="text-[14px] text-gray-300 italic" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                    <div className="mt-3 ml-8 pl-4 border-l-2" style={{ borderColor: 'var(--border-secondary)' }}>
+                      <p className="text-[14px] italic" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)' }}>
                         {tx.memo}
                       </p>
                     </div>
@@ -591,36 +600,29 @@ export function HistoryContent({ tokenAddress, tokenSymbol = '' }: HistoryConten
 
       {/* Pagination */}
       {!loading && (currentPage > 0 || hasMorePages) && (
-        <div className="flex items-center justify-start gap-2 mt-5 max-w-2xl">
-          <button
+        <div className="flex items-center justify-start gap-2 mt-6">
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => navigateToPage(currentPage - 1)}
             disabled={currentPage === 0 || loadingPage}
-            className={`text-[14px] transition-colors cursor-pointer ${
-              currentPage === 0 || loadingPage
-                ? 'text-gray-300 opacity-50 cursor-not-allowed'
-                : 'text-gray-300 hover:text-[#b2e9fe]'
-            }`}
-            style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
           >
-            {loadingPage ? '[Loading...]' : '[Previous]'}
-          </button>
-          <span className="text-[14px] text-gray-300 px-4" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+            {loadingPage ? 'Loading...' : 'Previous'}
+          </Button>
+          <span className="text-sm px-4" style={{ color: 'var(--foreground-secondary)' }}>
             Page {currentPage + 1}
           </span>
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => navigateToPage(currentPage + 1)}
             disabled={!hasMorePages || loadingPage}
-            className={`text-[14px] transition-colors cursor-pointer ${
-              !hasMorePages || loadingPage
-                ? 'text-gray-300 opacity-50 cursor-not-allowed'
-                : 'text-gray-300 hover:text-[#b2e9fe]'
-            }`}
-            style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
           >
-            {loadingPage ? '[Loading...]' : '[Next]'}
-          </button>
+            {loadingPage ? 'Loading...' : 'Next'}
+          </Button>
         </div>
       )}
-    </div>
+      </div>
+    </Container>
   );
 }

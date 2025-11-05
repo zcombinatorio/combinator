@@ -46,8 +46,8 @@ export const WalletButton = ({ onLaunch, disabled = false, isLaunching = false, 
     return (
       <button
         disabled
-        className="text-[14px] text-gray-300 opacity-50 cursor-not-allowed"
-        style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+        className="text-[14px] opacity-50 cursor-not-allowed"
+        style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--foreground-secondary)' }}
       >
         [CONNECTING...]
       </button>
@@ -58,11 +58,11 @@ export const WalletButton = ({ onLaunch, disabled = false, isLaunching = false, 
   if (error) {
     return (
       <div className="space-y-2">
-        <div className="text-red-400 text-sm">{error}</div>
+        <div className="text-sm" style={{ color: '#ef4444' }}>{error}</div>
         <button
           onClick={() => setError(null)}
-          className="text-[14px] text-[#b2e9fe] hover:text-[#d0f2ff] transition-colors cursor-pointer"
-          style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+          className="text-[14px] transition-colors cursor-pointer hover:opacity-80"
+          style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--accent)' }}
         >
           [TRY AGAIN]
         </button>
@@ -75,8 +75,8 @@ export const WalletButton = ({ onLaunch, disabled = false, isLaunching = false, 
     <button
       onClick={handleButtonClick}
       disabled={connecting || disabled}
-      className="text-[14px] text-[#b2e9fe] hover:text-[#d0f2ff] transition-colors cursor-pointer"
-      style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+      className="text-[14px] transition-colors cursor-pointer hover:opacity-80"
+      style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace', color: 'var(--accent)' }}
     >
       {isGeneratingCA
         ? '[GENERATING CA...]'

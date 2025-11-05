@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Container } from '@/components/ui/Container';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 
 interface Contribution {
   id: number;
@@ -76,19 +78,19 @@ export default function ContributionsPage() {
 
   if (loading) {
     return (
-      <div>
-        <h1 className="text-7xl font-bold">Contributions</h1>
-        <p className="mt-7 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Loading contributions...</p>
-      </div>
+      <Container>
+        <h1 style={{ color: 'var(--foreground)' }}>Contributions</h1>
+        <p style={{ color: 'var(--foreground-secondary)' }}>Loading contributions...</p>
+      </Container>
     );
   }
 
   if (error) {
     return (
-      <div>
-        <h1 className="text-7xl font-bold">Contributions</h1>
-        <p className="mt-7 text-[14px] text-red-400" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{error}</p>
-      </div>
+      <Container>
+        <h1 style={{ color: 'var(--foreground)' }}>Contributions</h1>
+        <p style={{ color: '#EF4444' }}>{error}</p>
+      </Container>
     );
   }
 
@@ -101,110 +103,131 @@ export default function ContributionsPage() {
   }, 0);
 
   return (
-    <div>
-      <h1 className="text-7xl font-bold">Contributions</h1>
-      <p className="mt-7 text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-        {'//'}Contributions made, accepted and rewarded by ZC community members
-      </p>
+    <Container>
+      <div className="mb-8">
+        <h1 style={{ color: 'var(--foreground)' }}>Contributions</h1>
+        <p className="text-lg" style={{ color: 'var(--foreground-secondary)' }}>
+          Community members who have contributed to the protocol and been rewarded
+        </p>
+      </div>
 
-      <div className="mt-7">
-        <div className="flex flex-col gap-1 mb-6.5">
-          <div className="flex items-baseline gap-2">
-            <span className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Total Rewards:</span>
-            <span className="text-[14px] text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{formatNumber(totalRewards.toString())} $ZC</span>
-            <span className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-              (${formatUSD(totalRewardsUSD.toString())})
-            </span>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>Total Contributions:</span>
-            <span className="text-[14px] text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{contributions.length}</span>
-          </div>
-        </div>
+      <div className="grid md:grid-cols-2 gap-6 mb-12">
+        <Card variant="bordered">
+          <CardHeader>
+            <CardTitle>Total Rewards</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold" style={{ color: 'var(--accent)' }}>
+                {formatNumber(totalRewards.toString())}
+              </span>
+              <span className="text-lg" style={{ color: 'var(--foreground)' }}>$ZC</span>
+            </div>
+            <p className="text-sm mt-2" style={{ color: 'var(--foreground-secondary)' }}>
+              ${formatUSD(totalRewardsUSD.toString())} USD
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card variant="bordered">
+          <CardHeader>
+            <CardTitle>Total Contributions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold" style={{ color: 'var(--accent)' }}>
+                {contributions.length}
+              </span>
+              <span className="text-lg" style={{ color: 'var(--foreground)' }}>PRs</span>
+            </div>
+            <p className="text-sm mt-2" style={{ color: 'var(--foreground-secondary)' }}>
+              Accepted pull requests
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       {contributions.length === 0 ? (
-        <p className="mt-1 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+        <p style={{ color: 'var(--foreground-secondary)' }}>
           No contributions yet
         </p>
       ) : (
-        <div className="space-y-0 mt-0 max-w-5xl">
+        <div className="space-y-3">
           {contributions.map((contribution, index) => (
-            <div key={contribution.id} className="pb-0.5">
+            <Card key={contribution.id} variant="bordered" padding="md">
               {/* Desktop Layout */}
-              <div className="hidden md:block">
-                <div className="flex items-baseline gap-4">
-                  <span className="text-[14px] text-gray-300 w-8" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+              <div className="hidden md:flex md:items-center md:justify-between">
+                <div className="flex items-center gap-6 flex-1">
+                  <span className="text-sm font-medium" style={{ color: 'var(--foreground-secondary)' }}>
                     #{contributions.length - index}
                   </span>
-                  <span className="text-[14px] text-white w-32 truncate" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                  <span className="font-medium" style={{ color: 'var(--foreground)' }}>
                     {contribution.discord_id}
                   </span>
-                  <div className="flex items-baseline gap-2 w-16">
-                    <span className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                      PR:
-                    </span>
-                    <a
-                      href={contribution.pr}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[14px] text-[#b2e9fe] hover:text-white underline"
-                      style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-                    >
-                      {contribution.pr.split('/').slice(-1)[0]}
-                    </a>
-                  </div>
-                  <div className="flex items-baseline gap-2 w-52">
-                    <span className="text-[14px] text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                  <a
+                    href={contribution.pr}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm hover:underline"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    PR #{contribution.pr.split('/').slice(-1)[0]}
+                  </a>
+                </div>
+                <div className="flex items-center gap-6">
+                  <div className="text-right">
+                    <div className="font-semibold" style={{ color: 'var(--foreground)' }}>
                       {formatNumber(contribution.reward_zc)} $ZC
-                    </span>
-                    <span className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                      (${formatUSD(contribution.reward_usd)})
-                    </span>
+                    </div>
+                    <div className="text-sm" style={{ color: 'var(--foreground-secondary)' }}>
+                      ${formatUSD(contribution.reward_usd)}
+                    </div>
                   </div>
-                  <span className="text-[14px] text-gray-400" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                  <span className="text-sm" style={{ color: 'var(--foreground-secondary)' }}>
                     {formatDate(contribution.time)}
                   </span>
                 </div>
               </div>
 
               {/* Mobile Layout */}
-              <div className="md:hidden">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                    #{contributions.length - index}
-                  </span>
-                  <span className="text-[14px] text-white truncate" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                    {contribution.discord_id}
-                  </span>
+              <div className="md:hidden space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium" style={{ color: 'var(--foreground-secondary)' }}>
+                      #{contributions.length - index}
+                    </span>
+                    <span className="font-medium" style={{ color: 'var(--foreground)' }}>
+                      {contribution.discord_id}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-semibold text-sm" style={{ color: 'var(--foreground)' }}>
+                      {formatNumber(contribution.reward_zc)} $ZC
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-baseline gap-2 mt-0.5 ml-4">
+                <div className="flex items-center justify-between text-sm">
                   <a
                     href={contribution.pr}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[14px] text-[#b2e9fe] hover:text-white underline"
-                    style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
+                    className="hover:underline"
+                    style={{ color: 'var(--accent)' }}
                   >
                     PR #{contribution.pr.split('/').slice(-1)[0]}
                   </a>
-                </div>
-                <div className="flex items-baseline gap-2 mt-0.5 ml-4">
-                  <span className="text-[14px] text-white" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                    {formatNumber(contribution.reward_zc)} $ZC
-                  </span>
-                  <span className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                    (${formatUSD(contribution.reward_usd)})
+                  <span style={{ color: 'var(--foreground-secondary)' }}>
+                    ${formatUSD(contribution.reward_usd)}
                   </span>
                 </div>
-                <div className="text-[14px] text-gray-400 mt-0.5 ml-4" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+                <div className="text-xs" style={{ color: 'var(--foreground-secondary)' }}>
                   {formatDate(contribution.time)}
                 </div>
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}
-    </div>
+    </Container>
   );
 }

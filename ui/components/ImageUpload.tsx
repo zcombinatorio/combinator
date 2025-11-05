@@ -204,7 +204,7 @@ export function ImageUpload({ onImageUpload, currentImage, name = 'token' }: Ima
         className={`cursor-pointer ${
           isUploading ? 'opacity-50 pointer-events-none' : ''
         } ${
-          uploadedImage ? 'text-[#b2e9fe] hover:underline' : 'text-gray-500 hover:text-[#b2e9fe]'
+          uploadedImage ? 'text-[#EF6400] hover:underline' : 'text-gray-500 hover:text-[#EF6400]'
         }`}
         style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
       >

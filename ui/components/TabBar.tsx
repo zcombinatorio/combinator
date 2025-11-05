@@ -57,7 +57,7 @@ export function TabBar() {
       style={{
         fontFamily: 'Monaco, Menlo, "Courier New", monospace',
         fontSize: '13px',
-        backgroundColor: '#181818',
+        backgroundColor: 'var(--background)',
         scrollbarWidth: 'none',
         msOverflowStyle: 'none'
       }}

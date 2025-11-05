@@ -1,6 +1,8 @@
 'use client';
 
 import { TokenCardVSCode } from '@/components/TokenCardVSCode';
+import { Container } from '@/components/ui/Container';
+import { Button } from '@/components/ui/Button';
 import { useEffect, useState, useMemo } from 'react';
 import { useWallet } from '@/components/WalletProvider';
 import { useTabContext } from '@/contexts/TabContext';
@@ -216,55 +218,53 @@ export default function ProjectsPage() {
   };
 
   return (
-    <>
-      <h1 className="text-7xl font-bold">Projects</h1>
-      <p className="mt-7 text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}See ZC launched projects here</p>
+    <Container>
+      <div className="mb-8">
+        <h1 style={{ color: 'var(--foreground)' }}>Projects</h1>
+        <p className="text-lg" style={{ color: 'var(--foreground-secondary)' }}>
+          Explore tokens launched on the platform
+        </p>
+      </div>
 
-      <div className="flex items-center gap-4 mt-7">
-        <button
-          onClick={() => setViewMode('verified')}
-          className={`text-[14px] transition-colors cursor-pointer ${
-            viewMode === 'verified'
-              ? 'text-[#b2e9fe]'
-              : 'text-gray-300 hover:text-[#b2e9fe]'
-          }`}
-          style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-        >
-          [Verified]
-        </button>
-        <button
-          onClick={() => setViewMode('all')}
-          className={`text-[14px] transition-colors cursor-pointer ${
-            viewMode === 'all'
-              ? 'text-[#b2e9fe]'
-              : 'text-gray-300 hover:text-[#b2e9fe]'
-          }`}
-          style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-        >
-          [All]
-        </button>
-        <div className="flex items-baseline gap-2">
-          <span className="text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="md:hidden">{'//'}Total MCap:</span>
-            <span className="hidden md:inline">{'//'}Cumulative Market Cap:</span>
+      <div className="flex flex-wrap items-center gap-4 mb-8">
+        <div className="flex gap-2">
+          <Button
+            variant={viewMode === 'verified' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setViewMode('verified')}
+          >
+            Verified
+          </Button>
+          <Button
+            variant={viewMode === 'all' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setViewMode('all')}
+          >
+            All Projects
+          </Button>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium" style={{ color: 'var(--foreground-secondary)' }}>
+            <span className="md:hidden">Total MCap:</span>
+            <span className="hidden md:inline">Cumulative Market Cap:</span>
           </span>
-          <span className="text-[14px] font-semibold text-[#b2e9fe]" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+          <span className="text-sm font-bold" style={{ color: 'var(--accent)' }}>
             {formatMarketCap(cumulativeMarketCap)}
           </span>
         </div>
       </div>
 
-      <div className="mt-6">
+      <div>
         {loading ? (
-          <p className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            Loading tokens...
+          <p style={{ color: 'var(--foreground-secondary)' }}>
+            Loading projects...
           </p>
         ) : filteredTokens.length === 0 ? (
-          <p className="text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            No tokens launched yet
+          <p style={{ color: 'var(--foreground-secondary)' }}>
+            No projects found
           </p>
         ) : (
-          <div className="space-y-4 max-w-5xl">
+          <div className="space-y-4">
             {paginatedTokens.map((token) => {
               const metadata = tokenMetadata[token.token_address];
               const market = marketData[token.token_address];
@@ -290,29 +290,29 @@ export default function ProjectsPage() {
 
         {/* Pagination Controls */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-start gap-2 mt-6">
-            <button
+          <div className="flex items-center justify-center gap-3 mt-8">
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
-              className="text-[14px] text-gray-300 hover:text-[#b2e9fe] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
-              [Previous]
-            </button>
-            <span className="text-[14px] text-gray-300 px-4" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
+              Previous
+            </Button>
+            <span className="text-sm px-4" style={{ color: 'var(--foreground-secondary)' }}>
               Page {currentPage} of {totalPages}
             </span>
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
-              className="text-[14px] text-gray-300 hover:text-[#b2e9fe] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
             >
-              [Next]
-            </button>
+              Next
+            </Button>
           </div>
         )}
       </div>
-    </>
+    </Container>
   );
 }

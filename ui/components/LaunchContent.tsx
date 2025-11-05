@@ -3,9 +3,11 @@
 import { WalletButton } from '@/components/WalletButton';
 import { ImageUpload } from '@/components/ImageUpload';
 import { useWallet } from '@/components/WalletProvider';
+import { Container } from '@/components/ui/Container';
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { Keypair, Transaction, Connection } from '@solana/web3.js';
 import { useSignTransaction } from '@privy-io/react-auth/solana';
+import { usePrivy } from '@privy-io/react-auth';
 import { useRouter } from 'next/navigation';
 import bs58 from 'bs58';
 import { GoInfo, GoPlus } from 'react-icons/go';
@@ -13,6 +15,7 @@ import { GoInfo, GoPlus } from 'react-icons/go';
 export function LaunchContent() {
   const { activeWallet, externalWallet } = useWallet();
   const { signTransaction } = useSignTransaction();
+  const { login } = usePrivy();
   const router = useRouter();
 
   // Detect mobile screen size for placeholder text
@@ -417,342 +420,444 @@ export function LaunchContent() {
   };
 
   return (
-    <div style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-      <h1 className="text-7xl font-bold">Launch</h1>
+    <Container>
+      <div className="max-w-3xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 style={{ color: 'var(--foreground)' }}>Launch Token</h1>
+          <p className="text-lg mt-2" style={{ color: 'var(--foreground-secondary)' }}>
+            Launch a ZC token for your project here.
+          </p>
+        </div>
 
-      <p className="mt-7 text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Launch a ZC token for your project here.</p>
+        {/* Main token info */}
+        <div className="mb-6">
+          <h3 style={{ color: 'var(--foreground)' }}>Main Token Info</h3>
+        </div>
 
-      <p className="mt-7 text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Main token info</p>
-
-      <div className="mt-1">
+      <div className="space-y-6">
           {/* Token Image */}
-          <div className="text-[14px]" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">Icon Image*: </span>
-            <span className="text-gray-500">{'{'}</span>
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              Icon Image *
+            </label>
             <ImageUpload
               onImageUpload={(url, filename) => setFormData(prev => ({ ...prev, image: url, imageFilename: filename || '' }))}
               currentImage={formData.image}
               name={formData.name || 'token'}
             />
-            <span className="text-gray-500">{'}'}</span>
           </div>
 
-          <div className="text-[14px] mt-0.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">Name*: </span>
-            <span className="text-gray-500">{'{'}</span>
+          {/* Name */}
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              Token Name *
+            </label>
             <input
               type="text"
               name="name"
               value={formData.name}
               onChange={handleInputChange}
-              placeholder={isMobile ? "Enter here" : "Enter token name here"}
+              placeholder="Enter token name"
               maxLength={32}
               autoComplete="off"
-              className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                formData.name && !fieldValidity.name
-                  ? 'text-red-400'
-                  : 'text-[#b2e9fe]'
-              }`}
+              className="w-full px-4 py-2 rounded-lg border transition-colors"
               style={{
-                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                width: formData.name ? `${formData.name.length}ch` : (isMobile ? '10ch' : '21ch')
+                backgroundColor: 'var(--background)',
+                borderColor: formData.name && !fieldValidity.name ? '#ef4444' : 'var(--border)',
+                color: 'var(--foreground)'
               }}
             />
-            <span className="text-gray-500">{'}'}</span>
+            {formData.name && !fieldValidity.name && (
+              <p className="text-sm mt-1" style={{ color: '#ef4444' }}>Maximum 32 characters</p>
+            )}
           </div>
 
-          <div className="text-[14px] mt-0.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">Ticker*: </span>
-            <span className="text-gray-500">{'{'}</span>
+          {/* Ticker */}
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              Ticker Symbol *
+            </label>
             <input
               type="text"
               name="ticker"
               value={formData.ticker}
               onChange={handleInputChange}
-              placeholder={isMobile ? "Enter here" : "Enter ticker here"}
+              placeholder="Enter ticker symbol"
               maxLength={10}
               autoComplete="off"
-              className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                formData.ticker && !fieldValidity.ticker
-                  ? 'text-red-400'
-                  : 'text-[#b2e9fe]'
-              }`}
+              className="w-full px-4 py-2 rounded-lg border transition-colors"
               style={{
-                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                width: formData.ticker ? `${formData.ticker.length}ch` : (isMobile ? '10ch' : '17ch')
+                backgroundColor: 'var(--background)',
+                borderColor: formData.ticker && !fieldValidity.ticker ? '#ef4444' : 'var(--border)',
+                color: 'var(--foreground)'
               }}
             />
-            <span className="text-gray-500">{'}'}</span>
+            {formData.ticker && !fieldValidity.ticker && (
+              <p className="text-sm mt-1" style={{ color: '#ef4444' }}>Maximum 10 characters</p>
+            )}
           </div>
 
-          {/* Website and Twitter */}
-          <div className="text-[14px] mt-1" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">Website: </span>
-            <span className="text-gray-500">{'{'}</span>
+          {/* Website */}
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              Website
+            </label>
             <input
               type="url"
               name="website"
               value={formData.website}
               onChange={handleInputChange}
-              placeholder={isMobile ? "Enter here" : "Enter project website URL here"}
+              placeholder="https://yourproject.com"
               autoComplete="off"
-              className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                formData.website && !fieldValidity.website
-                  ? 'text-red-400'
-                  : 'text-[#b2e9fe]'
-              }`}
+              className="w-full px-4 py-2 rounded-lg border transition-colors"
               style={{
-                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                width: formData.website ? `${formData.website.length}ch` : (isMobile ? '10ch' : '30ch')
+                backgroundColor: 'var(--background)',
+                borderColor: formData.website && !fieldValidity.website ? '#ef4444' : 'var(--border)',
+                color: 'var(--foreground)'
               }}
             />
-            <span className="text-gray-500">{'}'}</span>
+            {formData.website && !fieldValidity.website && (
+              <p className="text-sm mt-1" style={{ color: '#ef4444' }}>Please enter a valid URL</p>
+            )}
           </div>
 
-          <div className="text-[14px] mt-0.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">X URL: </span>
-            <span className="text-gray-500">{'{'}</span>
+          {/* Twitter/X */}
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              X/Twitter Profile
+            </label>
             <input
               type="text"
               name="twitter"
               value={formData.twitter}
               onChange={handleInputChange}
-              placeholder={isMobile ? "Enter here" : "Enter X profile URL here"}
+              placeholder="https://x.com/yourproject"
               autoComplete="off"
-              className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                formData.twitter && !fieldValidity.twitter
-                  ? 'text-red-400'
-                  : 'text-[#b2e9fe]'
-              }`}
+              className="w-full px-4 py-2 rounded-lg border transition-colors"
               style={{
-                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                width: formData.twitter ? `${formData.twitter.length}ch` : (isMobile ? '10ch' : '24ch')
+                backgroundColor: 'var(--background)',
+                borderColor: formData.twitter && !fieldValidity.twitter ? '#ef4444' : 'var(--border)',
+                color: 'var(--foreground)'
               }}
             />
-            <span className="text-gray-500">{'}'}</span>
+            {formData.twitter && !fieldValidity.twitter && (
+              <p className="text-sm mt-1" style={{ color: '#ef4444' }}>Please enter a valid X/Twitter profile URL</p>
+            )}
           </div>
 
           {/* Description */}
-          <div className="text-[14px] mt-0.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">Description: </span>
-            <span className="text-gray-500">{'{'}</span>
-            <input
-              type="text"
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              Description
+            </label>
+            <textarea
               name="description"
               value={formData.description}
               onChange={handleInputChange}
-              placeholder={isMobile ? "Enter here" : "Enter project description here"}
+              placeholder="Enter project description (max 280 characters)"
               maxLength={280}
               autoComplete="off"
-              className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                formData.description && !fieldValidity.description
-                  ? 'text-red-400'
-                  : 'text-[#b2e9fe]'
-              }`}
+              rows={3}
+              className="w-full px-4 py-2 rounded-lg border transition-colors resize-none"
               style={{
-                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                width: formData.description ? `${formData.description.length}ch` : (isMobile ? '10ch' : '30ch')
+                backgroundColor: 'var(--background)',
+                borderColor: formData.description && !fieldValidity.description ? '#ef4444' : 'var(--border)',
+                color: 'var(--foreground)'
               }}
             />
-            <span className="text-gray-500">{'}'}</span>
+            <p className="text-sm mt-1" style={{ color: 'var(--foreground-secondary)' }}>
+              {formData.description.length}/280 characters
+            </p>
           </div>
+        </div>
 
-          <p className="mt-7 text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Advanced token settings</p>
+        {/* Advanced token settings */}
+        <div className="mt-8 mb-6">
+          <h3 style={{ color: 'var(--foreground)' }}>Advanced Token Settings</h3>
+        </div>
+
+        <div className="space-y-6">
 
           {/* CA Ending */}
-          <div className="text-[14px] mt-1" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">CA Ending: </span>
-            <span className="text-gray-500">{'{'}</span>
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              Custom CA Ending (Optional)
+            </label>
             <input
               type="text"
               name="caEnding"
               value={formData.caEnding}
               onChange={handleInputChange}
-              placeholder={isMobile ? "Enter here" : "Enter desired CA ending here"}
+              placeholder="Enter desired CA ending (max 3 characters)"
               maxLength={3}
               autoComplete="off"
-              className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                formData.caEnding && !fieldValidity.caEnding
-                  ? 'text-red-400'
-                  : 'text-[#b2e9fe]'
-              }`}
+              className="w-full px-4 py-2 rounded-lg border transition-colors"
               style={{
-                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                width: formData.caEnding ? `${formData.caEnding.length}ch` : (isMobile ? '10ch' : '28ch')
+                backgroundColor: 'var(--background)',
+                borderColor: formData.caEnding && !fieldValidity.caEnding ? '#ef4444' : 'var(--border)',
+                color: 'var(--foreground)'
               }}
             />
-            <span className="text-gray-500">{'}'}</span>
+            {formData.caEnding && !fieldValidity.caEnding && (
+              <p className="text-sm mt-1" style={{ color: '#ef4444' }}>Invalid characters. Avoid 0, O, I, l</p>
+            )}
           </div>
 
           {/* Token Pairing */}
-          <div className="text-[14px] mt-0.5 flex items-center gap-2" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <div>
-              <span className="text-gray-300">Token Pairing: </span>
-              <span className="text-gray-500">{'{'}</span>
-              <span
-                onClick={() => setFormData(prev => ({ ...prev, quoteToken: prev.quoteToken === 'SOL' ? 'ZC' : 'SOL' }))}
-                className="text-[#b2e9fe] cursor-pointer hover:underline"
-                style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-              >
-                {formData.quoteToken}
-              </span>
-              <span className="text-gray-500">{'}'}</span>
-            </div>
-            <div className="relative group">
-              <GoInfo className="w-4 h-4 text-gray-500 cursor-help pt-[1px]" />
-              <div className="absolute left-6 top-0 w-80 p-3 bg-[#181818] text-sm text-gray-300 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10 pointer-events-none" style={{ border: '1px solid #2B2B2B' }}>
-                Click to change your token pairing to either ZC or SOL.
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="block text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                Token Pairing
+              </label>
+              <div className="relative group">
+                <GoInfo className="w-4 h-4 cursor-help" style={{ color: 'var(--foreground-secondary)' }} />
+                <div className="absolute left-6 top-0 w-80 p-3 text-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10 pointer-events-none rounded-lg" style={{ backgroundColor: 'var(--background-secondary)', color: 'var(--foreground)', border: '1px solid var(--border)' }}>
+                  Choose the quote token for your trading pair. Your token will be paired with either ZC or SOL.
+                </div>
               </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, quoteToken: 'ZC' }))}
+                className="flex-1 px-4 py-2 rounded-lg border transition-colors"
+                style={{
+                  backgroundColor: formData.quoteToken === 'ZC' ? 'var(--accent)' : 'var(--background)',
+                  borderColor: formData.quoteToken === 'ZC' ? 'var(--accent)' : 'var(--border)',
+                  color: formData.quoteToken === 'ZC' ? '#FFFFFF' : 'var(--foreground)'
+                }}
+              >
+                ZC
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, quoteToken: 'SOL' }))}
+                className="flex-1 px-4 py-2 rounded-lg border transition-colors"
+                style={{
+                  backgroundColor: formData.quoteToken === 'SOL' ? 'var(--accent)' : 'var(--background)',
+                  borderColor: formData.quoteToken === 'SOL' ? 'var(--accent)' : 'var(--border)',
+                  color: formData.quoteToken === 'SOL' ? '#FFFFFF' : 'var(--foreground)'
+                }}
+              >
+                SOL
+              </button>
             </div>
           </div>
 
           {/* Presale */}
-          <div className="text-[14px] mt-1 flex items-center gap-2" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <div>
-              <span className="text-gray-300">Presale: </span>
-              <span className="text-gray-500">{'{'}</span>
-              <span
-                onClick={() => setFormData(prev => ({ ...prev, presale: !prev.presale }))}
-                className="text-[#b2e9fe] cursor-pointer hover:underline"
-                style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}
-              >
-                {formData.presale ? 'Enabled' : 'Disabled'}
-              </span>
-              <span className="text-gray-500">{'}'}</span>
-            </div>
-            <div className="relative group">
-              <GoInfo className="w-4 h-4 text-gray-500 cursor-help pt-[1px]" />
-              <div className="absolute left-6 top-0 w-80 p-3 bg-[#181818] text-sm text-gray-300 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10 pointer-events-none" style={{ border: '1px solid #2B2B2B' }}>
-                Click to make the launch a presale. Only buyers holding the specified tokens will be allowed to buy in the pre-sale round. The size of their buys will be proportional to holdings.
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="block text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                Presale
+              </label>
+              <div className="relative group">
+                <GoInfo className="w-4 h-4 cursor-help" style={{ color: 'var(--foreground-secondary)' }} />
+                <div className="absolute left-6 top-0 w-80 p-3 text-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10 pointer-events-none rounded-lg" style={{ backgroundColor: 'var(--background-secondary)', color: 'var(--foreground)', border: '1px solid var(--border)' }}>
+                  Enable presale mode. Only buyers holding the specified tokens will be allowed to buy in the presale round. The size of their buys will be proportional to holdings.
+                </div>
               </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, presale: false }))}
+                className="flex-1 px-4 py-2 rounded-lg border transition-colors"
+                style={{
+                  backgroundColor: !formData.presale ? 'var(--accent)' : 'var(--background)',
+                  borderColor: !formData.presale ? 'var(--accent)' : 'var(--border)',
+                  color: !formData.presale ? '#FFFFFF' : 'var(--foreground)'
+                }}
+              >
+                Disabled
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, presale: true }))}
+                className="flex-1 px-4 py-2 rounded-lg border transition-colors"
+                style={{
+                  backgroundColor: formData.presale ? 'var(--accent)' : 'var(--background)',
+                  borderColor: formData.presale ? 'var(--accent)' : 'var(--border)',
+                  color: formData.presale ? '#FFFFFF' : 'var(--foreground)'
+                }}
+              >
+                Enabled
+              </button>
             </div>
           </div>
 
           {/* Presale Whitelist */}
           {formData.presale && (
-            <div className="mt-0.5">
-              {formData.presaleTokens.map((token, index) => (
-                <div key={index} className={`text-[14px] ${index === 0 ? 'mt-0' : 'mt-0.5'} flex items-center gap-2`} style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-                  <div>
-                    <span className="text-gray-300">{index === 0 ? 'Presale Whitelist CAs: ' : '                '}</span>
-                    <span className="text-gray-500">{'{'}</span>
+            <div>
+              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+                Presale Whitelist Token Addresses
+              </label>
+              <div className="space-y-3">
+                {formData.presaleTokens.map((token, index) => (
+                  <div key={index} className="flex items-center gap-2">
                     <input
                       type="text"
                       value={token}
                       onChange={(e) => handlePresaleTokenChange(index, e.target.value)}
-                      placeholder={isMobile ? "Enter here" : "Enter token CA here"}
+                      placeholder="Enter token contract address"
                       autoComplete="off"
-                      className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                        token && !validateSolanaAddress(token)
-                          ? 'text-red-400'
-                          : 'text-[#b2e9fe]'
-                      }`}
+                      className="flex-1 px-4 py-2 rounded-lg border transition-colors"
                       style={{
-                        fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                        width: token ? `${token.length}ch` : (isMobile ? '10ch' : '19ch')
+                        backgroundColor: 'var(--background)',
+                        borderColor: token && !validateSolanaAddress(token) ? '#ef4444' : 'var(--border)',
+                        color: 'var(--foreground)'
                       }}
                     />
-                    <span className="text-gray-500">{'}'}</span>
+                    {(formData.presaleTokens.length > 1 || (formData.presaleTokens.length === 1 && token.trim())) && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemovePresaleToken(index)}
+                        className="px-3 py-2 rounded-lg border transition-colors"
+                        style={{
+                          borderColor: 'var(--border)',
+                          color: 'var(--foreground-secondary)'
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
-                  {(formData.presaleTokens.length > 1 || (formData.presaleTokens.length === 1 && token.trim())) && (
-                    <button
-                      onClick={() => handleRemovePresaleToken(index)}
-                      className="text-gray-500 hover:text-red-400 transition-colors text-sm"
-                    >
-                      ×
-                    </button>
-                  )}
-                  {index === formData.presaleTokens.length - 1 && formData.presaleTokens.length < 5 && (
-                    <button
-                      onClick={handleAddPresaleToken}
-                      style={{ paddingTop: '1px' }}
-                    >
-                      <GoPlus className="w-4 h-4 text-gray-500 hover:text-[#b2e9fe] transition-colors cursor-pointer" />
-                    </button>
-                  )}
-                </div>
-              ))}
+                ))}
+                {formData.presaleTokens.length < 5 && (
+                  <button
+                    type="button"
+                    onClick={handleAddPresaleToken}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors"
+                    style={{
+                      borderColor: 'var(--border)',
+                      color: 'var(--foreground)'
+                    }}
+                  >
+                    <GoPlus className="w-4 h-4" />
+                    Add Token
+                  </button>
+                )}
+              </div>
             </div>
           )}
+        </div>
 
-          {/* Creator Designation */}
-          <p className="mt-7 text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Launching for someone else?</p>
+        {/* Creator Designation */}
+        <div className="mt-8 mb-6">
+          <h3 style={{ color: 'var(--foreground)' }}>Launching for Someone Else?</h3>
+        </div>
 
-          <div className="text-[14px] mt-0.5" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">Dev X Profile: </span>
-            <span className="text-gray-500">{'{'}</span>
+        <div className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              Developer X/Twitter Profile
+            </label>
             <input
               type="text"
               name="creatorTwitter"
               value={formData.creatorTwitter}
               onChange={handleInputChange}
-              placeholder={isMobile ? "Enter here" : "Enter the other person's X profile URL"}
+              placeholder="https://x.com/developer"
               autoComplete="off"
-              className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                formData.creatorTwitter && !fieldValidity.creatorTwitter
-                  ? 'text-red-400'
-                  : 'text-[#b2e9fe]'
-              }`}
+              className="w-full px-4 py-2 rounded-lg border transition-colors"
               style={{
-                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                width: formData.creatorTwitter ? `${formData.creatorTwitter.length}ch` : (isMobile ? '10ch' : '38ch')
+                backgroundColor: 'var(--background)',
+                borderColor: formData.creatorTwitter && !fieldValidity.creatorTwitter ? '#ef4444' : 'var(--border)',
+                color: 'var(--foreground)'
               }}
             />
-            <span className="text-gray-500">{'}'}</span>
+            {formData.creatorTwitter && !fieldValidity.creatorTwitter && (
+              <p className="text-sm mt-1" style={{ color: '#ef4444' }}>Please enter a valid X/Twitter profile URL</p>
+            )}
           </div>
 
-          <div className="text-[14px] mt-1" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>
-            <span className="text-gray-300">Dev GitHub: </span>
-            <span className="text-gray-500">{'{'}</span>
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--foreground)' }}>
+              Developer GitHub Profile
+            </label>
             <input
               type="text"
               name="creatorGithub"
               value={formData.creatorGithub}
               onChange={handleInputChange}
-              placeholder={isMobile ? "Enter here" : "Enter the other person's Github profile URL"}
+              placeholder="https://github.com/developer"
               autoComplete="off"
-              className={`bg-transparent border-0 focus:outline-none placeholder:text-gray-500 ${
-                formData.creatorGithub && !fieldValidity.creatorGithub
-                  ? 'text-red-400'
-                  : 'text-[#b2e9fe]'
-              }`}
+              className="w-full px-4 py-2 rounded-lg border transition-colors"
               style={{
-                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
-                width: formData.creatorGithub ? `${formData.creatorGithub.length}ch` : (isMobile ? '10ch' : '43ch')
+                backgroundColor: 'var(--background)',
+                borderColor: formData.creatorGithub && !fieldValidity.creatorGithub ? '#ef4444' : 'var(--border)',
+                color: 'var(--foreground)'
               }}
             />
-            <span className="text-gray-500">{'}'}</span>
+            {formData.creatorGithub && !fieldValidity.creatorGithub && (
+              <p className="text-sm mt-1" style={{ color: '#ef4444' }}>Please enter a valid GitHub profile URL</p>
+            )}
           </div>
-      </div>
+        </div>
 
-      <div className="flex items-center gap-4 mt-6.5">
-        <WalletButton onLaunch={handleLaunch} disabled={externalWallet ? (!isFormValid || isLaunching || isGeneratingCA) : false} isLaunching={isLaunching} isGeneratingCA={isGeneratingCA} isPresale={formData.presale} />
+        {/* Launch Button */}
+        <div className="flex items-center gap-4 mt-8">
+          {externalWallet ? (
+            <>
+              <button
+                onClick={handleLaunch}
+                disabled={!isFormValid || isLaunching || isGeneratingCA}
+                className="px-6 py-3 rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'var(--accent)',
+                  color: '#FFFFFF'
+                }}
+              >
+                {isGeneratingCA
+                  ? 'Generating CA...'
+                  : isLaunching
+                  ? 'Launching...'
+                  : isPresale ? 'Launch Presale' : 'Launch Token'}
+              </button>
+              {isGeneratingCA && (
+                <button
+                  onClick={handleCancel}
+                  className="px-6 py-3 rounded-lg font-medium border transition-colors"
+                  style={{
+                    borderColor: 'var(--border)',
+                    color: 'var(--foreground)'
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
+            </>
+          ) : (
+            <button
+              onClick={login}
+              className="px-6 py-3 rounded-lg font-medium transition-all"
+              style={{
+                backgroundColor: 'var(--accent)',
+                color: '#FFFFFF'
+              }}
+            >
+              Connect Wallet to Launch
+            </button>
+          )}
+        </div>
 
-        {isGeneratingCA && (
-          <button
-            onClick={handleCancel}
-            className="text-xl text-gray-300 hover:text-white transition-colors cursor-pointer"
-          >
-            Cancel
-          </button>
+        {/* Success Message */}
+        {transactionSignature && (
+          <div className="mt-6">
+            <p className="text-lg" style={{ color: '#10b981' }}>
+              Success!{' '}
+              <a
+                href={`https://solscan.io/tx/${transactionSignature}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:opacity-80"
+              >
+                Transaction
+              </a>
+            </p>
+          </div>
         )}
       </div>
-
-      {transactionSignature && (
-        <div className="mt-6">
-          <p className="text-lg text-green-400">
-            Success!{' '}
-            <a
-              href={`https://solscan.io/tx/${transactionSignature}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-green-300 underline"
-            >
-              Transaction
-            </a>
-          </p>
-        </div>
-      )}
-    </div>
+    </Container>
   );
 }
