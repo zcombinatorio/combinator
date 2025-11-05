@@ -1,0 +1,136 @@
+---
+name: $ZC Staking Protocol
+about: Request work that only the ZC team can complete
+title: '[WORK REQUEST] '
+labels: work-request
+---
+
+## What Should Be Built?
+
+1. Abstract
+
+The ZC Staking Protocol is designed to encourage users to hold and stake $ZC for the long term while generating sustainable returns through fee-sharing, buyback, and flexible time-based rewards.
+
+Its main objectives are to maintain token price stability, foster organic community marketing incentives, and provide a sustainable funding stream for the development team to continue expanding the ZC ecosystem.
+
+2. Motivation
+
+*Typical launchpad projects often face three key issues:
+
+- Stakers withdraw immediately after the pre-sale, creating strong sell pressure.
+
+- High APYs in early phases quickly decline, reducing staking interest.
+
+- Developers lack financial resources during the initial building phase.
+
+
+## Why Does This Matter?
+
+*The ZC Staking Protocol addresses these problems through:
+
+- A two-tier staking model (long-term & short-term).
+
+- Real transaction fee-sharing within the ecosystem.
+
+- Buyback and reinvested rewards post-unlock.
+
+- Gamified staking (NFT booster, referral system, restake bonus) to maintain long-term engagement.
+
+
+3. Staking Tiers & Reward Mechanism
+🟩 Tier 1 – Long-term Staking (3–6 months)
+
+Benefits:
+
+- Earn 1.5x higher APY compared to short-term stakers, adjustable based on trading volume.
+
+- Access to pre-sale rounds earlier and at a lower token price.
+
+- Receive 2% of total fee volume from all tokens paired with $ZC across the ecosystem (distributed weekly).
+
+- Time-weighted multiplier: the longer you stake, the higher your reward.
+
+ Example: Reward = Stake × (1 + 0.1 × months_staked) × FeeShare
+
+
+
+🟦 Tier 2 – Short-term Staking (1–2 months)
+
+Benefits:
+
+- Earn the standard APY (e.g., 90%).
+
+- Join the pre-sale after the long-term staking round.
+
+- Receive 2% fee rewards from tokens paired with $ZC during pre-sales.
+
+- Restake immediately after maturity to gain a +5% APY bonus for the next cycle.
+
+
+4. Lock & Buyback Mechanism
+
+- After each pre-sale, tokens are locked for only 1 week.
+
+- 50% of post-listing sell fees are used to buy back to support price stability.
+
+- Buybacks are triggered only when token < SMA7 (7-day average price) for cost efficiency.
+
+- During the first week post-listing (Guardian Week):
+
+  + Trading fees (buy/sell) are doubled to discourage snipers & jeeters.
+
+  + After 7 days, all fees automatically revert to normal.
+
+
+5. Fee Distribution
+
+     Time Period		            Recipient			                   Purpose
+
+Week 1 after listing		      Dev team: 20%			                Funding for building & marketing
+After week 1			            Dev team: 2%		      	          System maintenance fee
+Always	Long-term stakers: 	  2% of total fee volume		        Fee-sharing rewards
+Always	Short-term stakers: 	2% fee from pre-sale tokens	      Staking incentive
+
+
+6. Gamification & Incentive Add-ons
+
+🎖️ NFT Booster
+
+Stakers can mint NFT badges (Bronze / Silver / Gold) based on staking duration:
+
+- Bronze: +10% reward
+
+- Silver: +20% reward
+
+- Gold: +30% reward
+
+NFTs are tradable or can be burned to transfer the reward multiplier to another wallet.
+
+
+🔁 Restake Bonus
+
+When a staking period ends, users who restake within 48 hours receive a +5% APY bonus for the next cycle.
+
+
+👥 Referral Staking System
+
+Referrers earn 2% bonus rewards from the referred user’s earnings (without deducting from them).
+Referral links are displayed directly on the staking dashboard UI.
+
+
+⚖️ Anti-Whale Mechanism
+
+Rewards are calculated using a quadratic formula to prevent whales from dominating:
+
+Reward = √(stake_amount) × fee_share × multiplier
+
+
+🗳️ Governance (veZC Model)
+
+- Long-term stakers receive veZC tokens (vote escrowed ZC), used to:
+
+- Vote on buyback ratios.
+
+- Decide which tokens to list next.
+
+- Adjust fee reward allocation periodically.
