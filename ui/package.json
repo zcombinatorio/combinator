@@ -15,6 +15,7 @@
     "@coral-xyz/anchor": "^0.31.1",
     "@jup-ag/api": "^6.0.44",
     "@meteora-ag/cp-amm-sdk": "^1.1.5",
+    "@meteora-ag/dlmm": "^1.7.6",
     "@meteora-ag/dynamic-bonding-curve-sdk": "^1.4.1",
     "@privy-io/react-auth": "^3.0.1",
     "@privy-io/server-auth": "^1.32.5",

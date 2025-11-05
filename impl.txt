@@ -1,0 +1,1082 @@
+Complete Presale V2 Implementation Plan
+
+  Overview
+
+  Replace current whitelist-based presale with open bidding mechanism. Users submit bids ($ amount + max FDV), founder chooses clearing valuation, qualifying bids get pro-rata allocation with vesting.
+
+  Token Distribution:
+  - T tokens allocated to presale participants (vested)
+  - 0.25T tokens to AMM pool
+  - (1B - 1.25T) tokens to treasury
+
+  Fund Distribution:
+  - 0.25R to AMM pool
+  - 0.75R to treasury
+
+  ---
+  Phase 1: Database Schema Migration
+
+  1.1 Update presales Table
+
+  New columns:
+  ALTER TABLE presales
+    ADD COLUMN contribution_token_mint TEXT,
+    ADD COLUMN contribution_token_decimals INT NOT NULL,
+    ADD COLUMN vesting_duration_seconds BIGINT,
+    ADD COLUMN vesting_cliff_seconds BIGINT DEFAULT 0,
+    ADD COLUMN clearing_fdv BIGINT,
+    ADD COLUMN amm_pool_address TEXT;
+
+  Remove old columns:
+  ALTER TABLE presales
+    DROP COLUMN presale_tokens,  -- Whitelist no longer needed
+    DROP COLUMN tokens_bought;   -- Will calculate T from clearing_fdv
+
+  Update status enum:
+  - Current: 'pending' | 'launched'
+  - Remains: 'pending' | 'launched' (no changes needed)
+
+  1.2 Update presale_bids Table
+
+  Rename + Add columns:
+  ALTER TABLE presale_bids
+    RENAME COLUMN amount_lamports TO bid_amount;  -- Fix naming
+
+  ALTER TABLE presale_bids
+    ADD COLUMN max_fdv BIGINT NOT NULL,
+    ADD COLUMN withdrawn BOOLEAN DEFAULT false,
+    ADD COLUMN withdrawal_signature TEXT,
+    ADD COLUMN qualifying BOOLEAN,
+    ADD COLUMN tokens_allocated BIGINT DEFAULT 0;
+
+  Update comment:
+  COMMENT ON COLUMN presale_bids.bid_amount IS 'Contribution amount in token smallest units (not lamports)';
+
+  1.3 Keep presale_claims Table
+
+  - Structure remains the same
+  - Used for vesting qualified allocations
+
+  1.4 Migration Script
+
+  File: ui/scripts/migrations/002_presale_v2.sql
+
+  ---
+  Phase 2: Backend API Implementation
+
+  2.1 Create Presale Endpoint
+
+  File: ui/app/api/presale/route.ts
+
+  Changes:
+  // Add to request body interface
+  interface CreatePresaleRequest {
+    // ... existing fields
+    contributionTokenMint: string;      // NEW
+    vestingDurationSeconds: number;     // NEW
+    vestingCliffSeconds?: number;       // NEW (optional)
+  }
+
+  Updates:
+  - Remove whitelist token logic
+  - Generate escrow keypair (unchanged)
+  - Fetch contribution token decimals from chain:
+    const mintInfo = await getMint(connection, new PublicKey(contributionTokenMint));
+    const contributionTokenDecimals = mintInfo.decimals;
+  - Validate contribution token exists and is valid
+  - Store new vesting parameters with fetched decimals
+  - Return escrow public key
+
+  2.2 Submit Bid Endpoint
+
+  File: ui/routes/presale.ts (new endpoint)
+
+  POST /:tokenAddress/bids
+  Body: {
+    transactionSignature: string,
+    maxFdv: string  // In same units as bid amount
+  }
+
+  Logic:
+  1. Verify status = 'pending'
+  2. Verify transaction on-chain using verifyPresaleTokenTransaction()
+    - Check sender = user wallet
+    - Check recipient = escrow
+    - Check token mint = presale.contribution_token_mint
+    - Extract bid_amount from transfer instruction
+  3. Insert into presale_bids with max_fdv
+  4. Return success
+
+  Notes:
+  - No minimum bid amount validation
+  - Users can submit multiple bids (intentional for different price points)
+  - Bid modification NOT allowed - users must withdraw and resubmit
+  - User pays for creating any required ATAs (associated token accounts)
+
+  2.3 Withdraw Bid Endpoint
+
+  File: ui/routes/presale.ts (new endpoint)
+
+  POST /:tokenAddress/bids/withdraw
+  Body: {
+    bidId: number,
+    userPublicKey: string
+  }
+
+  Logic:
+  1. Verify status = 'pending' (can't withdraw after launch)
+  2. Fetch bid from DB, check ownership
+  3. Check not already withdrawn
+  4. Create refund transaction (escrow → user)
+  5. Dual-signature pattern (user signs, server adds escrow sig)
+  6. Mark bid as withdrawn
+  7. Record withdrawal_signature
+
+  2.4 Preview Calculations Endpoint
+
+  File: ui/routes/presale.ts (new endpoint)
+
+  GET /:tokenAddress/preview?fdv={V}
+
+  Response:
+  {
+    clearingFdv: string,
+    pricePerToken: string,        // P = V / 1B
+    totalRaised: string,           // R = Σ(bids where max_fdv >= V)
+    tokensSold: string,            // T = (R × 1B) / V
+    liquidity: {
+      dollars: string,             // 0.25R
+      tokens: string               // 0.25T
+    },
+    treasury: {
+      dollars: string,             // 0.75R
+      tokens: string               // 1B - 1.25T
+    },
+    qualifyingBids: Bid[],
+    nonQualifyingBids: Bid[],
+    totalBidsCount: number,
+    qualifyingBidsCount: number
+  }
+
+  Logic:
+  1. Fetch all non-withdrawn bids for presale
+  2. Filter qualifying: max_fdv >= fdv
+  3. Calculate R = sum of qualifying bid amounts
+  4. Calculate all derived parameters using equations
+  5. Return breakdown
+
+  2.5 Launch Endpoint (Close + Launch Combined)
+
+  File: ui/routes/presale.ts (update existing launch endpoint)
+
+  POST /:tokenAddress/launch
+  Body: {
+    clearingFdv: string
+  }
+
+  Logic:
+  1. Validate:
+    - Status = 'pending'
+    - Creator wallet matches
+    - Calculate R from qualifying bids (max_fdv >= clearing_fdv)
+    - Error if R = 0 (no qualifying bids)
+    - Calculate T = (R × 1B) / clearing_fdv
+    - CRITICAL VALIDATION: Ensure clearing_fdv >= (1.25 × R)
+      * This ensures T <= 0.8B, so 1.25T <= 1B (treasury doesn't go negative)
+      * Error message: "Clearing FDV too low. Minimum FDV: [1.25 × R]"
+  2. Update bids:
+    - Mark qualifying bids (max_fdv >= clearing_fdv)
+    - Calculate pro-rata allocations: tokens_allocated = (bid_amount / R) × T
+    - Handle rounding (give remainder to first bidder)
+  3. Create token mint:
+    - Decrypt base_mint_priv_key
+    - Create mint with 1B supply
+    - Mint authority = MAIN_PROTOCOL_ADDRESS (NOT escrow)
+      * Use the same protocol address that has mint authority for all tokens
+      * NEVER transfer mint authority to escrow
+  4. Create Meteora CP-AMM pool:
+  import { CPAMM } from "@meteora-ag/cp-amm-sdk";
+
+  // Initialize pool (separate transaction)
+  const pool = await CPAMM.createPool({
+    baseMint,  // New token
+    quoteMint: presale.contribution_token_mint,
+    owner: treasuryWallet  // Hq7Xh37tT4sesD6wA4DphYfxeMJRhhFWS3KVUSSGjqzc
+  });
+
+  5. ATOMIC TRANSFER TRANSACTION:
+  Build single transaction with all transfer instructions:
+    Token transfers:
+    - 0.25T → AMM pool
+    - (1B - 1.25T) → treasury wallet
+    - T tokens → escrow (for vesting claims)
+
+    Fund transfers:
+    - 0.25R → AMM pool
+    - 0.75R → treasury wallet
+
+  This must be atomic - if any transfer fails, all revert.
+  Sign with escrow keypair and send as single transaction.
+
+  6. Update database:
+    - presales.status = 'launched'
+    - presales.clearing_fdv = clearing_fdv
+    - presales.launched_at = NOW()
+    - presales.amm_pool_address = pool address
+  7. Initialize vesting claims:
+    - Create presale_claims for qualifying bids
+    - Set vesting_start_at = NOW(), tokens_allocated
+  8. Return:
+    - AMM pool address
+    - Transaction signature
+    - Launch summary
+
+  2.6 Claims Endpoints
+
+  Update existing claim endpoints to handle two scenarios:
+
+  GET /:tokenAddress/claims/:wallet
+
+  Response should include:
+  {
+    vestingClaim: {
+      // Existing vesting claim data for qualifying bids
+      tokensAllocated: string,
+      tokensClaimed: string,
+      tokensVested: string,
+      vestingStartAt: string,
+      vestingDuration: number,
+      // ...
+    } | null,
+    refundClaim: {
+      // New: refund data for non-qualifying bids
+      refundable: boolean,
+      refundAmount: string,      // Total bid amount to refund
+      refundClaimed: boolean,
+      bidIds: number[]           // List of non-qualifying bid IDs
+    } | null
+  }
+
+  POST /:tokenAddress/claims/prepare
+  Body: {
+    wallet: string,
+    claimType: 'vesting' | 'refund'  // NEW: specify claim type
+  }
+
+  For vesting claims (qualifying bids):
+  - Use existing vesting logic
+  - Calculate vested amount based on time elapsed
+  - Create transfer from escrow to user
+  - User pays for creating their token ATA if needed
+
+  For refund claims (non-qualifying bids):
+  - Aggregate all non-qualifying, non-withdrawn bids for user
+  - Calculate total refund amount
+  - Create transfer from escrow to user for full bid_amount
+  - Mark all refunded bids as claimed
+  - User pays for creating their contribution token ATA if needed
+
+  POST /:tokenAddress/claims/confirm
+  Body: {
+    wallet: string,
+    transactionSignature: string,
+    claimType: 'vesting' | 'refund'  // NEW
+  }
+
+  - Verify transaction on-chain
+  - Update presale_bids or presale_claims accordingly
+  - For refunds: Mark all non-qualifying bids as claimed
+
+  ---
+  Phase 3: UI Component Updates
+
+  3.1 LaunchContent.tsx
+
+  Changes to presale section (lines 609-676):
+
+  Add inputs when presale enabled:
+  {formData.presale && (
+    <>
+      {/* Contribution Token */}
+      <div className="text-[14px] mt-0.5">
+        <span className="text-gray-300">Contribution Token CA: </span>
+        <input
+          name="contributionTokenMint"
+          placeholder="Enter token mint address (e.g., USDC)"
+          // validation
+        />
+      </div>
+
+      {/* Vesting Duration */}
+      <div className="text-[14px] mt-0.5">
+        <span className="text-gray-300">Vesting Duration (days): </span>
+        <input
+          type="number"
+          name="vestingDurationDays"
+          placeholder="14"
+          // convert to seconds on submit
+        />
+      </div>
+
+      {/* Vesting Cliff */}
+      <div className="text-[14px] mt-0.5">
+        <span className="text-gray-300">Vesting Cliff (days): </span>
+        <input
+          type="number"
+          name="vestingCliffDays"
+          placeholder="0"
+          // convert to seconds on submit
+        />
+      </div>
+    </>
+  )}
+
+  Remove whitelist token inputs (lines 632-676)
+
+  Update API call (lines 289-304):
+  body: JSON.stringify({
+    name: formData.name,
+    symbol: formData.ticker,
+    uri: metadataData.url,
+    creatorWallet: externalWallet.toString(),
+    contributionTokenMint: formData.contributionTokenMint,
+    // decimals will be fetched from chain by backend
+    vestingDurationSeconds: formData.vestingDurationDays * 86400,
+    vestingCliffSeconds: formData.vestingCliffDays * 86400,
+    caEnding: formData.caEnding || undefined,
+    // remove presaleTokens
+  })
+
+  3.2 PresaleContent.tsx
+
+  Major refactor - two states:
+
+  State 1: Pending (Bidding Open)
+
+  Show:
+  - Presale info (token name, symbol, contribution token)
+  - Bid submission form
+  - User's existing bids with withdraw buttons
+  - Total stats (bids count, total volume)
+
+  New component sections:
+  {presale.status === 'pending' && (
+    <>
+      <BidSubmissionForm 
+        presale={presale}
+        onBidSubmitted={refetch}
+      />
+
+      <UserBidsList
+        bids={userBids}
+        onWithdraw={handleWithdraw}
+      />
+
+      {isCreator && (
+        <button onClick={() => setShowLaunchPreview(true)}>
+          Choose Launch Valuation
+        </button>
+      )}
+    </>
+  )}
+
+  State 2: Launched
+
+  Show:
+  - AMM pool link
+  - Vesting interface (qualifying bidders)
+  - Refund interface (non-qualifying bidders)
+
+  Existing vesting logic can be reused
+
+  3.3 BidSubmissionForm Component (NEW)
+
+  File: ui/components/BidSubmissionForm.tsx
+
+  Features:
+  - Input: bid amount
+  - Input: max acceptable FDV
+  - Button: Submit Bid
+  - Creates token transfer to escrow
+  - Calls POST /presale/{token}/bids
+  - Note: Users can submit multiple bids (for different price points)
+  - Note: Bid modification NOT allowed - must withdraw and resubmit
+
+  <div>
+    <input
+      type="number"
+      placeholder="Bid Amount (USDC)"
+      value={bidAmount}
+      onChange={...}
+    />
+
+    <input
+      type="number"
+      placeholder="Max Acceptable FDV (USDC)"
+      value={maxFdv}
+      onChange={...}
+    />
+
+    <button onClick={handleSubmitBid}>
+      Submit Bid
+    </button>
+
+    <p className="text-sm text-gray-400">
+      You can submit multiple bids. To change a bid, withdraw it and submit a new one.
+    </p>
+  </div>
+
+  Submit flow:
+  1. Create SPL token transfer (user → escrow)
+  2. Include ATA creation if user doesn't have contribution token account
+  3. User signs with Privy (pays for transaction + ATA creation if needed)
+  4. Submit transaction to Solana
+  5. Call backend with signature + maxFdv
+  6. Backend verifies and records
+
+  3.4 LaunchPreviewModal Component (NEW)
+
+  File: ui/components/LaunchPreviewModal.tsx
+
+  Features:
+  - Input: clearing FDV (with debounced API calls)
+  - Real-time calculated display
+  - Confirm button
+
+  export function LaunchPreviewModal({ presale, onClose, onConfirm }) {
+    const [fdv, setFdv] = useState('');
+    const { data: preview, isLoading } = useSWR(
+      fdv ? `/presale/${presale.token_address}/preview?fdv=${fdv}` : null,
+      fetcher,
+      { refreshInterval: 0 }
+    );
+
+    return (
+      <Modal>
+        <h2>Choose Launch Valuation</h2>
+
+        <input
+          type="number"
+          placeholder="Clearing FDV (in contribution token)"
+          value={fdv}
+          onChange={(e) => setFdv(e.target.value)}
+        />
+
+        {preview && (
+          <div>
+            <h3>Launch Parameters</h3>
+            <p>Price per token: {preview.pricePerToken}</p>
+            <p>Total raised: {preview.totalRaised}</p>
+            <p>Tokens sold: {preview.tokensSold}</p>
+
+            <h4>Liquidity (AMM)</h4>
+            <p>Dollars: {preview.liquidity.dollars}</p>
+            <p>Tokens: {preview.liquidity.tokens}</p>
+
+            <h4>Treasury</h4>
+            <p>Dollars: {preview.treasury.dollars}</p>
+            <p>Tokens: {preview.treasury.tokens}</p>
+
+            <h4>Bids</h4>
+            <p>Qualifying: {preview.qualifyingBidsCount}</p>
+            <p>Non-qualifying: {preview.totalBidsCount - preview.qualifyingBidsCount}</p>
+
+            {preview.totalRaised === '0' && (
+              <p className="text-red-400">
+                Error: No qualifying bids at this FDV
+              </p>
+            )}
+
+            <button 
+              onClick={() => onConfirm(fdv)}
+              disabled={preview.totalRaised === '0'}
+            >
+              Confirm Launch
+            </button>
+          </div>
+        )}
+      </Modal>
+    );
+  }
+
+  3.5 UserBidsList Component (NEW)
+
+  File: ui/components/UserBidsList.tsx
+
+  Shows:
+  - All user's bids for this presale
+  - Each bid shows: amount, max FDV, status (pending/withdrawn)
+  - Withdraw button for each non-withdrawn bid (if presale status = pending)
+  - Helper text: "Withdraw a bid to change your max FDV or bid amount"
+
+  ---
+  Phase 4: Meteora CP-AMM Integration
+
+  4.1 SDK Already Installed
+
+  @meteora-ag/cp-amm-sdk v1.1.5 is already in package.json
+  @meteora-ag/dlmm v1.7.6 has been installed
+
+  Note: Use CP-AMM (constant product) for presale pools, not DLMM.
+  CP-AMM provides full-range liquidity which is simpler and more appropriate.
+
+  4.2 Create Pool Service
+
+  File: ui/lib/meteoraCpAmmService.ts
+
+  import { CpAmm, derivePoolAddress, InitializeCustomizeablePoolParams, PoolFeesParams } from "@meteora-ag/cp-amm-sdk";
+  import { Connection, PublicKey, Keypair, Transaction } from "@solana/web3.js";
+  import BN from "bn.js";
+  import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getMint } from "@solana/spl-token";
+
+  /**
+   * Creates a customizable CP-AMM pool with liquidity
+   * Returns the transaction and pool address
+   */
+  export async function createPresaleCPAMMPool(params: {
+    connection: Connection;
+    baseMint: PublicKey;        // New token
+    quoteMint: PublicKey;       // Contribution token (e.g., USDC)
+    baseAmount: BN;             // 0.25T tokens
+    quoteAmount: BN;            // 0.25R contribution tokens
+    creator: PublicKey;         // Main protocol address (treasury)
+    payer: PublicKey;           // Escrow (will pay for tx)
+    escrowKeypair: Keypair;     // For signing
+  }): Promise<{
+    tx: Transaction;
+    pool: PublicKey;
+    position: PublicKey;
+  }> {
+    const {
+      connection,
+      baseMint,
+      quoteMint,
+      baseAmount,
+      quoteAmount,
+      creator,
+      payer,
+      escrowKeypair
+    } = params;
+
+    // Initialize CP-AMM SDK
+    const cpAmm = new CpAmm(connection);
+
+    // Generate position NFT keypair
+    const positionNftKeypair = Keypair.generate();
+
+    // Get token programs (check if Token2022)
+    const baseMintInfo = await getMint(connection, baseMint);
+    const quoteMintInfo = await getMint(connection, quoteMint);
+
+    const baseTokenProgram = baseMintInfo.tlvData.length > 0 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    const quoteTokenProgram = quoteMintInfo.tlvData.length > 0 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+
+    // Calculate sqrt prices for full-range liquidity
+    // For constant product: P = quoteAmount / baseAmount
+    // We want full range, so use MIN and MAX sqrt prices
+    const MIN_SQRT_PRICE = new BN("4295048016"); // sqrt(2^-64) in Q64
+    const MAX_SQRT_PRICE = new BN("79226673515401279992447579055"); // sqrt(2^64) in Q64
+
+    // Calculate initial sqrt price from token amounts
+    // sqrt(P) = sqrt(quoteAmount / baseAmount) in Q64 format
+    const { initSqrtPrice, liquidityDelta } = cpAmm.preparePoolCreationParams({
+      tokenAAmount: baseAmount,
+      tokenBAmount: quoteAmount,
+      minSqrtPrice: MIN_SQRT_PRICE,
+      maxSqrtPrice: MAX_SQRT_PRICE,
+      tokenAInfo: baseMintInfo.tlvData.length > 0 ? {
+        mint: baseMintInfo,
+        currentEpoch: await connection.getEpochInfo().then(e => e.epoch)
+      } : undefined,
+      tokenBInfo: quoteMintInfo.tlvData.length > 0 ? {
+        mint: quoteMintInfo,
+        currentEpoch: await connection.getEpochInfo().then(e => e.epoch)
+      } : undefined,
+    });
+
+    // Define pool fees (0.3% swap fee for presale pools)
+    const poolFees: PoolFeesParams = {
+      baseFactor: 300,         // 0.3% base fee (300 basis points out of 100,000)
+      filterPeriod: new BN(0),
+      decayPeriod: new BN(0),
+      reductionFactor: 0,
+      variableFeeControl: new BN(0),
+      maxVolatilityAccumulator: new BN(0),
+      minBinId: 0,
+      maxBinId: 0,
+      protocolShare: 0         // No protocol fee split
+    };
+
+    // Create customizable pool with initial liquidity
+    const poolParams: InitializeCustomizeablePoolParams = {
+      payer: payer,
+      creator: creator,           // Treasury/protocol address owns the pool
+      positionNft: positionNftKeypair.publicKey,
+      tokenAMint: baseMint,       // New token
+      tokenBMint: quoteMint,      // Contribution token
+      tokenAAmount: baseAmount,
+      tokenBAmount: quoteAmount,
+      sqrtMinPrice: MIN_SQRT_PRICE,
+      sqrtMaxPrice: MAX_SQRT_PRICE,
+      liquidityDelta: liquidityDelta,
+      initSqrtPrice: initSqrtPrice,
+      poolFees: poolFees,
+      hasAlphaVault: false,
+      activationType: 0,          // Slot-based activation
+      collectFeeMode: 0,          // Default fee collection
+      activationPoint: null,      // Activate immediately
+      tokenAProgram: baseTokenProgram,
+      tokenBProgram: quoteTokenProgram,
+      isLockLiquidity: false      // Treasury can withdraw if needed
+    };
+
+    // Create pool transaction
+    const { tx, pool, position } = await cpAmm.createCustomPool(poolParams);
+
+    // Sign with escrow and position NFT keypairs
+    tx.partialSign(escrowKeypair, positionNftKeypair);
+
+    return { tx, pool, position };
+  }
+
+  /**
+   * Derives the pool address for a given token pair
+   */
+  export async function getPoolAddress(
+    tokenAMint: PublicKey,
+    tokenBMint: PublicKey
+  ): Promise<PublicKey> {
+    return derivePoolAddress(tokenAMint, tokenBMint);
+  }
+
+  4.3 Update Launch Handler
+
+  File: ui/routes/presale.ts (in launch endpoint)
+
+  Replace bonding curve code with:
+  import { createPresaleCPAMMPool } from '@/lib/meteoraCpAmmService';
+  import { createMintToInstruction, createTransferInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
+
+  // After calculating R and T and validating
+  const TREASURY_ADDRESS = new PublicKey(process.env.TREASURY_WALLET!); // Hq7Xh37tT4sesD6wA4DphYfxeMJRhhFWS3KVUSSGjqzc
+
+  // Calculate amounts for AMM pool (25% each)
+  const baseAmountForPool = T.muln(25).divn(100);  // 0.25T
+  const quoteAmountForPool = R.muln(25).divn(100); // 0.25R
+
+  // Step 1: Create token mint (separate transaction)
+  // [existing mint creation code]
+
+  // Step 2: Create CP-AMM pool (separate transaction)
+  const { tx: createPoolTx, pool: poolAddress, position: positionAddress } = await createPresaleCPAMMPool({
+    connection,
+    baseMint: new PublicKey(baseMint),
+    quoteMint: new PublicKey(presale.contribution_token_mint),
+    baseAmount: baseAmountForPool,
+    quoteAmount: quoteAmountForPool,
+    creator: TREASURY_ADDRESS,  // Pool owner
+    payer: escrowKeypair.publicKey,
+    escrowKeypair: escrowKeypair
+  });
+
+  // Send pool creation transaction
+  const poolCreationSignature = await connection.sendTransaction(createPoolTx, { skipPreflight: false });
+  await connection.confirmTransaction(poolCreationSignature, 'confirmed');
+
+  // Note: Position NFT is automatically created and held by treasury (creator)
+  // No need to store position address in database
+
+  // Step 3: Build ATOMIC transfer transaction
+  const atomicTransferTx = new Transaction();
+
+  // Get all token accounts
+  const treasuryBaseAta = await getAssociatedTokenAddress(baseMint, TREASURY_ADDRESS);
+  const escrowBaseAta = await getAssociatedTokenAddress(baseMint, escrowKeypair.publicKey);
+  const poolBaseVault = await getAssociatedTokenAddress(baseMint, poolAddress, true); // PDA
+  const poolQuoteVault = await getAssociatedTokenAddress(quoteMint, poolAddress, true); // PDA
+
+  // Token transfers:
+  // 1. Mint 0.25T to pool vault (already done by createCustomPool)
+  // 2. Mint (1B - 1.25T) to treasury
+  const treasuryTokenAmount = new BN(1_000_000_000).sub(T.muln(125).divn(100));
+  atomicTransferTx.add(
+    createMintToInstruction(
+      baseMint,
+      treasuryBaseAta,
+      PROTOCOL_MINT_AUTHORITY, // The main protocol address with mint authority
+      treasuryTokenAmount.toNumber()
+    )
+  );
+
+  // 3. Mint T to escrow for vesting
+  atomicTransferTx.add(
+    createMintToInstruction(
+      baseMint,
+      escrowBaseAta,
+      PROTOCOL_MINT_AUTHORITY,
+      T.toNumber()
+    )
+  );
+
+  // Fund transfers from escrow:
+  // 4. Transfer 0.25R to pool quote vault (already done by createCustomPool via liquidity)
+  // 5. Transfer 0.75R to treasury
+  const treasuryQuoteAmount = R.muln(75).divn(100);
+  const treasuryQuoteAta = await getAssociatedTokenAddress(quoteMint, TREASURY_ADDRESS);
+  const escrowQuoteAta = await getAssociatedTokenAddress(quoteMint, escrowKeypair.publicKey);
+
+  atomicTransferTx.add(
+    createTransferInstruction(
+      escrowQuoteAta,
+      treasuryQuoteAta,
+      escrowKeypair.publicKey,
+      treasuryQuoteAmount.toNumber()
+    )
+  );
+
+  // Sign and send atomic transfer transaction
+  atomicTransferTx.feePayer = escrowKeypair.publicKey;
+  const { blockhash } = await connection.getLatestBlockhash();
+  atomicTransferTx.recentBlockhash = blockhash;
+  atomicTransferTx.sign(escrowKeypair, PROTOCOL_MINT_AUTHORITY_KEYPAIR);
+
+  const transferSignature = await connection.sendTransaction(atomicTransferTx, { skipPreflight: false });
+  await connection.confirmTransaction(transferSignature, 'confirmed');
+
+  // Update database
+  await updatePresaleStatus(presale.id, {
+    status: 'launched',
+    amm_pool_address: poolAddress.toString(),
+    clearing_fdv: clearingFdv,
+    launched_at: new Date()
+  });
+
+  ---
+  Phase 5: Remove Old System
+
+  5.1 Files to Modify
+
+  Remove whitelist logic:
+  - ui/app/api/presale/max-contribution/route.ts - DELETE entire file
+  - ui/app/api/presale/max-contribution/szc-token-holders.json - DELETE
+  - ui/app/api/presale/max-contribution/oog-token-holders.json - DELETE
+
+  Update components:
+  - ui/components/PresaleBuyModal.tsx - Replace with BidSubmissionForm logic
+
+  5.2 Database Cleanup
+
+  -- Remove old columns
+  ALTER TABLE presales DROP COLUMN presale_tokens;
+
+  ---
+  Phase 6: Precision & Math Library
+
+  6.1 Use BN for All Calculations
+
+  File: ui/lib/presaleMath.ts
+
+  import BN from 'bn.js';
+
+  export function calculateTokensSold(
+    totalRaised: BN,
+    totalSupply: BN,
+    clearingFdv: BN
+  ): BN {
+    // T = (R × 1B) / V
+    // To avoid overflow: (R / V) × 1B
+    return totalRaised.mul(totalSupply).div(clearingFdv);
+  }
+
+  export function calculateProRataAllocation(
+    userBid: BN,
+    totalRaised: BN,
+    tokensSold: BN
+  ): BN {
+    // allocation = (userBid / totalRaised) × T
+    return userBid.mul(tokensSold).div(totalRaised);
+  }
+
+  export function calculateLiquidityAmounts(tokensSold: BN) {
+    // 0.25T
+    return tokensSold.muln(25).divn(100);
+  }
+
+  export function calculateTreasuryTokens(
+    totalSupply: BN,
+    tokensSold: BN
+  ): BN {
+    // 1B - 1.25T
+    const sold125 = tokensSold.muln(125).divn(100);
+    return totalSupply.sub(sold125);
+  }
+
+  6.2 Rounding Strategy
+
+  For pro-rata allocations:
+  export function allocateTokensToUsers(
+    bids: Bid[],
+    totalRaised: BN,
+    tokensSold: BN
+  ): Map<string, BN> {
+    const allocations = new Map();
+    let totalAllocated = new BN(0);
+
+    // Calculate each user's share
+    for (const bid of bids) {
+      const allocation = calculateProRataAllocation(
+        new BN(bid.bid_amount),
+        totalRaised,
+        tokensSold
+      );
+      allocations.set(bid.id, allocation);
+      totalAllocated = totalAllocated.add(allocation);
+    }
+
+    // Give remainder to first user to ensure sum = tokensSold
+    const remainder = tokensSold.sub(totalAllocated);
+    if (!remainder.isZero() && bids.length > 0) {
+      const firstBidId = bids[0].id;
+      const firstAllocation = allocations.get(firstBidId)!;
+      allocations.set(firstBidId, firstAllocation.add(remainder));
+    }
+
+    return allocations;
+  }
+
+  ---
+  Phase 7: Error Handling & Validation
+
+  7.1 Validation Rules
+
+  Presale creation:
+  - contributionTokenMint: Valid Solana address
+  - vestingDurationSeconds: > 0
+  - vestingCliffSeconds: >= 0 and < vestingDurationSeconds
+
+  Bid submission:
+  - bid_amount: > 0
+  - max_fdv: > 0
+  - Status must be 'pending'
+  - Transaction must be valid and recent
+
+  Launch:
+  - Status must be 'pending'
+  - Only creator can launch
+  - R must be > 0 (at least one qualifying bid)
+  - clearing_fdv must be > 0
+  - clearing_fdv >= 1.25 × R (ensures treasury doesn't go negative)
+
+  7.2 Error Messages
+
+  const ERRORS = {
+    PRESALE_NOT_PENDING: 'Presale has already launched',
+    NO_QUALIFYING_BIDS: 'No bids qualify at this FDV. Choose a lower valuation.',
+    CLEARING_FDV_TOO_LOW: 'Clearing FDV too low. Minimum FDV: [calculated minimum]',
+    ALREADY_LAUNCHED: 'Presale already launched',
+    NOT_CREATOR: 'Only presale creator can launch',
+    INVALID_BID: 'Invalid bid amount or max FDV',
+    WITHDRAWAL_FAILED: 'Cannot withdraw after presale launches',
+    ALREADY_WITHDRAWN: 'Bid already withdrawn',
+    INVALID_CONTRIBUTION_TOKEN: 'Invalid or non-existent contribution token mint address'
+  };
+
+  ---
+  Phase 8: Testing Strategy
+
+  8.1 Unit Tests
+
+  Test presaleMath.ts:
+  - Edge cases: R=1, V=1B (T should be 1)
+  - Large numbers: R=1M, V=10M
+  - Rounding: ensure sum of allocations = T
+
+  8.2 Integration Tests
+
+  Test bid flow:
+  1. Create presale
+  2. Submit multiple bids with varying max_fdv
+  3. Withdraw some bids
+  4. Launch with clearing_fdv
+  5. Verify allocations
+  6. Test claims (qualifying vs non-qualifying)
+
+  8.3 Manual Testing Checklist
+
+  - Create presale with custom contribution token (verify decimals fetched correctly)
+  - Submit bid (verify on-chain + DB)
+  - Withdraw bid (verify refund)
+  - Preview with different FDVs (check calculations)
+  - Try to launch with FDV < 1.25 × R (should error with minimum FDV message)
+  - Launch with valid FDV (verify AMM creation, token distribution, atomic transfers)
+  - Verify mint authority remains with protocol address (NOT escrow)
+  - Claim vested tokens (qualifying bid)
+  - Claim refund (non-qualifying bid)
+  - Try to launch with R=0 (should error)
+  - Try to withdraw after launch (should error)
+
+  ---
+  Implementation Order
+
+  Week 1: Backend Foundation
+  1. Database migration script
+  2. Update presale creation endpoint
+  3. Bid submission endpoint
+  4. Withdrawal endpoint
+  5. Preview calculations endpoint
+
+  Week 2: Launch Mechanism
+  6. Meteora CP-AMM SDK integration
+  7. Math library with BN
+  8. Launch endpoint (close + create pool)
+  9. Treasury transfers
+  10. Vesting initialization
+
+  Week 3: UI Components
+  11. Update LaunchContent form
+  12. BidSubmissionForm component
+  13. LaunchPreviewModal component
+  14. Update PresaleContent (3 states)
+  15. UserBidsList component
+
+  Week 4: Claims & Testing
+  16. Update claims for qualifying/non-qualifying
+  17. Integration testing
+  18. Manual testing
+  19. Bug fixes
+  20. Deploy
+
+  ---
+  Files to Create/Modify Summary
+
+  New Files:
+
+  - ui/scripts/migrations/002_presale_v2.sql
+  - ui/lib/presaleMath.ts
+  - ui/lib/meteoraCpAmmService.ts
+  - ui/components/BidSubmissionForm.tsx
+  - ui/components/LaunchPreviewModal.tsx
+  - ui/components/UserBidsList.tsx
+
+  Modified Files:
+
+  - ui/lib/db.ts (schema updates)
+  - ui/lib/db/types.ts (interfaces)
+  - ui/lib/db/presales.ts (new functions)
+  - ui/app/api/presale/route.ts (add contribution token params)
+  - ui/routes/presale.ts (ALL bid/launch endpoints)
+  - ui/components/LaunchContent.tsx (presale form)
+  - ui/components/PresaleContent.tsx (major refactor)
+
+  Deleted Files:
+
+  - ui/app/api/presale/max-contribution/route.ts
+  - ui/app/api/presale/max-contribution/*.json
+  - ui/components/PresaleBuyModal.tsx (replaced)
+
+  ---
+  Risk Areas
+
+  1. ✓ RESOLVED: Meteora CP-AMM SDK - API verified, see Phase 4.2 for implementation
+  2. Precision errors - Must test math extensively with BN library for large numbers
+  3. ✓ RESOLVED: Treasury underflow - Validation added: clearing_fdv >= 1.25 × R
+  4. ✓ RESOLVED: Contribution token validation - Uses getMint() to fetch decimals
+  5. Atomic transfer transaction size - May hit transaction size limits with many instructions
+     - Mitigation: Keep minting and pool creation in separate transactions
+  6. Fee calculation precision - 0.3% fee (300 basis points) must be correctly configured
+     - Verify PoolFeesParams.baseFactor = 300 works as expected
+  7. Token2022 compatibility - Code handles both TOKEN_PROGRAM_ID and TOKEN_2022_PROGRAM_ID
+     - Must test with Token2022 contribution tokens (e.g., USDC on Token2022)
+  8. Rounding dust - Pro-rata allocation may leave small remainder
+     - Giving remainder to first bidder - verify this doesn't cause issues
+  9. Concurrent bid withdrawals - Multiple users withdrawing simultaneously
+     - Need database row-level locking or optimistic concurrency control
+
+  ---
+
+● Executive Summary
+
+  Key Changes
+
+  Database:
+  - Add contribution token mint + decimals (fetched from chain), vesting params, clearing FDV to presales
+  - Add max_fdv, qualifying status, tokens_allocated to bids
+  - Remove whitelist arrays
+  - Status remains: 'pending' | 'launched' (no 'closed' status)
+
+  Backend (6 new/updated endpoints):
+  1. Create presale - accept contribution token (fetch decimals on-chain) + vesting params
+  2. Submit bid - verify transfer + record max_fdv
+  3. Withdraw bid - refund before launch (not after)
+  4. Preview - real-time calculations for any FDV showing qualifying bids
+  5. Launch - validates clearing_fdv >= 1.25×R, creates pool, atomic transfers, maintains mint authority with protocol
+  6. Claims - handle vested tokens (qualifying) or refunds (non-qualifying)
+
+  UI:
+  - LaunchContent: Remove whitelist inputs, add contribution token + vesting inputs (no decimals input)
+  - PresaleContent: 2 states (pending/bidding, launched)
+  - New components: BidSubmissionForm, LaunchPreviewModal, UserBidsList
+
+  Token Distribution:
+  - T tokens → presale participants (vested in escrow)
+  - 0.25T → AMM pool
+  - (1B - 1.25T) → treasury
+
+  Fund Distribution:
+  - 0.25R → AMM pool
+  - 0.75R → treasury
+
+  Critical Requirements:
+  - Mint authority ALWAYS stays with main protocol address (NEVER escrow)
+  - Contribution token decimals fetched from chain (not user input)
+  - Clearing FDV validation: must be >= 1.25×R (prevents treasury underflow)
+  - All token + fund transfers in single ATOMIC transaction
+  - Token mint and pool creation can be separate transactions
+
+  Math:
+  - Use BN library for all calculations to avoid overflow/precision errors
+  - Handle rounding by giving remainder to first bidder
+
+  ---
+
+  Answers to Key Questions
+
+  Q1: Meteora CP-AMM SDK Integration
+  ✓ ANSWERED - SDK is already installed (@meteora-ag/cp-amm-sdk v1.1.5)
+  - Use CpAmm class with createCustomPool() method
+  - Returns Transaction that creates pool with initial liquidity
+  - Pool owner set to treasury/protocol address
+  - Pool fees set to 0.3% swap fee (300 basis points)
+  - Returns pool address and position NFT address
+  - Position NFT held by treasury, NOT stored in database
+  - See Phase 4.2 for complete implementation
+
+  Q2: AMM Pool Ownership
+  ✓ ANSWERED - Pool owner = main protocol address (treasury)
+  - Treasury has full control over pool
+  - Can withdraw liquidity if needed
+  - Can adjust fees/settings
+  - Set via creator parameter in InitializeCustomizeablePoolParams
+  - Position NFT automatically held by creator (treasury)
+
+  Q3: Non-Qualifying Bid Refunds
+  ✓ ANSWERED - Manual claim by user after launch
+  - GET /:tokenAddress/claims/:wallet returns refund info
+  - POST /:tokenAddress/claims/prepare with claimType='refund'
+  - Escrow creates transfer transaction for full bid_amount
+  - User signs and submits (user pays for ATA creation)
+  - POST /:tokenAddress/claims/confirm marks bids as claimed
+  - See Phase 2.6 for complete API spec
+
+  Q4: Implementation Approach
+  - DO NOT IMPLEMENT YET - spec refinement in progress
+  - Suggested order: Database → Backend → Meteora Integration → UI → Testing
+
+  Additional Design Decisions
+
+  ✓ Pool Swap Fee: 0.3% (standard AMM fee)
+  ✓ ATA Creation: Paid by users in all transactions (bids, withdrawals, claims)
+  ✓ Position NFT: Held by treasury address, not tracked in database
+  ✓ Minimum Bid: No minimum bid amount validation
+  ✓ Bid Modification: NOT allowed - users must withdraw and resubmit for changes
+  ✓ Multiple Bids: Allowed intentionally (enables different price points per user)
