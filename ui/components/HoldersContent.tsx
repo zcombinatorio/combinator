@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet } from '@/components/WalletProvider';
 import { PublicKey } from '@solana/web3.js';
 import { useLaunchInfo, useHolders } from '@/hooks/useTokenData';
+import { MOCK_TOKENS } from '@/lib/mock';
 
 interface Holder {
   id?: number;
@@ -151,12 +152,14 @@ export function HoldersContent({ tokenAddress, tokenSymbol = '' }: HoldersConten
       if (launch) {
         const walletAddress = wallet.toString();
         const creatorAddress = launch.creator_wallet;
-        setAccessDenied(walletAddress !== creatorAddress);
+        // Allow access to mock tokens by checking if address exists in MOCK_TOKENS
+        const isMockToken = MOCK_TOKENS.some(t => t.token_address === tokenAddress);
+        setAccessDenied(!isMockToken && walletAddress !== creatorAddress);
       } else {
         setAccessDenied(true);
       }
     }
-  }, [wallet, launchData, launchLoading]);
+  }, [wallet, launchData, launchLoading, tokenAddress]);
 
   const formatAddress = (address: string) => {
     return `${address.slice(0, 6)}...${address.slice(-6)}`;

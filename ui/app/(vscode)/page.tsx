@@ -18,7 +18,7 @@ export default function LandingPage() {
       <p className="mt-[26px] text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}Thesis</p>
       <p className="mt-1 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>The highest signal product feedback is a ready-to-merge PR made and selected by your users.</p>
       <p className="mt-[26px] text-[14px] text-gray-500" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>{'//'}What problems are ZC solving for you as a founder?</p>
-      <p className="mt-0.5 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>&gt; I don&apos;t know what to build b/c</p>
+      <p className="mt-0.5 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>&gt; I don&apos;t know what the right thing to build is b/c</p>
       <p className="mt-0.5 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>&gt; I&apos;m getting no feedback (at worst) and bad feedback (at best) b/c</p>
       <p className="mt-1 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>&gt; I&apos;m poorly incentivizing my users to give me good feedback b/c</p>
       <p className="mt-1 text-[14px] text-gray-300" style={{ fontFamily: 'Monaco, Menlo, "Courier New", monospace' }}>&gt; I don&apos;t know how valueable each piece of feedback is</p>

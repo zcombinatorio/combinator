@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import FormData from 'form-data';
 import axios from 'axios';
+import { shouldUseMockPinata, mockPinata } from '@/lib/mock';
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,6 +11,13 @@ export async function POST(request: NextRequest) {
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+    }
+
+    // Use mock Pinata if JWT not available
+    if (shouldUseMockPinata()) {
+      const mockResult = await mockPinata.uploadImage(file);
+      // Return URL pointing to local z-pfp.jpg
+      return NextResponse.json({ url: '/z-pfp.jpg' });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());

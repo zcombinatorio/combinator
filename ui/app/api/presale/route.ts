@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createPresale, getPresalesByCreatorWallet } from '@/lib/db';
 import { generateEscrowKeypair } from '@/lib/presale-escrow';
+import { isInMockMode, MOCK_PRESALES } from '@/lib/mock';
 import {
   isValidSolanaAddress,
   isValidTokenMintAddress,
@@ -37,7 +38,16 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const presales = await getPresalesByCreatorWallet(creatorWallet, limit);
+    let presales = await getPresalesByCreatorWallet(creatorWallet, limit);
+
+    // In mock mode, if no presales found for this wallet, return all mock presales for demo purposes
+    if (isInMockMode() && presales.length === 0 && creatorWallet) {
+      console.log('📦 Mock Mode: Showing all sample presales for demo purposes');
+      presales = MOCK_PRESALES.map(presale => ({
+        ...presale,
+        isDemoData: true,
+      } as any));
+    }
 
     // Remove sensitive fields before sending to client
     const sanitizedPresales = presales.map(presale => {
@@ -47,7 +57,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       presales: sanitizedPresales,
-      count: sanitizedPresales.length
+      count: sanitizedPresales.length,
+      isDemoMode: isInMockMode() && presales.some((p: any) => p.isDemoData)
     });
 
   } catch (error) {

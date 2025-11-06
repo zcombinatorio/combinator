@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { shouldUseMockBirdeye, mockBirdeye } from '@/lib/mock';
 
 export async function POST(
   request: Request
@@ -6,6 +7,12 @@ export async function POST(
   try {
     const body = await request.json();
     const tokenAddress = body.tokenAddress;
+
+    // Use mock Birdeye if API key not available
+    if (shouldUseMockBirdeye()) {
+      const mockData = await mockBirdeye.getTokenMarketData(tokenAddress);
+      return NextResponse.json(mockData);
+    }
 
     const response = await fetch(
       `https://public-api.birdeye.so/defi/v3/token/market-data?address=${tokenAddress}`,

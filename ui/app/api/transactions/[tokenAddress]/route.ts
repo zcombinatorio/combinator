@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PublicKey } from '@solana/web3.js';
+import { shouldUseMockHelius, mockHelius } from '@/lib/mock';
 
 interface SignatureInfo {
   signature: string;
@@ -267,6 +268,29 @@ export async function POST(
         { error: 'Limit must be between 1 and 100' },
         { status: 400 }
       );
+    }
+
+    // Use mock data if in mock mode
+    if (shouldUseMockHelius()) {
+      console.log('📦 Mock Mode: Returning mock transaction history');
+
+      // Get mock transactions for this token
+      const mockTransactions = await mockHelius.getAddressTransactions(walletAddress, { limit, before });
+
+      // Filter for transactions involving the specific token
+      const relevantTransactions = mockTransactions.filter(tx =>
+        tx.tokenTransfers?.some((transfer: any) => transfer.mint === tokenAddress)
+      );
+
+      // Parse transactions using the same parser
+      const parsedTransactions = parseTransactionsForToken(relevantTransactions, tokenAddress);
+
+      return NextResponse.json({
+        transactions: parsedTransactions,
+        hasMore: false, // Mock data has limited transactions
+        lastSignature: null,
+        isDemoMode: true
+      });
     }
 
     const apiKey = process.env.HELIUS_API_KEY;

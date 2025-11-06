@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTokenLaunches, getTokenLaunchesBySocials, getTokenLaunchByAddress, TokenLaunch } from '@/lib/db';
+import { isInMockMode, MOCK_TOKENS } from '@/lib/mock';
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,6 +25,18 @@ export async function POST(request: NextRequest) {
       const tokenLaunch = await getTokenLaunchByAddress(tokenAddress);
       if (tokenLaunch) {
         allLaunches = [tokenLaunch];
+      } else if (isInMockMode()) {
+        // Token not found in database, check if it's a mock token
+        const mockToken = MOCK_TOKENS.find(t => t.token_address === tokenAddress);
+        if (mockToken) {
+          console.log('📦 Mock Mode: Returning mock token for address:', tokenAddress);
+          allLaunches = [{
+            ...mockToken,
+            launch_time: new Date(mockToken.launch_time),
+            created_at: new Date(mockToken.created_at),
+            isDemoData: true,
+          } as any];
+        }
       }
     }
 
@@ -55,9 +68,21 @@ export async function POST(request: NextRequest) {
     // Sort by launch_time DESC
     allLaunches.sort((a, b) => new Date(b.launch_time).getTime() - new Date(a.launch_time).getTime());
 
+    // In mock mode, if no tokens found for this wallet, return all mock tokens for demo purposes
+    if (isInMockMode() && allLaunches.length === 0 && creatorWallet) {
+      console.log('📦 Mock Mode: Showing all sample tokens for demo purposes');
+      allLaunches = MOCK_TOKENS.map(token => ({
+        ...token,
+        launch_time: new Date(token.launch_time),
+        created_at: new Date(token.created_at),
+        isDemoData: true, // Flag to indicate this is demo data
+      } as any));
+    }
+
     return NextResponse.json({
       launches: allLaunches,
-      count: allLaunches.length
+      count: allLaunches.length,
+      isDemoMode: isInMockMode() && allLaunches.some((l: any) => l.isDemoData)
     });
 
   } catch (error) {
