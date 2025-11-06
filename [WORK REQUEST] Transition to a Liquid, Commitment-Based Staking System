@@ -1,0 +1,86 @@
+---
+name: Work Request
+about: Request work that only the ZC team can complete
+title: '[WORK REQUEST] Transition to a Liquid, Commitment-Based Staking System '
+labels: work-request
+---
+# Discord Username
+@slim0x
+
+# Work Request
+
+**Note**: Use this for work requiring team access (permissioned protocol access, migrations, fee changes, etc.). If you're submitting code yourself, use "Code Contribution" instead.
+
+## What Should Be Built?
+
+The current staking model distributes 60 million tokens among stakers who lock their tokens for one month. While this encourages commitment, it limits liquidity and flexibility — two priorities for many investors.
+
+To improve accessibility while still rewarding long-term commitment, we propose a liquid staking system with a tiered reward structure and Discord role integration.
+
+KEY FEATURES:
+
+- No forced lockups:
+Users can stake and unstake anytime. This keeps liquidity available while maintaining an incentive to stay staked longer.
+
+- Commitment-based rewards:
+
+First 48 hours: No rewards (commitment phase).
+
+Days 3–7: Base rewards.
+
+Days 8–14: Bonus 1 (early commitment).
+
+Days 15–30: Bonus 2 (mid-term commitment).
+
+Day 30+: Maximum bonus (long-term staker tier).
+
+- Staking structure:
+Each staking action is treated as a separate “bag” (e.g., staking 1M ZC). Bags can’t be partially unstaked but users can stake multiple times with different amounts. This structure allows transparent and fair tracking of commitment periods for each staked batch.
+
+- Discord integration:
+Automatic roles to recognize and reward engagement and loyalty in the community:
+
+First 48h role (tbd)
+
+Day 3–7 role (tbd)
+
+Day 8–14 role (tbd)
+
+Day 15–30 role (tbd)
+
+Day 30+ role (tbd)
+
+
+## Why Does This Matter?
+
+1. ENCHANCES LIQUIDITY:
+By removing rigid lockups, investors maintain control over their assets. This makes staking more attractive to both new and existing holders, driving participation and capital flow.
+
+2. REWARDS TRUE COMMITMENT:
+The tiered reward system ensures that long-term stakers still earn the highest rewards, preserving the spirit of commitment without imposing hard restrictions.
+
+3. IMPROVES TRANSPARENCY AND ENGAGEMENT:
+Tracking each staking batch separately provides the team with clear data on who the most dedicated supporters are, while the Discord role system fosters community recognition and engagement.
+
+4. ALIGNS INTERESTS OF TEAM AND INVESTORS:
+The system balances liquidity (investor priority) with commitment visibility (team priority). It encourages a healthy staking ecosystem that’s sustainable, inclusive, and rewarding for all participants.
+
+
+## Supporting Evidence
+
+**User demand / Data / Research:**
+not included 
+
+
+---
+
+## Checklist
+
+- [x] Clear description of what to build
+- [x] Explained why this matters
+- [x] Provided supporting evidence
+- [x] Read [CONTRIBUTING.md](../../CONTRIBUTING.md)
+
+---
+
+**Note**: The ZC team currently reviews and prioritizes work requests. In the future, decision markets will determine which requests get built and rewards.
