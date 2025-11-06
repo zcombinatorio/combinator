@@ -308,10 +308,15 @@ export async function calculateClaimEligibility(
   }
 
   // Calculate periods: 1M at launch + 1M per 24-hour period elapsed
+  // Emissions stop after 6 months (180 days)
   const now = new Date();
   const msElapsed = now.getTime() - tokenLaunchTime.getTime();
   const fullDaysElapsed = Math.floor(msElapsed / (24 * 60 * 60 * 1000));
-  const totalPeriods = fullDaysElapsed + 1; // +1 for initial claim at launch
+
+  // Cap emissions at 6 months (180 days)
+  const MAX_EMISSION_DAYS = 180;
+  const cappedDaysElapsed = Math.min(fullDaysElapsed, MAX_EMISSION_DAYS);
+  const totalPeriods = cappedDaysElapsed + 1; // +1 for initial claim at launch
 
   // Each period allows 1,000,000 tokens
   const TOKENS_PER_PERIOD = BigInt(1000000);
@@ -320,8 +325,14 @@ export async function calculateClaimEligibility(
   // Available to claim = max allowed - already claimed
   const availableToClaim = maxClaimableNow > totalMinted ? maxClaimableNow - totalMinted : BigInt(0);
 
-  // Next inflation is at the next 24-hour mark
-  const nextInflationTime = new Date(tokenLaunchTime.getTime() + (fullDaysElapsed + 1) * 24 * 60 * 60 * 1000);
+  // Next inflation is at the next 24-hour mark, or far future if emissions have stopped
+  let nextInflationTime: Date;
+  if (fullDaysElapsed >= MAX_EMISSION_DAYS) {
+    // Emissions have stopped - set to a far future date
+    nextInflationTime = new Date(tokenLaunchTime.getTime() + (MAX_EMISSION_DAYS + 1) * 24 * 60 * 60 * 1000);
+  } else {
+    nextInflationTime = new Date(tokenLaunchTime.getTime() + (fullDaysElapsed + 1) * 24 * 60 * 60 * 1000);
+  }
 
   return {
     totalClaimed: totalMinted,
