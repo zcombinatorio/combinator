@@ -1,11 +1,11 @@
-Complete Presale V2 Implementation Plan
+Complete Bookbuilding Implementation Plan
 
   Overview
 
-  Replace current whitelist-based presale with open bidding mechanism. Users submit bids ($ amount + max FDV), founder chooses clearing valuation, qualifying bids get pro-rata allocation with vesting.
+  New bookbuilding system with open bidding mechanism. Users submit bids ($ amount + max FDV), founder chooses clearing valuation, qualifying bids get pro-rata allocation with vesting.
 
   Token Distribution:
-  - T tokens allocated to presale participants (vested)
+  - T tokens allocated to bookbuilding participants (vested)
   - 0.25T tokens to AMM pool
   - (1B - 1.25T) tokens to treasury
 
@@ -14,63 +14,125 @@ Complete Presale V2 Implementation Plan
   - 0.75R to treasury
 
   ---
-  Phase 1: Database Schema Migration
 
-  1.1 Update presales Table
+  FULL MECHANISM SPECIFICATION
 
-  New columns:
-  ALTER TABLE presales
-    ADD COLUMN contribution_token_mint TEXT,
-    ADD COLUMN contribution_token_decimals INT NOT NULL,
-    ADD COLUMN vesting_duration_seconds BIGINT,
-    ADD COLUMN vesting_cliff_seconds BIGINT DEFAULT 0,
-    ADD COLUMN clearing_fdv BIGINT,
-    ADD COLUMN amm_pool_address TEXT;
+  Initial Parameters:
+  - Total supply: 1B tokens
+  - Liquidity allocation: 25% of raise (hardcoded)
 
-  Remove old columns:
-  ALTER TABLE presales
-    DROP COLUMN presale_tokens,  -- Whitelist no longer needed
-    DROP COLUMN tokens_bought;   -- Will calculate T from clearing_fdv
+  Phase 1: Bookbuilding
+  - Users submit public bids: ($ amount, max acceptable FDV)
+  - Bids are withdrawable anytime before close
+  - Close time is blind (unknown to participants)
 
-  Update status enum:
-  - Current: 'pending' | 'launched'
-  - Remains: 'pending' | 'launched' (no changes needed)
+  Phase 2: Founder Decision (at blind close)
+  - Founder chooses one parameter: Clearing FDV (V)
+  - All other parameters derive automatically:
+    * Price per token:        P = V / 1B
+    * Total $ raised:         R = Σ(bids where max_FDV ≥ V)
+    * Tokens sold (bookbuilding):  T = R / P = (R × 1B) / V
+    * $ to AMM liquidity:     0.25R
+    * $ to treasury:          0.75R
+    * Tokens in AMM:          0.25T = (0.25 × R × 1B) / V
+    * Tokens to treasury:     1B - 1.25T
 
-  1.2 Update presale_bids Table
+  Phase 3: AMM Launch
+  - AMM seeded with: 0.25R dollars + 0.25T tokens
+  - AMM starting price: (0.25R) / (0.25T) = R/T = P ✓ (matches bookbuilding)
+  - Public trading begins
 
-  Rename + Add columns:
-  ALTER TABLE presale_bids
-    RENAME COLUMN amount_lamports TO bid_amount;  -- Fix naming
+  Token Distribution at Launch:
+  - Bookbuilding buyers: T (vested)
+  - AMM pool: 0.25T
+  - Treasury: 1B - 1.25T
 
-  ALTER TABLE presale_bids
-    ADD COLUMN max_fdv BIGINT NOT NULL,
-    ADD COLUMN withdrawn BOOLEAN DEFAULT false,
-    ADD COLUMN withdrawal_signature TEXT,
-    ADD COLUMN qualifying BOOLEAN,
-    ADD COLUMN tokens_allocated BIGINT DEFAULT 0;
+  Key Properties:
+  ✓ Valuation certainty (bidders protected by max_FDV)
+  ✓ Participation certainty (all qualifying bids filled 100%)
+  ✓ No clustering/gaming (blind close)
+  ✓ Price continuity (AMM = bookbuilding price)
+  ✓ Self-limiting (founder's dilution prevents overpricing)
 
-  Update comment:
-  COMMENT ON COLUMN presale_bids.bid_amount IS 'Contribution amount in token smallest units (not lamports)';
+  ---
+  Phase 1: Database Schema Creation
 
-  1.3 Keep presale_claims Table
+  1.1 Create bookbuildings Table
 
-  - Structure remains the same
-  - Used for vesting qualified allocations
+  CREATE TABLE bookbuildings (
+    id SERIAL PRIMARY KEY,
+    token_address TEXT NOT NULL UNIQUE,
+    creator_wallet TEXT NOT NULL,
+    contribution_token_mint TEXT NOT NULL,
+    contribution_token_decimals INT NOT NULL,
+    vesting_duration_seconds BIGINT NOT NULL,
+    vesting_cliff_seconds BIGINT DEFAULT 0,
+    clearing_fdv BIGINT,
+    amm_pool_address TEXT,
+    escrow_public_key TEXT NOT NULL,
+    base_mint_priv_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'launched'
+    created_at TIMESTAMP DEFAULT NOW(),
+    launched_at TIMESTAMP
+  );
+
+  CREATE INDEX idx_bookbuildings_token_address ON bookbuildings(token_address);
+  CREATE INDEX idx_bookbuildings_creator_wallet ON bookbuildings(creator_wallet);
+  CREATE INDEX idx_bookbuildings_status ON bookbuildings(status);
+
+  1.2 Create bookbuilding_bids Table
+
+  CREATE TABLE bookbuilding_bids (
+    id SERIAL PRIMARY KEY,
+    bookbuilding_id INT NOT NULL REFERENCES bookbuildings(id) ON DELETE CASCADE,
+    user_wallet TEXT NOT NULL,
+    bid_amount BIGINT NOT NULL,  -- Contribution amount in token smallest units
+    max_fdv BIGINT NOT NULL,
+    transaction_signature TEXT NOT NULL UNIQUE,
+    withdrawn BOOLEAN DEFAULT false,
+    withdrawal_signature TEXT,
+    qualifying BOOLEAN,
+    tokens_allocated BIGINT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW()
+  );
+
+  COMMENT ON COLUMN bookbuilding_bids.bid_amount IS 'Contribution amount in token smallest units (not lamports)';
+
+  CREATE INDEX idx_bookbuilding_bids_bookbuilding_id ON bookbuilding_bids(bookbuilding_id);
+  CREATE INDEX idx_bookbuilding_bids_user_wallet ON bookbuilding_bids(user_wallet);
+  CREATE INDEX idx_bookbuilding_bids_withdrawn ON bookbuilding_bids(withdrawn);
+  CREATE INDEX idx_bookbuilding_bids_qualifying ON bookbuilding_bids(qualifying);
+
+  1.3 Create bookbuilding_claims Table
+
+  CREATE TABLE bookbuilding_claims (
+    id SERIAL PRIMARY KEY,
+    bookbuilding_id INT NOT NULL REFERENCES bookbuildings(id) ON DELETE CASCADE,
+    user_wallet TEXT NOT NULL,
+    tokens_allocated BIGINT NOT NULL,
+    tokens_claimed BIGINT DEFAULT 0,
+    vesting_start_at TIMESTAMP NOT NULL,
+    last_claim_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(bookbuilding_id, user_wallet)
+  );
+
+  CREATE INDEX idx_bookbuilding_claims_bookbuilding_id ON bookbuilding_claims(bookbuilding_id);
+  CREATE INDEX idx_bookbuilding_claims_user_wallet ON bookbuilding_claims(user_wallet);
 
   1.4 Migration Script
 
-  File: ui/scripts/migrations/002_presale_v2.sql
+  File: ui/scripts/migrations/003_bookbuilding.sql
 
   ---
   Phase 2: Backend API Implementation
 
-  2.1 Create Presale Endpoint
+  2.1 Create Bookbuilding Endpoint
 
-  File: ui/app/api/presale/route.ts
+  File: ui/app/api/bookbuilding/route.ts
 
-  Changes:
-  // Add to request body interface
-  interface CreatePresaleRequest {
+  // Request body interface
+  interface CreateBookbuildingRequest {
     // ... existing fields
     contributionTokenMint: string;      // NEW
     vestingDurationSeconds: number;     // NEW
@@ -78,8 +140,7 @@ Complete Presale V2 Implementation Plan
   }
 
   Updates:
-  - Remove whitelist token logic
-  - Generate escrow keypair (unchanged)
+  - Generate escrow keypair
   - Fetch contribution token decimals from chain:
     const mintInfo = await getMint(connection, new PublicKey(contributionTokenMint));
     const contributionTokenDecimals = mintInfo.decimals;
@@ -89,7 +150,7 @@ Complete Presale V2 Implementation Plan
 
   2.2 Submit Bid Endpoint
 
-  File: ui/routes/presale.ts (new endpoint)
+  File: ui/routes/bookbuilding.ts (new endpoint)
 
   POST /:tokenAddress/bids
   Body: {
@@ -99,12 +160,12 @@ Complete Presale V2 Implementation Plan
 
   Logic:
   1. Verify status = 'pending'
-  2. Verify transaction on-chain using verifyPresaleTokenTransaction()
+  2. Verify transaction on-chain using verifyBookbuildingTokenTransaction()
     - Check sender = user wallet
     - Check recipient = escrow
-    - Check token mint = presale.contribution_token_mint
+    - Check token mint = bookbuilding.contribution_token_mint
     - Extract bid_amount from transfer instruction
-  3. Insert into presale_bids with max_fdv
+  3. Insert into bookbuilding_bids with max_fdv
   4. Return success
 
   Notes:
@@ -115,7 +176,7 @@ Complete Presale V2 Implementation Plan
 
   2.3 Withdraw Bid Endpoint
 
-  File: ui/routes/presale.ts (new endpoint)
+  File: ui/routes/bookbuilding.ts (new endpoint)
 
   POST /:tokenAddress/bids/withdraw
   Body: {
@@ -134,7 +195,7 @@ Complete Presale V2 Implementation Plan
 
   2.4 Preview Calculations Endpoint
 
-  File: ui/routes/presale.ts (new endpoint)
+  File: ui/routes/bookbuilding.ts (new endpoint)
 
   GET /:tokenAddress/preview?fdv={V}
 
@@ -159,7 +220,7 @@ Complete Presale V2 Implementation Plan
   }
 
   Logic:
-  1. Fetch all non-withdrawn bids for presale
+  1. Fetch all non-withdrawn bids for bookbuilding
   2. Filter qualifying: max_fdv >= fdv
   3. Calculate R = sum of qualifying bid amounts
   4. Calculate all derived parameters using equations
@@ -167,7 +228,7 @@ Complete Presale V2 Implementation Plan
 
   2.5 Launch Endpoint (Close + Launch Combined)
 
-  File: ui/routes/presale.ts (update existing launch endpoint)
+  File: ui/routes/bookbuilding.ts (new endpoint)
 
   POST /:tokenAddress/launch
   Body: {
@@ -200,7 +261,7 @@ Complete Presale V2 Implementation Plan
   // Initialize pool (separate transaction)
   const pool = await CPAMM.createPool({
     baseMint,  // New token
-    quoteMint: presale.contribution_token_mint,
+    quoteMint: bookbuilding.contribution_token_mint,
     owner: treasuryWallet  // Hq7Xh37tT4sesD6wA4DphYfxeMJRhhFWS3KVUSSGjqzc
   });
 
@@ -219,12 +280,12 @@ Complete Presale V2 Implementation Plan
   Sign with escrow keypair and send as single transaction.
 
   6. Update database:
-    - presales.status = 'launched'
-    - presales.clearing_fdv = clearing_fdv
-    - presales.launched_at = NOW()
-    - presales.amm_pool_address = pool address
+    - bookbuildings.status = 'launched'
+    - bookbuildings.clearing_fdv = clearing_fdv
+    - bookbuildings.launched_at = NOW()
+    - bookbuildings.amm_pool_address = pool address
   7. Initialize vesting claims:
-    - Create presale_claims for qualifying bids
+    - Create bookbuilding_claims for qualifying bids
     - Set vesting_start_at = NOW(), tokens_allocated
   8. Return:
     - AMM pool address
@@ -233,14 +294,14 @@ Complete Presale V2 Implementation Plan
 
   2.6 Claims Endpoints
 
-  Update existing claim endpoints to handle two scenarios:
+  Handle two scenarios for claim endpoints:
 
   GET /:tokenAddress/claims/:wallet
 
   Response should include:
   {
     vestingClaim: {
-      // Existing vesting claim data for qualifying bids
+      // Vesting claim data for qualifying bids
       tokensAllocated: string,
       tokensClaimed: string,
       tokensVested: string,
@@ -249,7 +310,7 @@ Complete Presale V2 Implementation Plan
       // ...
     } | null,
     refundClaim: {
-      // New: refund data for non-qualifying bids
+      // Refund data for non-qualifying bids
       refundable: boolean,
       refundAmount: string,      // Total bid amount to refund
       refundClaimed: boolean,
@@ -260,11 +321,11 @@ Complete Presale V2 Implementation Plan
   POST /:tokenAddress/claims/prepare
   Body: {
     wallet: string,
-    claimType: 'vesting' | 'refund'  // NEW: specify claim type
+    claimType: 'vesting' | 'refund'  // Specify claim type
   }
 
   For vesting claims (qualifying bids):
-  - Use existing vesting logic
+  - Use vesting logic
   - Calculate vested amount based on time elapsed
   - Create transfer from escrow to user
   - User pays for creating their token ATA if needed
@@ -280,11 +341,11 @@ Complete Presale V2 Implementation Plan
   Body: {
     wallet: string,
     transactionSignature: string,
-    claimType: 'vesting' | 'refund'  // NEW
+    claimType: 'vesting' | 'refund'
   }
 
   - Verify transaction on-chain
-  - Update presale_bids or presale_claims accordingly
+  - Update bookbuilding_bids or bookbuilding_claims accordingly
   - For refunds: Mark all non-qualifying bids as claimed
 
   ---
@@ -292,10 +353,10 @@ Complete Presale V2 Implementation Plan
 
   3.1 LaunchContent.tsx
 
-  Changes to presale section (lines 609-676):
+  Add bookbuilding option to launch form:
 
-  Add inputs when presale enabled:
-  {formData.presale && (
+  Add inputs when bookbuilding enabled:
+  {formData.bookbuilding && (
     <>
       {/* Contribution Token */}
       <div className="text-[14px] mt-0.5">
@@ -331,9 +392,7 @@ Complete Presale V2 Implementation Plan
     </>
   )}
 
-  Remove whitelist token inputs (lines 632-676)
-
-  Update API call (lines 289-304):
+  Update API call:
   body: JSON.stringify({
     name: formData.name,
     symbol: formData.ticker,
@@ -344,26 +403,25 @@ Complete Presale V2 Implementation Plan
     vestingDurationSeconds: formData.vestingDurationDays * 86400,
     vestingCliffSeconds: formData.vestingCliffDays * 86400,
     caEnding: formData.caEnding || undefined,
-    // remove presaleTokens
   })
 
-  3.2 PresaleContent.tsx
+  3.2 BookbuildingContent.tsx
 
-  Major refactor - two states:
+  New component - two states:
 
   State 1: Pending (Bidding Open)
 
   Show:
-  - Presale info (token name, symbol, contribution token)
+  - Bookbuilding info (token name, symbol, contribution token)
   - Bid submission form
   - User's existing bids with withdraw buttons
   - Total stats (bids count, total volume)
 
   New component sections:
-  {presale.status === 'pending' && (
+  {bookbuilding.status === 'pending' && (
     <>
-      <BidSubmissionForm 
-        presale={presale}
+      <BidSubmissionForm
+        bookbuilding={bookbuilding}
         onBidSubmitted={refetch}
       />
 
@@ -387,8 +445,6 @@ Complete Presale V2 Implementation Plan
   - Vesting interface (qualifying bidders)
   - Refund interface (non-qualifying bidders)
 
-  Existing vesting logic can be reused
-
   3.3 BidSubmissionForm Component (NEW)
 
   File: ui/components/BidSubmissionForm.tsx
@@ -398,7 +454,7 @@ Complete Presale V2 Implementation Plan
   - Input: max acceptable FDV
   - Button: Submit Bid
   - Creates token transfer to escrow
-  - Calls POST /presale/{token}/bids
+  - Calls POST /bookbuilding/{token}/bids
   - Note: Users can submit multiple bids (for different price points)
   - Note: Bid modification NOT allowed - must withdraw and resubmit
 
@@ -443,10 +499,10 @@ Complete Presale V2 Implementation Plan
   - Real-time calculated display
   - Confirm button
 
-  export function LaunchPreviewModal({ presale, onClose, onConfirm }) {
+  export function LaunchPreviewModal({ bookbuilding, onClose, onConfirm }) {
     const [fdv, setFdv] = useState('');
     const { data: preview, isLoading } = useSWR(
-      fdv ? `/presale/${presale.token_address}/preview?fdv=${fdv}` : null,
+      fdv ? `/bookbuilding/${bookbuilding.token_address}/preview?fdv=${fdv}` : null,
       fetcher,
       { refreshInterval: 0 }
     );
@@ -487,7 +543,7 @@ Complete Presale V2 Implementation Plan
               </p>
             )}
 
-            <button 
+            <button
               onClick={() => onConfirm(fdv)}
               disabled={preview.totalRaised === '0'}
             >
@@ -504,9 +560,9 @@ Complete Presale V2 Implementation Plan
   File: ui/components/UserBidsList.tsx
 
   Shows:
-  - All user's bids for this presale
+  - All user's bids for this bookbuilding
   - Each bid shows: amount, max FDV, status (pending/withdrawn)
-  - Withdraw button for each non-withdrawn bid (if presale status = pending)
+  - Withdraw button for each non-withdrawn bid (if bookbuilding status = pending)
   - Helper text: "Withdraw a bid to change your max FDV or bid amount"
 
   ---
@@ -517,7 +573,7 @@ Complete Presale V2 Implementation Plan
   @meteora-ag/cp-amm-sdk v1.1.5 is already in package.json
   @meteora-ag/dlmm v1.7.6 has been installed
 
-  Note: Use CP-AMM (constant product) for presale pools, not DLMM.
+  Note: Use CP-AMM (constant product) for bookbuilding pools, not DLMM.
   CP-AMM provides full-range liquidity which is simpler and more appropriate.
 
   4.2 Create Pool Service
@@ -533,7 +589,7 @@ Complete Presale V2 Implementation Plan
    * Creates a customizable CP-AMM pool with liquidity
    * Returns the transaction and pool address
    */
-  export async function createPresaleCPAMMPool(params: {
+  export async function createBookbuildingCPAMMPool(params: {
     connection: Connection;
     baseMint: PublicKey;        // New token
     quoteMint: PublicKey;       // Contribution token (e.g., USDC)
@@ -651,10 +707,10 @@ Complete Presale V2 Implementation Plan
 
   4.3 Update Launch Handler
 
-  File: ui/routes/presale.ts (in launch endpoint)
+  File: ui/routes/bookbuilding.ts (in launch endpoint)
 
-  Replace bonding curve code with:
-  import { createPresaleCPAMMPool } from '@/lib/meteoraCpAmmService';
+  Implementation:
+  import { createBookbuildingCPAMMPool } from '@/lib/meteoraCpAmmService';
   import { createMintToInstruction, createTransferInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
 
   // After calculating R and T and validating
@@ -665,13 +721,13 @@ Complete Presale V2 Implementation Plan
   const quoteAmountForPool = R.muln(25).divn(100); // 0.25R
 
   // Step 1: Create token mint (separate transaction)
-  // [existing mint creation code]
+  // [mint creation code]
 
   // Step 2: Create CP-AMM pool (separate transaction)
-  const { tx: createPoolTx, pool: poolAddress, position: positionAddress } = await createPresaleCPAMMPool({
+  const { tx: createPoolTx, pool: poolAddress, position: positionAddress } = await createBookbuildingCPAMMPool({
     connection,
     baseMint: new PublicKey(baseMint),
-    quoteMint: new PublicKey(presale.contribution_token_mint),
+    quoteMint: new PublicKey(bookbuilding.contribution_token_mint),
     baseAmount: baseAmountForPool,
     quoteAmount: quoteAmountForPool,
     creator: TREASURY_ADDRESS,  // Pool owner
@@ -744,7 +800,7 @@ Complete Presale V2 Implementation Plan
   await connection.confirmTransaction(transferSignature, 'confirmed');
 
   // Update database
-  await updatePresaleStatus(presale.id, {
+  await updateBookbuildingStatus(bookbuilding.id, {
     status: 'launched',
     amm_pool_address: poolAddress.toString(),
     clearing_fdv: clearingFdv,
@@ -752,29 +808,11 @@ Complete Presale V2 Implementation Plan
   });
 
   ---
-  Phase 5: Remove Old System
-
-  5.1 Files to Modify
-
-  Remove whitelist logic:
-  - ui/app/api/presale/max-contribution/route.ts - DELETE entire file
-  - ui/app/api/presale/max-contribution/szc-token-holders.json - DELETE
-  - ui/app/api/presale/max-contribution/oog-token-holders.json - DELETE
-
-  Update components:
-  - ui/components/PresaleBuyModal.tsx - Replace with BidSubmissionForm logic
-
-  5.2 Database Cleanup
-
-  -- Remove old columns
-  ALTER TABLE presales DROP COLUMN presale_tokens;
-
-  ---
   Phase 6: Precision & Math Library
 
   6.1 Use BN for All Calculations
 
-  File: ui/lib/presaleMath.ts
+  File: ui/lib/bookbuildingMath.ts
 
   import BN from 'bn.js';
 
@@ -849,7 +887,7 @@ Complete Presale V2 Implementation Plan
 
   7.1 Validation Rules
 
-  Presale creation:
+  Bookbuilding creation:
   - contributionTokenMint: Valid Solana address
   - vestingDurationSeconds: > 0
   - vestingCliffSeconds: >= 0 and < vestingDurationSeconds
@@ -870,13 +908,13 @@ Complete Presale V2 Implementation Plan
   7.2 Error Messages
 
   const ERRORS = {
-    PRESALE_NOT_PENDING: 'Presale has already launched',
+    BOOKBUILDING_NOT_PENDING: 'Bookbuilding has already launched',
     NO_QUALIFYING_BIDS: 'No bids qualify at this FDV. Choose a lower valuation.',
     CLEARING_FDV_TOO_LOW: 'Clearing FDV too low. Minimum FDV: [calculated minimum]',
-    ALREADY_LAUNCHED: 'Presale already launched',
-    NOT_CREATOR: 'Only presale creator can launch',
+    ALREADY_LAUNCHED: 'Bookbuilding already launched',
+    NOT_CREATOR: 'Only bookbuilding creator can launch',
     INVALID_BID: 'Invalid bid amount or max FDV',
-    WITHDRAWAL_FAILED: 'Cannot withdraw after presale launches',
+    WITHDRAWAL_FAILED: 'Cannot withdraw after bookbuilding launches',
     ALREADY_WITHDRAWN: 'Bid already withdrawn',
     INVALID_CONTRIBUTION_TOKEN: 'Invalid or non-existent contribution token mint address'
   };
@@ -886,7 +924,7 @@ Complete Presale V2 Implementation Plan
 
   8.1 Unit Tests
 
-  Test presaleMath.ts:
+  Test bookbuildingMath.ts:
   - Edge cases: R=1, V=1B (T should be 1)
   - Large numbers: R=1M, V=10M
   - Rounding: ensure sum of allocations = T
@@ -894,7 +932,7 @@ Complete Presale V2 Implementation Plan
   8.2 Integration Tests
 
   Test bid flow:
-  1. Create presale
+  1. Create bookbuilding
   2. Submit multiple bids with varying max_fdv
   3. Withdraw some bids
   4. Launch with clearing_fdv
@@ -903,7 +941,7 @@ Complete Presale V2 Implementation Plan
 
   8.3 Manual Testing Checklist
 
-  - Create presale with custom contribution token (verify decimals fetched correctly)
+  - Create bookbuilding with custom contribution token (verify decimals fetched correctly)
   - Submit bid (verify on-chain + DB)
   - Withdraw bid (verify refund)
   - Preview with different FDVs (check calculations)
@@ -920,7 +958,7 @@ Complete Presale V2 Implementation Plan
 
   Week 1: Backend Foundation
   1. Database migration script
-  2. Update presale creation endpoint
+  2. Create bookbuilding creation endpoint
   3. Bid submission endpoint
   4. Withdrawal endpoint
   5. Preview calculations endpoint
@@ -936,43 +974,37 @@ Complete Presale V2 Implementation Plan
   11. Update LaunchContent form
   12. BidSubmissionForm component
   13. LaunchPreviewModal component
-  14. Update PresaleContent (3 states)
+  14. Create BookbuildingContent component
   15. UserBidsList component
 
   Week 4: Claims & Testing
-  16. Update claims for qualifying/non-qualifying
+  16. Claims for qualifying/non-qualifying
   17. Integration testing
   18. Manual testing
   19. Bug fixes
   20. Deploy
 
   ---
-  Files to Create/Modify Summary
+  Files to Create Summary
 
   New Files:
 
-  - ui/scripts/migrations/002_presale_v2.sql
-  - ui/lib/presaleMath.ts
+  - ui/scripts/migrations/003_bookbuilding.sql
+  - ui/lib/bookbuildingMath.ts
   - ui/lib/meteoraCpAmmService.ts
   - ui/components/BidSubmissionForm.tsx
   - ui/components/LaunchPreviewModal.tsx
   - ui/components/UserBidsList.tsx
+  - ui/components/BookbuildingContent.tsx
+  - ui/lib/db/bookbuildings.ts (new functions)
+  - ui/app/api/bookbuilding/route.ts (create endpoint)
+  - ui/routes/bookbuilding.ts (ALL bid/launch/claim endpoints)
 
   Modified Files:
 
-  - ui/lib/db.ts (schema updates)
-  - ui/lib/db/types.ts (interfaces)
-  - ui/lib/db/presales.ts (new functions)
-  - ui/app/api/presale/route.ts (add contribution token params)
-  - ui/routes/presale.ts (ALL bid/launch endpoints)
-  - ui/components/LaunchContent.tsx (presale form)
-  - ui/components/PresaleContent.tsx (major refactor)
-
-  Deleted Files:
-
-  - ui/app/api/presale/max-contribution/route.ts
-  - ui/app/api/presale/max-contribution/*.json
-  - ui/components/PresaleBuyModal.tsx (replaced)
+  - ui/lib/db.ts (add bookbuilding schema references)
+  - ui/lib/db/types.ts (add bookbuilding interfaces)
+  - ui/components/LaunchContent.tsx (add bookbuilding option)
 
   ---
   Risk Areas
@@ -999,13 +1031,13 @@ Complete Presale V2 Implementation Plan
   Key Changes
 
   Database:
-  - Add contribution token mint + decimals (fetched from chain), vesting params, clearing FDV to presales
-  - Add max_fdv, qualifying status, tokens_allocated to bids
-  - Remove whitelist arrays
-  - Status remains: 'pending' | 'launched' (no 'closed' status)
+  - New tables: bookbuildings, bookbuilding_bids, bookbuilding_claims
+  - Include contribution token mint + decimals (fetched from chain), vesting params, clearing FDV
+  - Track max_fdv, qualifying status, tokens_allocated for bids
+  - Status: 'pending' | 'launched'
 
-  Backend (6 new/updated endpoints):
-  1. Create presale - accept contribution token (fetch decimals on-chain) + vesting params
+  Backend (6 new endpoints):
+  1. Create bookbuilding - accept contribution token (fetch decimals on-chain) + vesting params
   2. Submit bid - verify transfer + record max_fdv
   3. Withdraw bid - refund before launch (not after)
   4. Preview - real-time calculations for any FDV showing qualifying bids
@@ -1013,12 +1045,12 @@ Complete Presale V2 Implementation Plan
   6. Claims - handle vested tokens (qualifying) or refunds (non-qualifying)
 
   UI:
-  - LaunchContent: Remove whitelist inputs, add contribution token + vesting inputs (no decimals input)
-  - PresaleContent: 2 states (pending/bidding, launched)
+  - LaunchContent: Add bookbuilding option with contribution token + vesting inputs (no decimals input)
+  - BookbuildingContent: New component with 2 states (pending/bidding, launched)
   - New components: BidSubmissionForm, LaunchPreviewModal, UserBidsList
 
   Token Distribution:
-  - T tokens → presale participants (vested in escrow)
+  - T tokens → bookbuilding participants (vested in escrow)
   - 0.25T → AMM pool
   - (1B - 1.25T) → treasury
 
@@ -1069,12 +1101,12 @@ Complete Presale V2 Implementation Plan
   - See Phase 2.6 for complete API spec
 
   Q4: Implementation Approach
-  - DO NOT IMPLEMENT YET - spec refinement in progress
+  - Entirely new system separate from existing presale
   - Suggested order: Database → Backend → Meteora Integration → UI → Testing
 
   Additional Design Decisions
 
-  ✓ Pool Swap Fee: 0.3% (standard AMM fee)
+  ✓ Pool Swap Fee: 0.3% (300 basis points out of 100,000)
   ✓ ATA Creation: Paid by users in all transactions (bids, withdrawals, claims)
   ✓ Position NFT: Held by treasury address, not tracked in database
   ✓ Minimum Bid: No minimum bid amount validation
