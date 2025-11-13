@@ -173,3 +173,47 @@ export interface Contribution {
   time: number;
   created_at?: Date;
 }
+
+export interface Bookbuilding {
+  id?: number;
+  token_address: string;
+  token_supply: bigint;
+  token_decimals: number;
+  creator_wallet: string;
+  contribution_token_mint: string;
+  contribution_token_decimals: number;
+  vesting_duration_seconds: bigint;
+  vesting_cliff_seconds?: bigint;
+  clearing_fdv?: bigint;
+  amm_pool_address?: string;
+  escrow_public_key: string;
+  escrow_priv_key: string;
+  status: 'pending' | 'launched';
+  created_at?: Date;
+  launched_at?: Date;
+}
+
+export interface BookbuildingBid {
+  id?: number;
+  bookbuilding_id: number;
+  user_wallet: string;
+  bid_amount: bigint;
+  max_fdv: bigint;
+  transaction_signature: string;
+  withdrawn: boolean;
+  withdrawal_signature?: string;
+  qualifying?: boolean;
+  tokens_allocated: bigint;
+  created_at?: Date;
+}
+
+export interface BookbuildingClaim {
+  id?: number;
+  bookbuilding_id: number;
+  user_wallet: string;
+  tokens_allocated: bigint;
+  tokens_claimed: bigint;
+  vesting_start_at: Date;
+  last_claim_at?: Date;
+  created_at?: Date;
+}

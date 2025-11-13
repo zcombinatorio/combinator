@@ -7,7 +7,7 @@ Complete Bookbuilding Implementation Plan
   Token Distribution:
   - T tokens allocated to bookbuilding participants (vested)
   - 0.25T tokens to AMM pool
-  - (1B - 1.25T) tokens to treasury
+  - Remaining tokens to treasury (protocol balance - 1.25T)
 
   Fund Distribution:
   - 0.25R to AMM pool
@@ -18,7 +18,7 @@ Complete Bookbuilding Implementation Plan
   FULL MECHANISM SPECIFICATION
 
   Initial Parameters:
-  - Total supply: 1B tokens
+  - Total supply: S tokens (configurable, e.g. 1B)
   - Liquidity allocation: 25% of raise (hardcoded)
 
   Phase 1: Bookbuilding
@@ -29,13 +29,13 @@ Complete Bookbuilding Implementation Plan
   Phase 2: Founder Decision (at blind close)
   - Founder chooses one parameter: Clearing FDV (V)
   - All other parameters derive automatically:
-    * Price per token:        P = V / 1B
+    * Price per token:        P = V / S (where S = token supply)
     * Total $ raised:         R = Σ(bids where max_FDV ≥ V)
-    * Tokens sold (bookbuilding):  T = R / P = (R × 1B) / V
+    * Tokens sold (bookbuilding):  T = R / P = (R × S) / V
     * $ to AMM liquidity:     0.25R
     * $ to treasury:          0.75R
-    * Tokens in AMM:          0.25T = (0.25 × R × 1B) / V
-    * Tokens to treasury:     1B - 1.25T
+    * Tokens in AMM:          0.25T = (0.25 × R × S) / V
+    * Tokens to treasury:     (Protocol balance - 1.25T)
 
   Phase 3: AMM Launch
   - AMM seeded with: 0.25R dollars + 0.25T tokens
@@ -45,7 +45,7 @@ Complete Bookbuilding Implementation Plan
   Token Distribution at Launch:
   - Bookbuilding buyers: T (vested)
   - AMM pool: 0.25T
-  - Treasury: 1B - 1.25T
+  - Treasury: (Protocol balance - 1.25T)
 
   Key Properties:
   ✓ Valuation certainty (bidders protected by max_FDV)
@@ -55,6 +55,39 @@ Complete Bookbuilding Implementation Plan
   ✓ Self-limiting (founder's dilution prevents overpricing)
 
   ---
+  Phase 0: Token Creation (Run Before Bookbuilding)
+
+  IMPORTANT: Tokens must be created BEFORE creating a bookbuilding.
+  One token can be used for multiple bookbuildings (repeated fundraises).
+  Founder transfers desired amount to protocol wallet before each launch.
+
+  Script: ui/scripts/create-bookbuilding-token.ts
+
+  Usage:
+  1. Edit TOKEN_CONFIG in the script:
+     - name: 'MyToken'
+     - symbol: 'MTK'
+     - supply: 1_000_000_000  (1 billion)
+     - decimals: 6
+     - caEnding: 'ABC' (optional)
+
+  2. Ensure environment variables are set:
+     - PROTOCOL_MINT_AUTHORITY_PRIVATE_KEY
+     - RPC_URL
+
+  3. Run: tsx scripts/create-bookbuilding-token.ts
+
+  4. Save the output JSON file (contains token address and metadata)
+
+  5. Use the token address when creating a bookbuilding
+
+  This script:
+  - Generates token keypair (with optional vanity ending)
+  - Creates mint account
+  - Mints entire supply to protocol wallet
+  - Saves token info to scripts/tokens/
+
+  ---
   Phase 1: Database Schema Creation
 
   1.1 Create bookbuildings Table
@@ -62,6 +95,8 @@ Complete Bookbuilding Implementation Plan
   CREATE TABLE bookbuildings (
     id SERIAL PRIMARY KEY,
     token_address TEXT NOT NULL UNIQUE,
+    token_supply BIGINT NOT NULL,
+    token_decimals INT NOT NULL,
     creator_wallet TEXT NOT NULL,
     contribution_token_mint TEXT NOT NULL,
     contribution_token_decimals INT NOT NULL,
@@ -70,11 +105,15 @@ Complete Bookbuilding Implementation Plan
     clearing_fdv BIGINT,
     amm_pool_address TEXT,
     escrow_public_key TEXT NOT NULL,
-    base_mint_priv_key TEXT NOT NULL,
+    escrow_priv_key TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'launched'
     created_at TIMESTAMP DEFAULT NOW(),
     launched_at TIMESTAMP
   );
+
+  COMMENT ON COLUMN bookbuildings.token_address IS 'Token mint address (created beforehand by protocol)';
+  COMMENT ON COLUMN bookbuildings.token_supply IS 'Total token supply (e.g., 1000000000 for 1B)';
+  COMMENT ON COLUMN bookbuildings.escrow_priv_key IS 'Encrypted escrow private key (for contribution tokens)';
 
   CREATE INDEX idx_bookbuildings_token_address ON bookbuildings(token_address);
   CREATE INDEX idx_bookbuildings_creator_wallet ON bookbuildings(creator_wallet);
@@ -133,20 +172,29 @@ Complete Bookbuilding Implementation Plan
 
   // Request body interface
   interface CreateBookbuildingRequest {
-    // ... existing fields
-    contributionTokenMint: string;      // NEW
-    vestingDurationSeconds: number;     // NEW
-    vestingCliffSeconds?: number;       // NEW (optional)
+    tokenAddress: string;               // NEW - existing token address (created by protocol)
+    contributionTokenMint: string;      // Contribution token (e.g., USDC)
+    vestingDurationSeconds: number;     // Vesting period
+    vestingCliffSeconds?: number;       // Optional cliff
+    creatorWallet: string;
+    // ... other metadata fields
   }
 
   Updates:
-  - Generate escrow keypair
+  - Accept tokenAddress (token already created by protocol using create-bookbuilding-token.ts)
+  - Verify token exists on-chain and fetch metadata
+  - Fetch token supply and decimals from the mint
+  - Generate escrow keypair (for holding contribution tokens)
   - Fetch contribution token decimals from chain:
     const mintInfo = await getMint(connection, new PublicKey(contributionTokenMint));
     const contributionTokenDecimals = mintInfo.decimals;
   - Validate contribution token exists and is valid
-  - Store new vesting parameters with fetched decimals
+  - Store token address, supply, vesting parameters with fetched decimals
   - Return escrow public key
+
+  Note: No need to check protocol wallet balance at creation time.
+  This allows repeated bookbuildings for the same token.
+  Balance validation happens at launch time instead.
 
   2.2 Submit Bid Endpoint
 
@@ -185,13 +233,16 @@ Complete Bookbuilding Implementation Plan
   }
 
   Logic:
-  1. Verify status = 'pending' (can't withdraw after launch)
-  2. Fetch bid from DB, check ownership
-  3. Check not already withdrawn
-  4. Create refund transaction (escrow → user)
-  5. Dual-signature pattern (user signs, server adds escrow sig)
-  6. Mark bid as withdrawn
-  7. Record withdrawal_signature
+  1. Acquire bookbuilding lock (prevents race with launch)
+     const releaseLock = await acquireBookbuildingLock(tokenAddress);
+  2. Verify status = 'pending' (can't withdraw after launch)
+  3. Fetch bid from DB, check ownership
+  4. Check not already withdrawn
+  5. Create refund transaction (escrow → user)
+  6. Dual-signature pattern (user signs, server adds escrow sig)
+  7. Mark bid as withdrawn
+  8. Record withdrawal_signature
+  9. Release lock in finally block
 
   2.4 Preview Calculations Endpoint
 
@@ -202,16 +253,16 @@ Complete Bookbuilding Implementation Plan
   Response:
   {
     clearingFdv: string,
-    pricePerToken: string,        // P = V / 1B
+    pricePerToken: string,        // P = V / token_supply
     totalRaised: string,           // R = Σ(bids where max_fdv >= V)
-    tokensSold: string,            // T = (R × 1B) / V
+    tokensSold: string,            // T = (R × token_supply) / V
     liquidity: {
       dollars: string,             // 0.25R
       tokens: string               // 0.25T
     },
     treasury: {
       dollars: string,             // 0.75R
-      tokens: string               // 1B - 1.25T
+      tokens: string               // Protocol balance - 1.25T
     },
     qualifyingBids: Bid[],
     nonQualifyingBids: Bid[],
@@ -221,7 +272,7 @@ Complete Bookbuilding Implementation Plan
 
   Logic:
   1. Fetch all non-withdrawn bids for bookbuilding
-  2. Filter qualifying: max_fdv >= fdv
+  2. Filter qualifying: !withdrawn AND max_fdv >= fdv
   3. Calculate R = sum of qualifying bid amounts
   4. Calculate all derived parameters using equations
   5. Return breakdown
@@ -236,60 +287,157 @@ Complete Bookbuilding Implementation Plan
   }
 
   Logic:
-  1. Validate:
+  1. Acquire bookbuilding lock (prevents race with withdrawals)
+     const releaseLock = await acquireBookbuildingLock(tokenAddress);
+  2. Validate:
     - Status = 'pending'
     - Creator wallet matches
-    - Calculate R from qualifying bids (max_fdv >= clearing_fdv)
+    - Calculate R from qualifying bids (!withdrawn AND max_fdv >= clearing_fdv)
     - Error if R = 0 (no qualifying bids)
-    - Calculate T = (R × 1B) / clearing_fdv
+    - Calculate T = (R × token_supply) / clearing_fdv
     - CRITICAL VALIDATION: Ensure clearing_fdv >= (1.25 × R)
-      * This ensures T <= 0.8B, so 1.25T <= 1B (treasury doesn't go negative)
+      * This ensures T <= 0.8 × token_supply, so 1.25T <= token_supply
+      * Guarantees protocol wallet has enough tokens (validated separately in step 5)
       * Error message: "Clearing FDV too low. Minimum FDV: [1.25 × R]"
-  2. Update bids:
-    - Mark qualifying bids (max_fdv >= clearing_fdv)
+  3. CRITICAL: Verify escrow balance on-chain matches calculated R
+    - Fetch escrow contribution token account balance
+    - Compare with sum of non-withdrawn qualifying bids
+    - Error if mismatch (prevents race conditions and fake bids)
+  4. Update bids:
+    - Mark qualifying bids (max_fdv >= clearing_fdv AND !withdrawn)
     - Calculate pro-rata allocations: tokens_allocated = (bid_amount / R) × T
-    - Handle rounding (give remainder to first bidder)
-  3. Create token mint:
-    - Decrypt base_mint_priv_key
-    - Create mint with 1B supply
-    - Mint authority = MAIN_PROTOCOL_ADDRESS (NOT escrow)
-      * Use the same protocol address that has mint authority for all tokens
-      * NEVER transfer mint authority to escrow
-  4. Create Meteora CP-AMM pool:
-  import { CPAMM } from "@meteora-ag/cp-amm-sdk";
+    - Handle rounding (give remainder to largest bidder, not first)
+  5. CRITICAL: Verify protocol wallet has enough tokens on-chain
+    - Need 1.25T tokens total (0.25T pool + T vesting)
+    - Plus whatever amount founder wants to keep in treasury
+    - Fetch protocol token account balance
+    - Error if balance < 1.25T
 
-  // Initialize pool (separate transaction)
-  const pool = await CPAMM.createPool({
-    baseMint,  // New token
-    quoteMint: bookbuilding.contribution_token_mint,
-    owner: treasuryWallet  // Hq7Xh37tT4sesD6wA4DphYfxeMJRhhFWS3KVUSSGjqzc
+  const protocolTokenAccount = await getAssociatedTokenAddress(
+    new PublicKey(bookbuilding.token_address),
+    PROTOCOL_WALLET
+  );
+  const protocolBalance = await connection.getTokenAccountBalance(protocolTokenAccount);
+  const requiredAmount = T.muln(125).divn(100); // 1.25T
+
+  if (new BN(protocolBalance.value.amount).lt(requiredAmount)) {
+    throw new Error(`Insufficient protocol balance. Need ${requiredAmount.toString()}, have ${protocolBalance.value.amount}`);
+  }
+
+  6. Transfer tokens from protocol to escrow for pool:
+    - Token already exists (created beforehand by protocol using create-bookbuilding-token.ts)
+    - Transfer 0.25T from protocol → escrow (so escrow can contribute to pool)
+
+  const protocolTokenAccount = await getAssociatedTokenAddress(
+    new PublicKey(bookbuilding.token_address),
+    PROTOCOL_WALLET
+  );
+  const escrowTokenAccount = await getOrCreateAssociatedTokenAddress(
+    new PublicKey(bookbuilding.token_address),
+    escrowKeypair.publicKey
+  );
+
+  // Transfer 0.25T to escrow for pool creation
+  const transferToEscrowTx = new Transaction();
+  transferToEscrowTx.add(
+    createTransferInstruction(
+      protocolTokenAccount,
+      escrowTokenAccount,
+      PROTOCOL_WALLET,
+      baseAmountForPool.toNumber()  // 0.25T
+    )
+  );
+  await sendAndConfirmTransaction(connection, transferToEscrowTx, [PROTOCOL_WALLET_KEYPAIR]);
+
+  6. Create Meteora CP-AMM pool (separate transaction):
+  import { createBookbuildingCPAMMPool } from '@/lib/meteoraCpAmmService';
+
+  // Calculate amounts for AMM pool (25% each)
+  const baseAmountForPool = T.muln(25).divn(100);  // 0.25T
+  const quoteAmountForPool = R.muln(25).divn(100); // 0.25R
+
+  // Create pool WITH initial liquidity in ONE transaction
+  // This handles both pool creation AND adding 0.25T + 0.25R automatically
+  const { tx: createPoolTx, pool: poolAddress } = await createBookbuildingCPAMMPool({
+    connection,
+    baseMint: new PublicKey(baseMint),
+    quoteMint: new PublicKey(bookbuilding.contribution_token_mint),
+    baseAmount: baseAmountForPool,   // 0.25T tokens
+    quoteAmount: quoteAmountForPool, // 0.25R funds
+    creator: TREASURY_ADDRESS,
+    payer: escrowKeypair.publicKey,
+    escrowKeypair: escrowKeypair
   });
 
-  5. ATOMIC TRANSFER TRANSACTION:
-  Build single transaction with all transfer instructions:
-    Token transfers:
-    - 0.25T → AMM pool
-    - (1B - 1.25T) → treasury wallet
-    - T tokens → escrow (for vesting claims)
+  // Send pool creation transaction
+  const poolCreationSignature = await connection.sendTransaction(createPoolTx, { skipPreflight: false });
+  await connection.confirmTransaction(poolCreationSignature, 'confirmed');
 
-    Fund transfers:
-    - 0.25R → AMM pool
-    - 0.75R → treasury wallet
+  7. Distribution Transaction (separate from pool creation):
+  Transfer tokens to escrow for vesting and treasury:
 
-  This must be atomic - if any transfer fails, all revert.
-  Sign with escrow keypair and send as single transaction.
+  const distributionTx = new Transaction();
 
-  6. Update database:
+  // Transfer T tokens from protocol to escrow (for vesting claims)
+  distributionTx.add(
+    createTransferInstruction(
+      protocolTokenAccount,
+      escrowBaseAta,
+      PROTOCOL_WALLET,
+      T.toNumber()
+    )
+  );
+
+  // Transfer remaining tokens to treasury
+  // Treasury gets: (protocol balance) - 0.25T (already sent to escrow) - T (just sent above)
+  // Which equals: (protocol balance) - 1.25T
+  const protocolBalanceAfterEscrowTransfers = new BN(protocolBalance.value.amount)
+    .sub(baseAmountForPool)  // Already transferred to escrow for pool
+    .sub(T);                  // Just transferred above
+
+  if (protocolBalanceAfterEscrowTransfers.gt(new BN(0))) {
+    distributionTx.add(
+      createTransferInstruction(
+        protocolTokenAccount,
+        treasuryBaseAta,
+        PROTOCOL_WALLET,
+        protocolBalanceAfterEscrowTransfers.toNumber()
+      )
+    );
+  }
+
+  // Transfer 0.75R from escrow to treasury (contribution tokens)
+  const treasuryQuoteAmount = R.muln(75).divn(100);
+  distributionTx.add(
+    createTransferInstruction(
+      escrowQuoteAta,
+      treasuryQuoteAta,
+      escrowKeypair.publicKey,
+      treasuryQuoteAmount.toNumber()
+    )
+  );
+
+  // Sign with protocol wallet and escrow
+  distributionTx.feePayer = PROTOCOL_WALLET;
+  const { blockhash } = await connection.getLatestBlockhash();
+  distributionTx.recentBlockhash = blockhash;
+  distributionTx.sign(PROTOCOL_WALLET_KEYPAIR, escrowKeypair);
+
+  const distributionSignature = await connection.sendTransaction(distributionTx, { skipPreflight: false });
+  await connection.confirmTransaction(distributionSignature, 'confirmed');
+
+  8. Update database:
     - bookbuildings.status = 'launched'
     - bookbuildings.clearing_fdv = clearing_fdv
     - bookbuildings.launched_at = NOW()
     - bookbuildings.amm_pool_address = pool address
-  7. Initialize vesting claims:
+  9. Initialize vesting claims:
     - Create bookbuilding_claims for qualifying bids
     - Set vesting_start_at = NOW(), tokens_allocated
-  8. Return:
+  10. Release lock in finally block
+  11. Return:
     - AMM pool address
-    - Transaction signature
+    - Transaction signatures
     - Launch summary
 
   2.6 Claims Endpoints
@@ -565,6 +713,64 @@ Complete Bookbuilding Implementation Plan
   - Withdraw button for each non-withdrawn bid (if bookbuilding status = pending)
   - Helper text: "Withdraw a bid to change your max FDV or bid amount"
 
+  3.6 Bookbuilding Lock Management
+
+  File: ui/lib/bookbuildingLocks.ts
+
+  /**
+   * Lock management for bookbuilding operations
+   * Prevents race conditions between withdrawals and launch
+   */
+
+  const bookbuildingLocks = new Map<string, Promise<void>>();
+
+  /**
+   * Acquire a bookbuilding lock for a specific token
+   * Prevents concurrent modifications to the same bookbuilding
+   */
+  export async function acquireBookbuildingLock(
+    tokenAddress: string
+  ): Promise<() => void> {
+    const key = tokenAddress.toLowerCase();
+
+    // Wait for any existing lock to be released
+    while (bookbuildingLocks.has(key)) {
+      await bookbuildingLocks.get(key);
+    }
+
+    // Create a new lock
+    let releaseLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+
+    bookbuildingLocks.set(key, lockPromise);
+
+    // Return the release function
+    return () => {
+      bookbuildingLocks.delete(key);
+      releaseLock!();
+    };
+  }
+
+  Usage in endpoints:
+
+  // In withdraw endpoint
+  const releaseLock = await acquireBookbuildingLock(tokenAddress);
+  try {
+    // Perform withdrawal logic
+  } finally {
+    releaseLock();
+  }
+
+  // In launch endpoint
+  const releaseLock = await acquireBookbuildingLock(tokenAddress);
+  try {
+    // Perform launch logic
+  } finally {
+    releaseLock();
+  }
+
   ---
   Phase 4: Meteora CP-AMM Integration
 
@@ -580,7 +786,7 @@ Complete Bookbuilding Implementation Plan
 
   File: ui/lib/meteoraCpAmmService.ts
 
-  import { CpAmm, derivePoolAddress, InitializeCustomizeablePoolParams, PoolFeesParams } from "@meteora-ag/cp-amm-sdk";
+  import { CpAmm, deriveCustomizablePoolAddress, InitializeCustomizeablePoolParams, PoolFeesParams } from "@meteora-ag/cp-amm-sdk";
   import { Connection, PublicKey, Keypair, Transaction } from "@solana/web3.js";
   import BN from "bn.js";
   import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getMint } from "@solana/spl-token";
@@ -650,17 +856,18 @@ Complete Bookbuilding Implementation Plan
       } : undefined,
     });
 
-    // Define pool fees (0.3% swap fee for presale pools)
+    // Define pool fees (0.3% swap fee for bookbuilding pools)
+    // Using static fee with no dynamic fee adjustments
     const poolFees: PoolFeesParams = {
-      baseFactor: 300,         // 0.3% base fee (300 basis points out of 100,000)
-      filterPeriod: new BN(0),
-      decayPeriod: new BN(0),
-      reductionFactor: 0,
-      variableFeeControl: new BN(0),
-      maxVolatilityAccumulator: new BN(0),
-      minBinId: 0,
-      maxBinId: 0,
-      protocolShare: 0         // No protocol fee split
+      baseFee: {
+        cliffFeeNumerator: new BN(300),  // 0.3% base fee (300 basis points)
+        numberOfPeriod: 0,
+        periodFrequency: new BN(0),
+        reductionFactor: new BN(0),
+        feeSchedulerMode: 0  // Static fee mode
+      },
+      padding: [0, 0, 0, 0, 0, 0],  // 6 padding bytes
+      dynamicFee: null  // No dynamic fee
     };
 
     // Create customizable pool with initial liquidity
@@ -696,13 +903,15 @@ Complete Bookbuilding Implementation Plan
   }
 
   /**
-   * Derives the pool address for a given token pair
+   * Derives the pool address for a customizable pool
+   * Note: Requires config address - use deriveCustomizablePoolAddress
    */
-  export async function getPoolAddress(
+  export function getPoolAddress(
+    config: PublicKey,
     tokenAMint: PublicKey,
     tokenBMint: PublicKey
-  ): Promise<PublicKey> {
-    return derivePoolAddress(tokenAMint, tokenBMint);
+  ): PublicKey {
+    return deriveCustomizablePoolAddress(config, tokenAMint, tokenBMint);
   }
 
   4.3 Update Launch Handler
@@ -720,8 +929,8 @@ Complete Bookbuilding Implementation Plan
   const baseAmountForPool = T.muln(25).divn(100);  // 0.25T
   const quoteAmountForPool = R.muln(25).divn(100); // 0.25R
 
-  // Step 1: Create token mint (separate transaction)
-  // [mint creation code]
+  // Step 1: Transfer 0.25T from protocol to escrow (see Phase 2.5 step 6)
+  // [transfer code already shown above]
 
   // Step 2: Create CP-AMM pool (separate transaction)
   const { tx: createPoolTx, pool: poolAddress, position: positionAddress } = await createBookbuildingCPAMMPool({
@@ -742,70 +951,7 @@ Complete Bookbuilding Implementation Plan
   // Note: Position NFT is automatically created and held by treasury (creator)
   // No need to store position address in database
 
-  // Step 3: Build ATOMIC transfer transaction
-  const atomicTransferTx = new Transaction();
-
-  // Get all token accounts
-  const treasuryBaseAta = await getAssociatedTokenAddress(baseMint, TREASURY_ADDRESS);
-  const escrowBaseAta = await getAssociatedTokenAddress(baseMint, escrowKeypair.publicKey);
-  const poolBaseVault = await getAssociatedTokenAddress(baseMint, poolAddress, true); // PDA
-  const poolQuoteVault = await getAssociatedTokenAddress(quoteMint, poolAddress, true); // PDA
-
-  // Token transfers:
-  // 1. Mint 0.25T to pool vault (already done by createCustomPool)
-  // 2. Mint (1B - 1.25T) to treasury
-  const treasuryTokenAmount = new BN(1_000_000_000).sub(T.muln(125).divn(100));
-  atomicTransferTx.add(
-    createMintToInstruction(
-      baseMint,
-      treasuryBaseAta,
-      PROTOCOL_MINT_AUTHORITY, // The main protocol address with mint authority
-      treasuryTokenAmount.toNumber()
-    )
-  );
-
-  // 3. Mint T to escrow for vesting
-  atomicTransferTx.add(
-    createMintToInstruction(
-      baseMint,
-      escrowBaseAta,
-      PROTOCOL_MINT_AUTHORITY,
-      T.toNumber()
-    )
-  );
-
-  // Fund transfers from escrow:
-  // 4. Transfer 0.25R to pool quote vault (already done by createCustomPool via liquidity)
-  // 5. Transfer 0.75R to treasury
-  const treasuryQuoteAmount = R.muln(75).divn(100);
-  const treasuryQuoteAta = await getAssociatedTokenAddress(quoteMint, TREASURY_ADDRESS);
-  const escrowQuoteAta = await getAssociatedTokenAddress(quoteMint, escrowKeypair.publicKey);
-
-  atomicTransferTx.add(
-    createTransferInstruction(
-      escrowQuoteAta,
-      treasuryQuoteAta,
-      escrowKeypair.publicKey,
-      treasuryQuoteAmount.toNumber()
-    )
-  );
-
-  // Sign and send atomic transfer transaction
-  atomicTransferTx.feePayer = escrowKeypair.publicKey;
-  const { blockhash } = await connection.getLatestBlockhash();
-  atomicTransferTx.recentBlockhash = blockhash;
-  atomicTransferTx.sign(escrowKeypair, PROTOCOL_MINT_AUTHORITY_KEYPAIR);
-
-  const transferSignature = await connection.sendTransaction(atomicTransferTx, { skipPreflight: false });
-  await connection.confirmTransaction(transferSignature, 'confirmed');
-
-  // Update database
-  await updateBookbuildingStatus(bookbuilding.id, {
-    status: 'launched',
-    amm_pool_address: poolAddress.toString(),
-    clearing_fdv: clearingFdv,
-    launched_at: new Date()
-  });
+  // Step 3: Distribution transaction - see Phase 2.5 step 7 for implementation details
 
   ---
   Phase 6: Precision & Math Library
@@ -818,12 +964,12 @@ Complete Bookbuilding Implementation Plan
 
   export function calculateTokensSold(
     totalRaised: BN,
-    totalSupply: BN,
+    tokenSupply: BN,
     clearingFdv: BN
   ): BN {
-    // T = (R × 1B) / V
-    // To avoid overflow: (R / V) × 1B
-    return totalRaised.mul(totalSupply).div(clearingFdv);
+    // T = (R × S) / V (where S = token supply)
+    // To avoid overflow: (R / V) × S
+    return totalRaised.mul(tokenSupply).div(clearingFdv);
   }
 
   export function calculateProRataAllocation(
@@ -841,12 +987,12 @@ Complete Bookbuilding Implementation Plan
   }
 
   export function calculateTreasuryTokens(
-    totalSupply: BN,
+    protocolBalance: BN,
     tokensSold: BN
   ): BN {
-    // 1B - 1.25T
+    // Protocol balance - 1.25T
     const sold125 = tokensSold.muln(125).divn(100);
-    return totalSupply.sub(sold125);
+    return protocolBalance.sub(sold125);
   }
 
   6.2 Rounding Strategy
@@ -871,12 +1017,15 @@ Complete Bookbuilding Implementation Plan
       totalAllocated = totalAllocated.add(allocation);
     }
 
-    // Give remainder to first user to ensure sum = tokensSold
+    // Give remainder to largest bidder to ensure sum = tokensSold
     const remainder = tokensSold.sub(totalAllocated);
     if (!remainder.isZero() && bids.length > 0) {
-      const firstBidId = bids[0].id;
-      const firstAllocation = allocations.get(firstBidId)!;
-      allocations.set(firstBidId, firstAllocation.add(remainder));
+      // Find the largest bid
+      const largestBid = bids.reduce((max, bid) =>
+        new BN(bid.bid_amount).gt(new BN(max.bid_amount)) ? bid : max
+      );
+      const largestAllocation = allocations.get(largestBid.id)!;
+      allocations.set(largestBid.id, largestAllocation.add(remainder));
     }
 
     return allocations;
@@ -904,6 +1053,8 @@ Complete Bookbuilding Implementation Plan
   - R must be > 0 (at least one qualifying bid)
   - clearing_fdv must be > 0
   - clearing_fdv >= 1.25 × R (ensures treasury doesn't go negative)
+  - Protocol wallet balance must be >= 1.25T (on-chain verification)
+  - Escrow balance must match sum of non-withdrawn qualifying bids (on-chain verification)
 
   7.2 Error Messages
 
@@ -916,7 +1067,11 @@ Complete Bookbuilding Implementation Plan
     INVALID_BID: 'Invalid bid amount or max FDV',
     WITHDRAWAL_FAILED: 'Cannot withdraw after bookbuilding launches',
     ALREADY_WITHDRAWN: 'Bid already withdrawn',
-    INVALID_CONTRIBUTION_TOKEN: 'Invalid or non-existent contribution token mint address'
+    INVALID_CONTRIBUTION_TOKEN: 'Invalid or non-existent contribution token mint address',
+    INSUFFICIENT_PROTOCOL_BALANCE: 'Insufficient protocol wallet balance. Transfer more tokens to protocol wallet.',
+    ESCROW_BALANCE_MISMATCH: 'Escrow balance does not match expected bid total - possible withdrawn or pending bids',
+    LOCK_ACQUISITION_FAILED: 'Failed to acquire lock - operation in progress',
+    LAUNCH_IN_PROGRESS: 'Launch already in progress for this bookbuilding'
   };
 
   ---
@@ -925,9 +1080,10 @@ Complete Bookbuilding Implementation Plan
   8.1 Unit Tests
 
   Test bookbuildingMath.ts:
-  - Edge cases: R=1, V=1B (T should be 1)
-  - Large numbers: R=1M, V=10M
+  - Edge cases: R=1, V=tokenSupply (T should be 1)
+  - Large numbers: R=1M, V=10M with various token supplies
   - Rounding: ensure sum of allocations = T
+  - Test with different token supplies (1M, 10M, 1B, etc.)
 
   8.2 Integration Tests
 
@@ -946,29 +1102,34 @@ Complete Bookbuilding Implementation Plan
   - Withdraw bid (verify refund)
   - Preview with different FDVs (check calculations)
   - Try to launch with FDV < 1.25 × R (should error with minimum FDV message)
-  - Launch with valid FDV (verify AMM creation, token distribution, atomic transfers)
-  - Verify mint authority remains with protocol address (NOT escrow)
+  - Try to launch with insufficient protocol balance (should error)
+  - Launch with valid FDV (verify AMM creation, token distribution, transfers)
+  - Verify treasury receives correct amount: (protocol balance - 1.25T)
+  - Verify escrow receives T tokens for vesting
+  - Verify AMM pool receives 0.25T tokens
   - Claim vested tokens (qualifying bid)
   - Claim refund (non-qualifying bid)
   - Try to launch with R=0 (should error)
   - Try to withdraw after launch (should error)
+  - Test repeated bookbuilding: launch, transfer more tokens to protocol, launch again
 
   ---
   Implementation Order
 
   Week 1: Backend Foundation
-  1. Database migration script
-  2. Create bookbuilding creation endpoint
-  3. Bid submission endpoint
-  4. Withdrawal endpoint
-  5. Preview calculations endpoint
+  1. Token creation script (create-bookbuilding-token.ts) - protocol only
+  2. Database migration script
+  3. Create bookbuilding creation endpoint (accepts existing token address)
+  4. Bid submission endpoint
+  5. Withdrawal endpoint
+  6. Preview calculations endpoint
 
   Week 2: Launch Mechanism
-  6. Meteora CP-AMM SDK integration
-  7. Math library with BN
-  8. Launch endpoint (close + create pool)
-  9. Treasury transfers
-  10. Vesting initialization
+  7. Meteora CP-AMM SDK integration
+  8. Math library with BN
+  9. Launch endpoint (transfer tokens, create pool, distribute)
+  10. Lock management (bookbuildingLocks.ts)
+  11. Vesting initialization
 
   Week 3: UI Components
   11. Update LaunchContent form
@@ -989,9 +1150,11 @@ Complete Bookbuilding Implementation Plan
 
   New Files:
 
+  - ui/scripts/create-bookbuilding-token.ts (protocol-only script for token creation)
   - ui/scripts/migrations/003_bookbuilding.sql
   - ui/lib/bookbuildingMath.ts
   - ui/lib/meteoraCpAmmService.ts
+  - ui/lib/bookbuildingLocks.ts (lock management)
   - ui/components/BidSubmissionForm.tsx
   - ui/components/LaunchPreviewModal.tsx
   - ui/components/UserBidsList.tsx
@@ -1006,6 +1169,15 @@ Complete Bookbuilding Implementation Plan
   - ui/lib/db/types.ts (add bookbuilding interfaces)
   - ui/components/LaunchContent.tsx (add bookbuilding option)
 
+  Environment Variables Required:
+
+  - TREASURY_WALLET: Main protocol treasury address (e.g., Hq7Xh37tT4sesD6wA4DphYfxeMJRhhFWS3KVUSSGjqzc)
+  - PROTOCOL_WALLET: Protocol wallet address that holds all tokens
+  - PROTOCOL_WALLET_PRIVATE_KEY: Private key for protocol wallet (for signing transfers)
+  - PROTOCOL_MINT_AUTHORITY_PRIVATE_KEY: Private key for creating tokens (used in create-bookbuilding-token.ts)
+  - RPC_URL: Solana RPC endpoint
+  - DB_URL: PostgreSQL database connection string
+
   ---
   Risk Areas
 
@@ -1013,16 +1185,23 @@ Complete Bookbuilding Implementation Plan
   2. Precision errors - Must test math extensively with BN library for large numbers
   3. ✓ RESOLVED: Treasury underflow - Validation added: clearing_fdv >= 1.25 × R
   4. ✓ RESOLVED: Contribution token validation - Uses getMint() to fetch decimals
-  5. Atomic transfer transaction size - May hit transaction size limits with many instructions
-     - Mitigation: Keep minting and pool creation in separate transactions
-  6. Fee calculation precision - 0.3% fee (300 basis points) must be correctly configured
-     - Verify PoolFeesParams.baseFactor = 300 works as expected
+  5. ✓ RESOLVED: Transaction separation - Pool creation and distribution are separate transactions
+     - Pool creation handles 0.25T + 0.25R automatically
+     - Distribution transaction mints remaining tokens and transfers funds
+  6. ✓ RESOLVED: Fee calculation precision - Uses baseFee.cliffFeeNumerator = 300
+     - Static fee mode (feeSchedulerMode = 0)
+     - No dynamic fee adjustments (dynamicFee = null)
   7. Token2022 compatibility - Code handles both TOKEN_PROGRAM_ID and TOKEN_2022_PROGRAM_ID
      - Must test with Token2022 contribution tokens (e.g., USDC on Token2022)
-  8. Rounding dust - Pro-rata allocation may leave small remainder
-     - Giving remainder to first bidder - verify this doesn't cause issues
-  9. Concurrent bid withdrawals - Multiple users withdrawing simultaneously
-     - Need database row-level locking or optimistic concurrency control
+  8. ✓ RESOLVED: Rounding dust - Pro-rata allocation gives remainder to largest bidder
+     - More fair than giving to first bidder
+     - Largest contributor gets minor rounding benefit
+  9. ✓ RESOLVED: Race conditions - Lock management implemented in bookbuildingLocks.ts
+     - Prevents concurrent withdrawals during launch
+     - Prevents multiple simultaneous launches
+  10. ✓ RESOLVED: Escrow balance verification - On-chain verification added to launch
+     - Compares escrow balance with sum of non-withdrawn qualifying bids
+     - Prevents fake bid attacks and race condition exploits
 
   ---
 
@@ -1036,13 +1215,18 @@ Complete Bookbuilding Implementation Plan
   - Track max_fdv, qualifying status, tokens_allocated for bids
   - Status: 'pending' | 'launched'
 
-  Backend (6 new endpoints):
+  Backend (6 new endpoints + lock management):
   1. Create bookbuilding - accept contribution token (fetch decimals on-chain) + vesting params
   2. Submit bid - verify transfer + record max_fdv
-  3. Withdraw bid - refund before launch (not after)
-  4. Preview - real-time calculations for any FDV showing qualifying bids
-  5. Launch - validates clearing_fdv >= 1.25×R, creates pool, atomic transfers, maintains mint authority with protocol
+  3. Withdraw bid - refund before launch (not after), with locking to prevent race conditions
+  4. Preview - real-time calculations for any FDV showing qualifying bids (filters withdrawn bids)
+  5. Launch - validates clearing_fdv >= 1.25×R, verifies escrow balance on-chain, creates pool separately, distribution transaction, with locking
   6. Claims - handle vested tokens (qualifying) or refunds (non-qualifying)
+
+  Lock Management:
+  - bookbuildingLocks.ts implements lock acquisition/release
+  - Prevents race between withdrawals and launch
+  - Ensures atomicity of critical operations
 
   UI:
   - LaunchContent: Add bookbuilding option with contribution token + vesting inputs (no decimals input)
@@ -1052,22 +1236,31 @@ Complete Bookbuilding Implementation Plan
   Token Distribution:
   - T tokens → bookbuilding participants (vested in escrow)
   - 0.25T → AMM pool
-  - (1B - 1.25T) → treasury
+  - (Protocol balance - 1.25T) → treasury
 
   Fund Distribution:
   - 0.25R → AMM pool
   - 0.75R → treasury
 
   Critical Requirements:
-  - Mint authority ALWAYS stays with main protocol address (NEVER escrow)
+  - Token must be created BEFORE bookbuilding (using create-bookbuilding-token.ts script)
+  - Founder transfers desired token amount to protocol wallet before launch
+  - NO minting during bookbuilding launch - only transfers
+  - Supports repeated bookbuildings: founder can run multiple fundraises with same token
+  - At launch, protocol wallet must have >= 1.25T tokens
+  - Treasury receives: (protocol balance) - 1.25T tokens
   - Contribution token decimals fetched from chain (not user input)
   - Clearing FDV validation: must be >= 1.25×R (prevents treasury underflow)
-  - All token + fund transfers in single ATOMIC transaction
-  - Token mint and pool creation can be separate transactions
+  - Step 1: Transfer 0.25T from protocol to escrow (for pool)
+  - Step 2: Pool creation (with 0.25T + 0.25R) in SEPARATE transaction
+  - Step 3: Distribution transaction transfers tokens (T to escrow, rest to treasury) and 0.75R to treasury
+  - Escrow balance verified on-chain before launch (prevents fake bids and race conditions)
+  - Lock management prevents concurrent withdrawals during launch
 
   Math:
   - Use BN library for all calculations to avoid overflow/precision errors
-  - Handle rounding by giving remainder to first bidder
+  - Handle rounding by giving remainder to largest bidder (not first)
+  - Filter withdrawn bids in all calculations (!withdrawn check)
 
   ---
 
@@ -1078,9 +1271,10 @@ Complete Bookbuilding Implementation Plan
   - Use CpAmm class with createCustomPool() method
   - Returns Transaction that creates pool with initial liquidity
   - Pool owner set to treasury/protocol address
-  - Pool fees set to 0.3% swap fee (300 basis points)
+  - Pool fees use PoolFeesParams structure with baseFee.cliffFeeNumerator: 300 (0.3%)
   - Returns pool address and position NFT address
   - Position NFT held by treasury, NOT stored in database
+  - deriveCustomizablePoolAddress() requires config parameter
   - See Phase 4.2 for complete implementation
 
   Q2: AMM Pool Ownership
@@ -1106,7 +1300,8 @@ Complete Bookbuilding Implementation Plan
 
   Additional Design Decisions
 
-  ✓ Pool Swap Fee: 0.3% (300 basis points out of 100,000)
+  ✓ Pool Swap Fee: 0.3% using baseFee.cliffFeeNumerator = 300, static fee mode
+  ✓ PoolFeesParams: Uses baseFee structure with padding and null dynamicFee
   ✓ ATA Creation: Paid by users in all transactions (bids, withdrawals, claims)
   ✓ Position NFT: Held by treasury address, not tracked in database
   ✓ Minimum Bid: No minimum bid amount validation
