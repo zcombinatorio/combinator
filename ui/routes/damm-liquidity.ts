@@ -142,14 +142,30 @@ setInterval(() => {
 
 router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: Response) => {
   try {
-    const { withdrawalPercentage } = req.body;
+    const { withdrawalPercentage, poolAddress: poolAddressInput } = req.body;
 
-    console.log('DAMM withdraw build request received:', { withdrawalPercentage });
+    console.log('DAMM withdraw build request received:', { withdrawalPercentage, poolAddress: poolAddressInput });
 
     // Validate required fields
     if (withdrawalPercentage === undefined || withdrawalPercentage === null) {
       return res.status(400).json({
         error: 'Missing required field: withdrawalPercentage'
+      });
+    }
+
+    if (!poolAddressInput) {
+      return res.status(400).json({
+        error: 'Missing required field: poolAddress'
+      });
+    }
+
+    // Validate poolAddress is a valid Solana public key
+    let poolAddress: PublicKey;
+    try {
+      poolAddress = new PublicKey(poolAddressInput);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid poolAddress: must be a valid Solana public key'
       });
     }
 
@@ -162,11 +178,10 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
 
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    const LIQUIDITY_POOL_ADDRESS = process.env.LIQUIDITY_POOL_ADDRESS;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
     const MANAGER_WALLET = process.env.MANAGER_WALLET;
 
-    if (!RPC_URL || !LIQUIDITY_POOL_ADDRESS || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
       return res.status(500).json({
         error: 'Server configuration incomplete. Missing required environment variables.'
       });
@@ -175,7 +190,6 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
     // Initialize connection and keypairs
     const connection = new Connection(RPC_URL, 'confirmed');
     const lpOwner = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const poolAddress = new PublicKey(LIQUIDITY_POOL_ADDRESS);
     const managerWallet = new PublicKey(MANAGER_WALLET);
 
     // Create CpAmm instance and get pool state
@@ -806,14 +820,30 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
 
 router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Response) => {
   try {
-    const { tokenAAmount, tokenBAmount } = req.body;
+    const { tokenAAmount, tokenBAmount, poolAddress: poolAddressInput } = req.body;
 
-    console.log('DAMM deposit build request received:', { tokenAAmount, tokenBAmount });
+    console.log('DAMM deposit build request received:', { tokenAAmount, tokenBAmount, poolAddress: poolAddressInput });
 
     // Validate required fields
     if (tokenAAmount === undefined || tokenBAmount === undefined) {
       return res.status(400).json({
         error: 'Missing required fields: tokenAAmount and tokenBAmount'
+      });
+    }
+
+    if (!poolAddressInput) {
+      return res.status(400).json({
+        error: 'Missing required field: poolAddress'
+      });
+    }
+
+    // Validate poolAddress is a valid Solana public key
+    let poolAddress: PublicKey;
+    try {
+      poolAddress = new PublicKey(poolAddressInput);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid poolAddress: must be a valid Solana public key'
       });
     }
 
@@ -832,11 +862,10 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
 
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    const LIQUIDITY_POOL_ADDRESS = process.env.LIQUIDITY_POOL_ADDRESS;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
     const MANAGER_WALLET = process.env.MANAGER_WALLET;
 
-    if (!RPC_URL || !LIQUIDITY_POOL_ADDRESS || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
       return res.status(500).json({
         error: 'Server configuration incomplete. Missing required environment variables.'
       });
@@ -845,7 +874,6 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
     // Initialize connection and keypairs
     const connection = new Connection(RPC_URL, 'confirmed');
     const lpOwner = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const poolAddress = new PublicKey(LIQUIDITY_POOL_ADDRESS);
     const managerWallet = new PublicKey(MANAGER_WALLET);
 
     // Create CpAmm instance and get pool state
