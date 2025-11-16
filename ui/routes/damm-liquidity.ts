@@ -153,16 +153,11 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
       });
     }
 
-    if (!poolAddressInput) {
-      return res.status(400).json({
-        error: 'Missing required field: poolAddress'
-      });
-    }
-
-    // Validate poolAddress is a valid Solana public key
+    // Validate poolAddress is a valid Solana public key (default to main pool if not provided)
+    const DEFAULT_POOL_ADDRESS = 'CCZdbVvDqPN8DmMLVELfnt9G1Q9pQNt3bTGifSpUY9Ad';
     let poolAddress: PublicKey;
     try {
-      poolAddress = new PublicKey(poolAddressInput);
+      poolAddress = new PublicKey(poolAddressInput || DEFAULT_POOL_ADDRESS);
     } catch (error) {
       return res.status(400).json({
         error: 'Invalid poolAddress: must be a valid Solana public key'
@@ -831,16 +826,11 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
       });
     }
 
-    if (!poolAddressInput) {
-      return res.status(400).json({
-        error: 'Missing required field: poolAddress'
-      });
-    }
-
-    // Validate poolAddress is a valid Solana public key
+    // Validate poolAddress is a valid Solana public key (default to main pool if not provided)
+    const DEFAULT_POOL_ADDRESS = 'CCZdbVvDqPN8DmMLVELfnt9G1Q9pQNt3bTGifSpUY9Ad';
     let poolAddress: PublicKey;
     try {
-      poolAddress = new PublicKey(poolAddressInput);
+      poolAddress = new PublicKey(poolAddressInput || DEFAULT_POOL_ADDRESS);
     } catch (error) {
       return res.status(400).json({
         error: 'Invalid poolAddress: must be a valid Solana public key'
