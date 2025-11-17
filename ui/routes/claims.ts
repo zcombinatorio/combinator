@@ -314,49 +314,33 @@ router.post('/mint', async (
     // claimersTotal represents the 90% portion for claimers (excluding 10% admin fee)
     const splitRecipients: SplitRecipient[] = [];
 
-    // Special case for ZC token: split claimersTotal between ztorio, solpay, dev, and Percent Markets treasury
+    // Special case for ZC token: fixed amounts to ztorio and solpay only (90% of total claim)
     const ZC_TOKEN_ADDRESS = 'GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC';
-    const PERCENT_TREASURY_ADDRESS = '4ySrS3XEn8ouZfA2JAgS9uZ5BWeVCyyR16wgJ1Tyh9aG'; // Treasury for percent markets ($PERC) for their contributions to improving the protocol
     const ZTORIO_ADDRESS = 'A6R6fD82TaTSWKTpKKcRhBotYtc5izyauPFw3yHVYwuP'; // ztorio
     const SOLPAY_ADDRESS = 'J7xnWtfi5Fa3JC1creRBHzo7DkRf6etugCBv1s9vEe5N'; // solpay ($SP)
 
     if (tokenAddress === ZC_TOKEN_ADDRESS) {
-      // Split total: 2.5% to ztorio, 1% to solpay, 43.25% to dev, 43.25% to Percent Markets treasury, 10% to fee
-      // Calculate in basis points for precision: 2.5% = 250/10000, 1% = 100/10000
-      const ztorioAmount = (requestedAmount * BigInt(250)) / BigInt(10000); // 2.5% of total
-      const solpayAmount = (requestedAmount * BigInt(100)) / BigInt(10000); // 1% of total
-      const remainderAfterFixedAllocations = requestedAmount - ztorioAmount - solpayAmount - adminAmount; // 86.5% of total
-      const devAmount = remainderAfterFixedAllocations / BigInt(2); // 43.25% of total
-      const treasuryAmount = remainderAfterFixedAllocations - devAmount; // 43.25% of total (ensures exact total)
+      // ZC token: 25k to ztorio, 10k to solpay from the claimersTotal (90% portion)
+      // The remaining 10% goes to admin as normal
+      const ztorioAmount = BigInt(25000); // 25k tokens
+      const solpayAmount = BigInt(10000); // 10k tokens
 
       splitRecipients.push(
         {
           wallet: ZTORIO_ADDRESS,
-          amount: ztorioAmount, // 2.5% of total
+          amount: ztorioAmount,
           amountWithDecimals: ztorioAmount * BigInt(10 ** decimals),
           label: 'ztorio'
         },
         {
           wallet: SOLPAY_ADDRESS,
-          amount: solpayAmount, // 1% of total
+          amount: solpayAmount,
           amountWithDecimals: solpayAmount * BigInt(10 ** decimals),
           label: 'solpay'
-        },
-        {
-          wallet: trimmedCreatorWallet,
-          amount: devAmount, // 43.25% of total
-          amountWithDecimals: devAmount * BigInt(10 ** decimals),
-          label: 'Developer'
-        },
-        {
-          wallet: PERCENT_TREASURY_ADDRESS,
-          amount: treasuryAmount, // 43.25% of total
-          amountWithDecimals: treasuryAmount * BigInt(10 ** decimals),
-          label: 'Percent Markets Treasury'
         }
       );
 
-      console.log(`ZC token emission split: 2.5% to ztorio ${ZTORIO_ADDRESS}, 1% to solpay ${SOLPAY_ADDRESS}, 43.25% to developer ${trimmedCreatorWallet}, 43.25% to Percent Markets treasury ${PERCENT_TREASURY_ADDRESS}, 10% to fee`);
+      console.log(`ZC token emission split: 25k to ztorio ${ZTORIO_ADDRESS}, 10k to solpay ${SOLPAY_ADDRESS}, plus 10% admin fee`);
     } else {
       // Default: 100% of claimersTotal goes to the developer/creator
       splitRecipients.push({
