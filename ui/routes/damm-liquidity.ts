@@ -1451,13 +1451,25 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
 
           // SECURITY: Validate destination based on sender
           if (from.equals(managerAddress)) {
-            // Manager can only send to LP owner
-            if (!to.equals(lpOwnerAddress)) {
+            // Manager can send to LP owner OR to their own WSOL account (for wrapping)
+            const managerWsolAta = await getAssociatedTokenAddress(
+              NATIVE_MINT,
+              managerAddress,
+              false,
+              TOKEN_PROGRAM_ID
+            );
+
+            const validDestinations = [
+              lpOwnerAddress.toBase58(),
+              managerWsolAta.toBase58()  // Allow WSOL wrapping for Meteora SDK
+            ];
+
+            if (!validDestinations.includes(to.toBase58())) {
               console.log(`  ⚠️  VALIDATION FAILED: Unauthorized manager SOL transfer in instruction ${i}`);
               console.log(`    To: ${to.toBase58()}`);
-              console.log(`    Expected: ${lpOwnerAddress.toBase58()} (LP owner)`);
+              console.log(`    Valid destinations: ${validDestinations.join(', ')}`);
               return res.status(400).json({
-                error: 'Invalid transaction: manager SOL transfer must be to LP owner',
+                error: 'Invalid transaction: manager SOL transfer must be to LP owner or WSOL account',
                 details: `Instruction ${i} to mismatch`
               });
             }
