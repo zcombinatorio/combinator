@@ -173,3 +173,49 @@ export interface Contribution {
   time: number;
   created_at?: Date;
 }
+
+// ============================================================================
+// ICO Types
+// ============================================================================
+
+export interface IcoSale {
+  id?: number;
+  token_address: string;
+  creator_wallet: string;
+  token_metadata_url: string;
+  total_tokens_for_sale: bigint; // Total tokens for sale
+  token_price_sol: string; // Price per token in SOL (e.g., "0.00001428571")
+  tokens_sold?: bigint; // Calculated from purchases (not stored in DB)
+  total_sol_raised?: bigint; // Calculated from purchases in lamports (not stored in DB)
+  status: 'active' | 'finalized'; // active -> finalized (when sold out, claiming enabled)
+  escrow_pub_key?: string;
+  escrow_priv_key?: string; // Encrypted
+  vault_token_account?: string; // Where 50% of tokens go immediately
+  treasury_wallet?: string; // Where SOL goes (manual transfer)
+  treasury_sol_amount: bigint; // Portion of raised SOL for treasury (AMM amount = total - treasury)
+  created_at?: Date;
+}
+
+export interface IcoPurchase {
+  id?: number;
+  ico_sale_id: number;
+  wallet_address: string;
+  sol_amount_lamports: bigint; // SOL sent by user
+  tokens_bought: bigint; // Total tokens (100%)
+  tokens_to_vault?: bigint; // 50% sent to vault immediately (calculated, not stored in DB)
+  tokens_claimable?: bigint; // 50% claimable after sale finalizes (calculated, not stored in DB)
+  transaction_signature: string;
+  created_at?: Date;
+}
+
+export interface IcoClaim {
+  id?: number;
+  ico_sale_id: number;
+  wallet_address: string;
+  tokens_claimable?: bigint; // Calculated from purchases (not stored in DB)
+  tokens_claimed: bigint; // Amount claimed
+  claim_transaction_signature?: string;
+  claimed_at?: Date;
+  created_at?: Date;
+  updated_at?: Date;
+}

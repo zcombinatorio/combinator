@@ -30,6 +30,7 @@ import claimsRouter from './routes/claims';
 import presaleRouter from './routes/presale';
 import feeClaimRouter from './routes/fee-claim';
 import dammLiquidityRouter from './routes/damm-liquidity';
+import icoRouter from './routes/ico';
 
 dotenv.config();
 
@@ -102,6 +103,9 @@ app.use('/fee-claim', feeClaimRouter);
 
 // Mount DAMM liquidity routes
 app.use('/damm', dammLiquidityRouter);
+
+// Mount ICO routes
+app.use('/ico', icoRouter);
 
 // Launch token endpoint - returns unsigned transaction
 app.post('/launch', async (req: Request, res: Response) => {
@@ -350,18 +354,26 @@ async function startServer() {
       console.log(`Server:  http://localhost:${PORT}`);
       console.log(`Health:  http://localhost:${PORT}/health`);
       console.log(`\nEndpoints:`);
-      console.log(`  POST /launch                    - Create unsigned transaction`);
-      console.log(`  POST /confirm-launch            - Confirm partially signed transaction`);
-      console.log(`  POST /fee-claim/claim           - Build fee claim transaction for Meteora DAMM v2`);
-      console.log(`  POST /fee-claim/confirm         - Confirm fee claim transaction`);
-      console.log(`  POST /damm/withdraw/build       - Build DAMM liquidity withdrawal transaction`);
-      console.log(`  POST /damm/withdraw/confirm     - Confirm DAMM withdrawal (manager only)`);
-      console.log(`  POST /damm/deposit/build        - Build DAMM liquidity deposit transaction`);
-      console.log(`  POST /damm/deposit/confirm      - Confirm DAMM deposit (manager only)`);
-      console.log(`  GET  /claims/:tokenAddress      - Get claim eligibility info`);
-      console.log(`  POST /claims/mint               - Create unsigned mint transaction`);
-      console.log(`  POST /claims/confirm            - Confirm claim transaction`);
-      console.log(`  GET  /verify-token/:address     - Verify token exists on-chain`);
+      console.log(`  POST /launch                                - Create unsigned transaction`);
+      console.log(`  POST /confirm-launch                        - Confirm partially signed transaction`);
+      console.log(`  POST /fee-claim/claim                       - Build fee claim transaction for Meteora DAMM v2`);
+      console.log(`  POST /fee-claim/confirm                     - Confirm fee claim transaction`);
+      console.log(`  POST /damm/withdraw/build                   - Build DAMM liquidity withdrawal transaction`);
+      console.log(`  POST /damm/withdraw/confirm                 - Confirm DAMM withdrawal (manager only)`);
+      console.log(`  POST /damm/deposit/build                    - Build DAMM liquidity deposit transaction`);
+      console.log(`  POST /damm/deposit/confirm                  - Confirm DAMM deposit (manager only)`);
+      console.log(`  GET  /claims/:tokenAddress                  - Get claim eligibility info`);
+      console.log(`  POST /claims/mint                           - Create unsigned mint transaction`);
+      console.log(`  POST /claims/confirm                        - Confirm claim transaction`);
+      console.log(`  POST /ico/create                            - Create new ICO sale`);
+      console.log(`  GET  /ico/:tokenAddress                     - Get ICO sale information`);
+      console.log(`  GET  /ico/:tokenAddress/purchase            - Get user purchase history`);
+      console.log(`  POST /ico/:tokenAddress/purchase/prepare    - Prepare ICO purchase transaction`);
+      console.log(`  POST /ico/:tokenAddress/purchase/confirm    - Confirm ICO purchase`);
+      console.log(`  GET  /ico/:tokenAddress/claim               - Get user claimable balance`);
+      console.log(`  POST /ico/:tokenAddress/claim/prepare       - Prepare ICO claim transaction`);
+      console.log(`  POST /ico/:tokenAddress/claim/confirm       - Confirm ICO claim`);
+      console.log(`  GET  /verify-token/:address                 - Verify token exists on-chain`);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
     });
   } catch (error) {

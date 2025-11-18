@@ -30,9 +30,13 @@ import type {
   PresaleClaim,
   PresaleClaimTransaction,
   Contribution,
+  IcoSale,
+  IcoPurchase,
+  IcoClaim,
 } from './db/types';
 import * as emissionSplitsModule from './db/emission-splits';
 import * as presalesModule from './db/presales';
+import * as icoModule from './db/ico';
 
 // Re-export all database types for backwards compatibility
 export type {
@@ -48,6 +52,9 @@ export type {
   PresaleClaim,
   PresaleClaimTransaction,
   Contribution,
+  IcoSale,
+  IcoPurchase,
+  IcoClaim,
 } from './db/types';
 
 // Mock database support
@@ -587,6 +594,59 @@ export async function initializeDatabase(): Promise<void> {
 
     -- Note: No automatic backfill. Emission splits are opt-in via PR/admin configuration.
     -- The hasClaimRights() function falls back to creator_wallet for backwards compatibility.
+
+    -- ICO Tables
+    CREATE TABLE IF NOT EXISTS ico_sales (
+      id SERIAL PRIMARY KEY,
+      token_address TEXT NOT NULL UNIQUE,
+      creator_wallet TEXT NOT NULL,
+      token_metadata_url TEXT NOT NULL,
+      total_tokens_for_sale BIGINT NOT NULL,
+      token_price_sol TEXT NOT NULL,
+      status TEXT DEFAULT 'active' NOT NULL CHECK (status IN ('active', 'finalized')),
+      escrow_pub_key TEXT,
+      escrow_priv_key TEXT,
+      vault_token_account TEXT,
+      treasury_wallet TEXT,
+      treasury_sol_amount BIGINT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ico_sales_token_address ON ico_sales(token_address);
+    CREATE INDEX IF NOT EXISTS idx_ico_sales_creator_wallet ON ico_sales(creator_wallet);
+    CREATE INDEX IF NOT EXISTS idx_ico_sales_status ON ico_sales(status);
+    CREATE INDEX IF NOT EXISTS idx_ico_sales_created_at ON ico_sales(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ico_purchases (
+      id SERIAL PRIMARY KEY,
+      ico_sale_id INTEGER NOT NULL REFERENCES ico_sales(id) ON DELETE CASCADE,
+      wallet_address TEXT NOT NULL,
+      sol_amount_lamports BIGINT NOT NULL,
+      tokens_bought BIGINT NOT NULL,
+      transaction_signature TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ico_purchases_ico_sale_id ON ico_purchases(ico_sale_id);
+    CREATE INDEX IF NOT EXISTS idx_ico_purchases_wallet_address ON ico_purchases(wallet_address);
+    CREATE INDEX IF NOT EXISTS idx_ico_purchases_transaction_signature ON ico_purchases(transaction_signature);
+    CREATE INDEX IF NOT EXISTS idx_ico_purchases_created_at ON ico_purchases(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ico_claims (
+      id SERIAL PRIMARY KEY,
+      ico_sale_id INTEGER NOT NULL REFERENCES ico_sales(id) ON DELETE CASCADE,
+      wallet_address TEXT NOT NULL,
+      tokens_claimed BIGINT DEFAULT 0 NOT NULL,
+      claim_transaction_signature TEXT,
+      claimed_at TIMESTAMP WITH TIME ZONE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      UNIQUE(ico_sale_id, wallet_address)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ico_claims_ico_sale_id ON ico_claims(ico_sale_id);
+    CREATE INDEX IF NOT EXISTS idx_ico_claims_wallet_address ON ico_claims(wallet_address);
+    CREATE INDEX IF NOT EXISTS idx_ico_claims_ico_sale_wallet ON ico_claims(ico_sale_id, wallet_address);
   `;
 
   try {
@@ -1633,4 +1693,74 @@ export async function getContributions(): Promise<Contribution[]> {
     console.error('Error fetching contributions:', error);
     throw error;
   }
+}
+
+// ============================================================================
+// ICO Functions (delegated to ico module)
+// ============================================================================
+
+export async function createIcoSale(
+  sale: Omit<IcoSale, 'id' | 'created_at' | 'status'>
+): Promise<IcoSale> {
+  return icoModule.createIcoSale(getPool(), sale);
+}
+
+export async function isPurchaseSignatureProcessed(signature: string): Promise<boolean> {
+  return icoModule.isPurchaseSignatureProcessed(getPool(), signature);
+}
+
+export async function isClaimSignatureProcessed(signature: string): Promise<boolean> {
+  return icoModule.isClaimSignatureProcessed(getPool(), signature);
+}
+
+export async function getIcoSaleByTokenAddress(tokenAddress: string): Promise<IcoSale | null> {
+  return icoModule.getIcoSaleByTokenAddress(getPool(), tokenAddress);
+}
+
+export async function getIcoSaleById(id: number): Promise<IcoSale | null> {
+  return icoModule.getIcoSaleById(getPool(), id);
+}
+
+export async function updateIcoSaleStatus(
+  tokenAddress: string,
+  status: 'active' | 'finalized'
+): Promise<IcoSale | null> {
+  return icoModule.updateIcoSaleStatus(getPool(), tokenAddress, status);
+}
+
+export async function recordIcoPurchase(
+  purchase: Omit<IcoPurchase, 'id' | 'created_at'>
+): Promise<IcoPurchase> {
+  return icoModule.recordIcoPurchase(getPool(), purchase);
+}
+
+export async function getIcoPurchasesByWallet(
+  tokenAddress: string,
+  walletAddress: string
+): Promise<IcoPurchase[]> {
+  return icoModule.getIcoPurchasesByWallet(getPool(), tokenAddress, walletAddress);
+}
+
+export async function getAllIcoPurchases(tokenAddress: string): Promise<IcoPurchase[]> {
+  return icoModule.getAllIcoPurchases(getPool(), tokenAddress);
+}
+
+export async function getIcoClaimByWallet(
+  tokenAddress: string,
+  walletAddress: string
+): Promise<IcoClaim | null> {
+  return icoModule.getIcoClaimByWallet(getPool(), tokenAddress, walletAddress);
+}
+
+export async function updateIcoClaim(
+  icoSaleId: number,
+  walletAddress: string,
+  tokensClaimed: bigint,
+  claimSignature: string
+): Promise<IcoClaim | null> {
+  return icoModule.updateIcoClaim(getPool(), icoSaleId, walletAddress, tokensClaimed, claimSignature);
+}
+
+export async function getAllIcoClaims(tokenAddress: string): Promise<IcoClaim[]> {
+  return icoModule.getAllIcoClaims(getPool(), tokenAddress);
 }
