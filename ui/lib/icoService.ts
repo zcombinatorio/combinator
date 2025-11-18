@@ -48,6 +48,31 @@ import type { IcoSale } from './db/types';
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
 
 // ============================================================================
+// ICO SALE TOKEN FLOW
+// ============================================================================
+//
+// SETUP:
+// 1. Creator deposits all tokens for sale into escrow
+// 2. Escrow holds 100% of tokens initially
+//
+// DURING PURCHASE:
+// 1. User sends SOL to escrow (on-chain, signed by user)
+// 2. Server verifies transaction on-chain
+// 3. Server records purchase in database
+// 4. Server transfers 50% of tokens from escrow → vault (for immediate staking)
+// 5. Remaining 50% stays in escrow (for user to claim later)
+//
+// AFTER SALE FINALIZES (sold out or manual finalization):
+// 1. Users can claim their 50% from escrow
+// 2. Server signs claim transaction with escrow key
+// 3. Tokens transfer from escrow → user's wallet
+//
+// ESCROW BALANCE TRACKING:
+// - Starts with: total_tokens_for_sale
+// - After each purchase: loses 50% to vault, 50% held for claims
+// - Should always have: remaining_sale_tokens + unclaimed_tokens
+//
+// ============================================================================
 // Constants
 // ============================================================================
 
@@ -58,12 +83,14 @@ const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL || 'https
 const MAX_TREASURY_PERCENTAGE = 80;
 
 /**
- * Percentage of tokens sent to vault immediately upon purchase
+ * Percentage of tokens sent to vault after purchase is confirmed
+ * This happens server-side AFTER the user's transaction is verified
  */
 const VAULT_PERCENTAGE = 50;
 
 /**
- * Percentage of tokens held for claiming after sale finalizes
+ * Percentage of tokens held in escrow for claiming after sale finalizes
+ * These tokens remain in escrow until users claim them
  */
 const CLAIMABLE_PERCENTAGE = 50;
 
@@ -153,9 +180,13 @@ export function calculateSolForTokens(
 
 /**
  * Prepare an unsigned purchase transaction
- * User sends SOL to escrow
- * Escrow sends VAULT_PERCENTAGE (50%) of tokens to vault immediately
- * Escrow keeps CLAIMABLE_PERCENTAGE (50%) of tokens for later claim
+ *
+ * USER'S TRANSACTION (on-chain):
+ * - User sends SOL to escrow
+ *
+ * SERVER'S ACTION (after confirmation):
+ * - Server transfers 50% of tokens from escrow to vault (for immediate staking)
+ * - Server keeps 50% of tokens in escrow (for later claiming by user)
  *
  * NOTE: If user requests more tokens than available, purchase is auto-capped to remaining tokens
  */
@@ -192,7 +223,7 @@ export async function preparePurchaseTransaction(params: {
   const tokensRequested = calculateTokensForSol(params.solAmountLamports, icoSale.token_price_sol);
 
   // Check tokens remaining and cap purchase to available amount
-  const tokensRemainingForSale = icoSale.total_tokens_for_sale - (icoSale.tokens_sold || BigInt(0));
+  const tokensRemainingForSale = icoSale.total_tokens_for_sale - icoSale.tokens_sold;
 
   if (tokensRemainingForSale <= BigInt(0)) {
     throw new Error('ICO sale is sold out');
@@ -221,14 +252,26 @@ export async function preparePurchaseTransaction(params: {
   // Get escrow's token account
   const escrowTokenAccount = await getAssociatedTokenAddress(tokenMint, escrowPubKey);
 
-  // Verify escrow has enough tokens to finance the entire remaining sale
+  // Verify escrow has enough tokens for all remaining ICO needs
+  // NOTE: Server-side vault transfers mean escrow must hold:
+  // 1. Tokens for ALL remaining sales (this + future)
+  // 2. Tokens already sold but not yet claimed
   const escrowTokenBalance = await connection.getTokenAccountBalance(escrowTokenAccount);
   const escrowBalance = BigInt(escrowTokenBalance.value.amount);
-  const tokensNeededForRemainingSale = icoSale.total_tokens_for_sale - (icoSale.tokens_sold || BigInt(0));
 
-  if (escrowBalance < tokensNeededForRemainingSale) {
+  const tokensSoldSoFar = icoSale.tokens_sold;
+  const tokensStillAvailable = icoSale.total_tokens_for_sale - tokensSoldSoFar;
+
+  // Escrow started with total_tokens_for_sale
+  // After each purchase, escrow loses: tokensBought (will transfer 50% to vault, 50% to claims)
+  // So escrow should currently have: total_tokens_for_sale - tokens_sold
+  // And it needs: tokensStillAvailable (to cover this and future purchases)
+
+  const requiredEscrowBalance = tokensStillAvailable;
+
+  if (escrowBalance < requiredEscrowBalance) {
     throw new Error(
-      `Escrow has insufficient tokens. Has: ${escrowBalance}, Needs: ${tokensNeededForRemainingSale} to finance remaining sale`
+      `Escrow has insufficient tokens. Has: ${escrowBalance}, Needs: ${requiredEscrowBalance} to cover remaining sale`
     );
   }
 
@@ -245,7 +288,8 @@ export async function preparePurchaseTransaction(params: {
   );
 
   // 2. Transfer VAULT_PERCENTAGE of tokens from escrow to vault
-  // Note: Escrow must have the tokens already
+  // This makes the purchase atomic: either both SOL and tokens transfer, or neither
+  // Both buyer and escrow must sign this transaction
   instructions.push(
     createTransferInstruction(
       escrowTokenAccount,
@@ -261,6 +305,13 @@ export async function preparePurchaseTransaction(params: {
   const { blockhash } = await connection.getLatestBlockhash();
   transaction.recentBlockhash = blockhash;
   transaction.feePayer = buyerPubKey;
+
+  // NOTE: We do NOT sign with escrow here
+  // The signing flow is:
+  // 1. Server creates unsigned transaction (this function)
+  // 2. User signs on frontend
+  // 3. User sends signed transaction to /confirm endpoint (NOT to blockchain)
+  // 4. Server validates, adds escrow signature, and submits to blockchain
 
   return {
     transaction,
@@ -320,6 +371,7 @@ export async function prepareClaimTransaction(params: {
   transaction: Transaction;
   icoSaleId: number;
   tokensToClaim: bigint;
+  escrowPubKey: string;
 }> {
   const connection = new Connection(RPC_URL, 'confirmed');
 
@@ -392,6 +444,7 @@ export async function prepareClaimTransaction(params: {
     transaction,
     icoSaleId: icoSale.id,
     tokensToClaim,
+    escrowPubKey: icoSale.escrow_pub_key,
   };
 }
 

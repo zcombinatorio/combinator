@@ -28,13 +28,13 @@ import {
   getUserPurchases,
   getUserClaimInfo,
   prepareClaimTransaction,
-  signClaimTransaction,
   processClaim,
 } from '../lib/icoService';
 import {
   getIcoSaleByTokenAddress,
   isPurchaseSignatureProcessed,
-  isClaimSignatureProcessed,
+  getIcoClaimByWallet,
+  getPool,
 } from '../lib/db';
 import {
   isValidSolanaAddress,
@@ -57,21 +57,48 @@ import {
  * - Claim transactions (prepare, confirm, info)
  * - Launch transactions (prepare, confirm) - DEPRECATED
  *
- * OVERSELLING PROTECTION ARCHITECTURE:
- * -------------------------------------
- * The database tracks tokens_sold as a performance optimization and for quick checks,
- * but the blockchain is the source of truth. In the confirm endpoint, we:
+ * TOKEN DISTRIBUTION FLOW:
+ * -------------------------
+ * When a user purchases tokens during an ICO:
+ * 1. /prepare endpoint: Server creates unsigned transaction with 2 instructions:
+ *    - Instruction 1: Transfer SOL from user to escrow
+ *    - Instruction 2: Transfer 50% of tokens from escrow to vault
+ * 2. User signs: User signs transaction on frontend
+ * 3. /confirm endpoint: User sends signed transaction to server
+ * 4. Server validation: Server validates all transaction instructions
+ * 5. Server signing: Server adds escrow signature (for token transfer)
+ * 6. Submission: Server submits fully-signed transaction to blockchain
+ * 7. Database recording: Server records purchase in database
  *
- * 1. Fast check: Validate against database tokens_sold (fail-fast for obvious cases)
- * 2. On-chain verification: Query vault token balance to calculate actual tokens sold
- *    - Since 50% of each purchase goes to vault, vault_balance * 2 = tokens_sold
- *    - This is ground truth and cannot be manipulated
- * 3. Overselling prevention: Compare requested purchase against on-chain remaining tokens
- * 4. Safety check: Verify escrow has enough balance for all future claims
+ * Result: Atomic transaction ensures both SOL payment and vault token transfer
+ * happen together (or both fail). Remaining 50% stays in escrow for user to claim.
  *
- * The database does its best to match the blockchain state, but we assume it may
- * occasionally be out of sync (e.g., due to race conditions, network issues, etc.).
- * The on-chain verification ensures we never oversell, even if the database is wrong.
+ * ICO SALE MODES:
+ * ----------------
+ * The ICO has two distinct modes that never overlap:
+ * - ACTIVE MODE: Users can purchase, claiming is blocked
+ * - FINALIZED MODE: Users can claim, purchasing is blocked
+ *
+ * OVERSELLING PROTECTION (ACTIVE MODE ONLY):
+ * ------------------------------------------
+ * Overselling protection only applies during ACTIVE MODE when purchases occur.
+ * The /purchase/confirm endpoint validates:
+ * 1. Status check: Verify sale status is 'active' (not 'finalized')
+ * 2. Database check: Ensure tokens_sold + this_purchase <= total_tokens_for_sale
+ * 3. Transaction validation: Verify transaction instructions are correct
+ * 4. Transaction lock: Use per-token mutex to prevent race conditions
+ *
+ * NOTE: We do NOT use vault balance to calculate tokens sold because:
+ * - Vault may have initial balance from other sources
+ * - Users can stake/unstake during ICO, changing vault balance unpredictably
+ * - This would make vault_balance * 2 = tokens_sold completely unreliable
+ *
+ * Database tracking (tokens_sold aggregated from purchases) is the source of truth.
+ *
+ * CLAIMING (FINALIZED MODE ONLY):
+ * --------------------------------
+ * During FINALIZED MODE, users claim their 50% that stayed in escrow.
+ * No overselling protection is needed - users are claiming tokens already purchased.
  */
 
 const router = Router();
@@ -209,8 +236,8 @@ router.post('/create', async (req: Request, res: Response) => {
     const responseData = {
       ...icoSale,
       total_tokens_for_sale: icoSale.total_tokens_for_sale.toString(),
-      tokens_sold: (icoSale.tokens_sold || BigInt(0)).toString(),
-      total_sol_raised: (icoSale.total_sol_raised || BigInt(0)).toString(),
+      tokens_sold: "0",
+      total_sol_raised: "0",
       treasury_sol_amount: icoSale.treasury_sol_amount.toString(),
     };
 
@@ -258,8 +285,8 @@ router.get('/:tokenAddress', async (req: Request, res: Response) => {
     const responseData = {
       ...safeIcoSale,
       total_tokens_for_sale: safeIcoSale.total_tokens_for_sale.toString(),
-      tokens_sold: (safeIcoSale.tokens_sold || BigInt(0)).toString(),
-      total_sol_raised: (safeIcoSale.total_sol_raised || BigInt(0)).toString(),
+      tokens_sold: safeIcoSale.tokens_sold.toString(),
+      total_sol_raised: safeIcoSale.total_sol_raised.toString(),
       treasury_sol_amount: safeIcoSale.treasury_sol_amount.toString(),
     };
 
@@ -404,7 +431,15 @@ router.post('/:tokenAddress/purchase/prepare', async (req: Request, res: Respons
 
 /**
  * POST /ico/:tokenAddress/purchase/confirm
- * Confirm and process a purchase after transaction is signed and submitted
+ * Confirm and process a purchase after user signs the transaction
+ *
+ * FLOW:
+ * 1. User calls /prepare to get unsigned transaction
+ * 2. User signs transaction on frontend
+ * 3. User sends signed transaction to this endpoint (NOT to blockchain)
+ * 4. Server validates, adds escrow signature, and submits to blockchain
+ * 5. Server records purchase in database
+ * 6. Returns transaction signature
  */
 router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Response) => {
   let releaseLock: (() => void) | null = null;
@@ -418,10 +453,10 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
       tokensBought,
       tokensToVault,
       tokensClaimable,
-      signature,
+      signedTransaction, // User-signed transaction (base64)
     } = req.body;
 
-    if (!icoSaleId || !wallet || !solAmount || !tokensBought || !tokensToVault || !tokensClaimable || !signature) {
+    if (!icoSaleId || !wallet || !solAmount || !tokensBought || !tokensToVault || !tokensClaimable || !signedTransaction) {
       return res.status(400).json({
         error: 'Missing required fields'
       });
@@ -440,13 +475,6 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
       });
     }
 
-    // Validate signature
-    if (!isValidTransactionSignature(signature)) {
-      return res.status(400).json({
-        error: 'Invalid transaction signature format'
-      });
-    }
-
     // Validate amounts
     if (!isValidLamportsAmount(solAmount)) {
       return res.status(400).json({
@@ -454,11 +482,14 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
       });
     }
 
-    // FAIL-FAST: Check if signature already processed (before expensive operations)
-    const alreadyProcessed = await isPurchaseSignatureProcessed(signature);
-    if (alreadyProcessed) {
-      return res.status(409).json({
-        error: 'Purchase transaction already processed'
+    // Deserialize the user-signed transaction
+    let transaction: Transaction;
+    try {
+      const txBuffer = Buffer.from(signedTransaction, 'base64');
+      transaction = Transaction.from(txBuffer);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid transaction format'
       });
     }
 
@@ -473,182 +504,270 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
       });
     }
 
-    // CRITICAL: Auto-cap re-validation - ensure purchase doesn't exceed available tokens
-    // Use database tokens_sold as a first check (fast)
-    const tokensRemainingDB = icoSale.total_tokens_for_sale - (icoSale.tokens_sold || BigInt(0));
-    const tokensBoughtBigInt = BigInt(tokensBought);
-
-    if (tokensBoughtBigInt > tokensRemainingDB) {
+    // CRITICAL: Verify sale is active (not finalized)
+    if (icoSale.status !== 'active') {
       return res.status(400).json({
-        error: `Purchase exceeds available tokens. Available: ${tokensRemainingDB}, Requested: ${tokensBoughtBigInt}`,
-        errorCode: 'EXCEEDS_AVAILABLE_TOKENS',
-        tokensAvailable: tokensRemainingDB.toString(),
-        tokensRequested: tokensBoughtBigInt.toString()
+        error: 'ICO sale is not active. Purchasing is only allowed during active sales.',
+        errorCode: 'SALE_NOT_ACTIVE',
+        currentStatus: icoSale.status
       });
     }
 
-    // SECURITY: First verify the transaction BEFORE querying blockchain
-    // This prevents wasting resources on invalid/malicious transactions
+    // SECURITY: Validate the user-signed transaction before adding escrow signature
     const connection = new Connection(RPC_URL, 'confirmed');
     const buyerPubKey = new PublicKey(wallet);
     const escrowPubKey = new PublicKey(icoSale.escrow_pub_key);
 
-    // Fetch and validate transaction from blockchain
+    // CRITICAL SECURITY: Verify the user signed the transaction
+    const userSignature = transaction.signatures.find(sig =>
+      sig.publicKey.equals(buyerPubKey)
+    );
+
+    if (!userSignature || !userSignature.signature) {
+      return res.status(400).json({
+        error: 'Transaction not signed by user wallet'
+      });
+    }
+
+    // CRITICAL SECURITY: Comprehensive transaction validation
+    // We must verify the transaction structure BEFORE adding escrow signature
+
+    // 1. Verify the transaction structure matches what we expect
+    // Should have exactly 2 instructions: SOL transfer + token transfer
+    const instructions = transaction.instructions;
+    if (instructions.length !== 2) {
+      return res.status(400).json({
+        error: `Invalid transaction: expected 2 instructions, got ${instructions.length}`
+      });
+    }
+
+    // 2. Verify fee payer is the buyer
+    if (!transaction.feePayer || !transaction.feePayer.equals(buyerPubKey)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: fee payer must be buyer wallet'
+      });
+    }
+
+    // 3. Verify only allowed programs are called
+    const allowedPrograms = new Set([
+      SystemProgram.programId.toBase58(), // For SOL transfer
+      TOKEN_PROGRAM_ID.toBase58(), // For token transfer
+    ]);
+
+    for (const instruction of instructions) {
+      if (!allowedPrograms.has(instruction.programId.toBase58())) {
+        console.error('[MALICIOUS PROGRAM DETECTED]', {
+          wallet,
+          tokenAddress,
+          maliciousProgramId: instruction.programId.toBase58(),
+        });
+        return res.status(400).json({
+          error: `Invalid transaction: unauthorized program called: ${instruction.programId.toBase58()}`
+        });
+      }
+    }
+
+    // 4. Verify instruction 1: SOL transfer from buyer to escrow
+    const solTransferIx = instructions[0];
+    if (!solTransferIx.programId.equals(SystemProgram.programId)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: first instruction must be System Program (SOL transfer)'
+      });
+    }
+
+    // Verify accounts in SOL transfer: [from, to]
+    if (solTransferIx.keys.length < 2) {
+      return res.status(400).json({
+        error: 'Invalid transaction: SOL transfer missing required accounts'
+      });
+    }
+
+    const from = solTransferIx.keys[0].pubkey;
+    const to = solTransferIx.keys[1].pubkey;
+
+    if (!from.equals(buyerPubKey)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: SOL must be sent FROM buyer wallet'
+      });
+    }
+
+    if (!to.equals(escrowPubKey)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: SOL must be sent TO escrow'
+      });
+    }
+
+    // Decode SOL transfer amount
+    const solTransferData = solTransferIx.data;
+    if (solTransferData.length !== 12) {
+      return res.status(400).json({
+        error: 'Invalid transaction: SOL transfer has invalid data length'
+      });
+    }
+
+    // System Program transfer instruction format: [4 byte instruction discriminator][8 byte amount]
+    const transferredLamports = solTransferData.readBigUInt64LE(4);
+    const expectedLamports = BigInt(solAmount);
+
+    if (transferredLamports !== expectedLamports) {
+      return res.status(400).json({
+        error: `Invalid transaction: SOL amount mismatch. Expected: ${expectedLamports}, Got: ${transferredLamports}`
+      });
+    }
+
+    // 5. Verify instruction 2: Token transfer from escrow to vault
+    const tokenTransferIx = instructions[1];
+    if (!tokenTransferIx.programId.equals(TOKEN_PROGRAM_ID)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: second instruction must be Token Program (token transfer)'
+      });
+    }
+
+    // Get vault token account (reusing variables declared below)
+    let tokenMint = new PublicKey(tokenAddress);
+    const vaultTokenAccount = new PublicKey(icoSale.vault_token_account!);
+    let escrowTokenAccount = await getAssociatedTokenAddress(tokenMint, escrowPubKey);
+
+    // Verify accounts in token transfer: [source, destination, authority]
+    if (tokenTransferIx.keys.length < 3) {
+      return res.status(400).json({
+        error: 'Invalid transaction: token transfer missing required accounts'
+      });
+    }
+
+    const tokenSource = tokenTransferIx.keys[0].pubkey;
+    const tokenDest = tokenTransferIx.keys[1].pubkey;
+    const tokenAuthority = tokenTransferIx.keys[2].pubkey;
+
+    if (!tokenSource.equals(escrowTokenAccount)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: tokens must be sent FROM escrow token account'
+      });
+    }
+
+    if (!tokenDest.equals(vaultTokenAccount)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: tokens must be sent TO vault'
+      });
+    }
+
+    if (!tokenAuthority.equals(escrowPubKey)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: token transfer authority must be escrow'
+      });
+    }
+
+    // Decode token transfer amount
+    const tokenTransferData = tokenTransferIx.data;
+    if (tokenTransferData.length !== 9) {
+      return res.status(400).json({
+        error: 'Invalid transaction: token transfer has invalid data length'
+      });
+    }
+
+    // Token Program transfer instruction format: [1 byte instruction discriminator][8 byte amount]
+    const transferredTokens = tokenTransferData.readBigUInt64LE(1);
+    const expectedTokens = BigInt(tokensToVault);
+
+    if (transferredTokens !== expectedTokens) {
+      return res.status(400).json({
+        error: `Invalid transaction: token amount mismatch. Expected: ${expectedTokens}, Got: ${transferredTokens}`
+      });
+    }
+
+    // CRITICAL OVERSELLING PROTECTION: Check tokens available BEFORE submitting transaction
+    const tokensBoughtBigInt = BigInt(tokensBought);
+    const dbTokensSold = icoSale.tokens_sold;
+    const dbTokensRemaining = icoSale.total_tokens_for_sale - dbTokensSold;
+
+    if (tokensBoughtBigInt > dbTokensRemaining) {
+      console.error('[PURCHASE EXCEEDS AVAILABLE]', {
+        tokenAddress,
+        wallet,
+        totalForSale: icoSale.total_tokens_for_sale.toString(),
+        alreadySold: dbTokensSold.toString(),
+        remaining: dbTokensRemaining.toString(),
+        attempted: tokensBoughtBigInt.toString(),
+      });
+
+      return res.status(400).json({
+        error: `Purchase amount exceeds available tokens. Available: ${dbTokensRemaining}, Requested: ${tokensBoughtBigInt}`,
+        errorCode: 'EXCEEDS_AVAILABLE_TOKENS',
+        tokensAvailable: dbTokensRemaining.toString(),
+        tokensRequested: tokensBoughtBigInt.toString()
+      });
+    }
+
+    // Add escrow signature to the transaction
+    if (!icoSale.escrow_priv_key) {
+      return res.status(500).json({
+        error: 'Escrow private key not configured'
+      });
+    }
+
+    const { decryptEscrowKeypair } = await import('../lib/presale-escrow');
+    const escrowKeypair = decryptEscrowKeypair(icoSale.escrow_priv_key);
+    transaction.partialSign(escrowKeypair);
+
+    // Get blockhash for confirmation
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+
+    // Submit transaction to blockchain
+    const rawTransaction = transaction.serialize();
+    let signature: string;
+    try {
+      signature = await connection.sendRawTransaction(rawTransaction, {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+    } catch (error: any) {
+      console.error('[TX_SUBMISSION_FAILED]', {
+        tokenAddress,
+        wallet,
+        error: error.message,
+      });
+      return res.status(500).json({
+        error: `Failed to submit transaction: ${error.message}`
+      });
+    }
+
+    // Wait for confirmation
+    try {
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      });
+    } catch (error: any) {
+      console.error('[TX_CONFIRMATION_FAILED]', {
+        tokenAddress,
+        wallet,
+        signature,
+        error: error.message,
+      });
+      return res.status(500).json({
+        error: `Transaction submitted but confirmation failed: ${signature}. ${error.message}`
+      });
+    }
+
+    // Verify transaction succeeded on-chain
     const txInfo = await connection.getTransaction(signature, {
       maxSupportedTransactionVersion: 0,
     });
 
     if (!txInfo) {
-      return res.status(404).json({
-        error: 'Transaction not found on-chain'
+      return res.status(500).json({
+        error: `Transaction confirmed but not found: ${signature}`
       });
     }
 
     if (txInfo.meta?.err) {
       return res.status(400).json({
-        error: 'Transaction failed on-chain'
+        error: `Transaction failed on-chain: ${JSON.stringify(txInfo.meta.err)}`
       });
     }
 
-    // CRITICAL SECURITY: Verify the buyer wallet signed the transaction
-    const signers = txInfo.transaction.message.getAccountKeys().staticAccountKeys;
-    const buyerIsSigner = signers.some(key => key.equals(buyerPubKey));
-
-    if (!buyerIsSigner) {
-      return res.status(400).json({
-        error: 'Buyer wallet did not sign the transaction'
-      });
-    }
-
-    // Verify SOL transfer to escrow
-    const preBalances = txInfo.meta?.preBalances || [];
-    const postBalances = txInfo.meta?.postBalances || [];
-
-    // Find escrow account index
-    let escrowIndex = -1;
-    for (let i = 0; i < signers.length; i++) {
-      if (signers[i].equals(escrowPubKey)) {
-        escrowIndex = i;
-        break;
-      }
-    }
-
-    if (escrowIndex === -1) {
-      return res.status(400).json({
-        error: 'Escrow address not found in transaction'
-      });
-    }
-
-    // Calculate actual SOL received by escrow (in lamports)
-    const escrowBalanceIncrease = postBalances[escrowIndex] - preBalances[escrowIndex];
-    const expectedAmount = BigInt(solAmount);
-
-    // SECURITY: Require exact match (SOL transfers don't have fees deducted from the transfer amount)
-    // The sender pays fees separately, so the escrow should receive exactly the claimed amount
-    if (BigInt(escrowBalanceIncrease) !== expectedAmount) {
-      return res.status(400).json({
-        error: `Transaction did not transfer the exact SOL amount. Expected: ${expectedAmount}, Got: ${escrowBalanceIncrease}`
-      });
-    }
-
-    // CRITICAL SECURITY: Verify the buyer wallet is the actual payer (balance decreased)
-    // This prevents attackers from stealing credit for someone else's purchase
-    let buyerIndex = -1;
-    let buyerBalanceDecrease = 0;
-    for (let i = 0; i < signers.length; i++) {
-      if (signers[i].equals(buyerPubKey)) {
-        buyerIndex = i;
-        const balanceChange = postBalances[i] - preBalances[i];
-        if (balanceChange < 0) {
-          buyerBalanceDecrease = Math.abs(balanceChange);
-        }
-        break;
-      }
-    }
-
-    if (buyerIndex === -1) {
-      return res.status(400).json({
-        error: 'Buyer wallet not found in transaction accounts'
-      });
-    }
-
-    // Verify the buyer's balance actually decreased (they paid for this)
-    // The decrease should be at least the expected amount (may be higher due to fees)
-    if (buyerBalanceDecrease < Number(expectedAmount)) {
-      return res.status(400).json({
-        error: `Buyer wallet did not pay for this purchase. Balance decrease: ${buyerBalanceDecrease}, Expected: ${expectedAmount}`
-      });
-    }
-
-    // CRITICAL OVERSELLING PROTECTION: Verify on-chain token balance
-    // The database is our best effort to track sales, but the blockchain is ground truth
-    // We verify the escrow has enough tokens to fulfill this purchase before recording it
-    const tokenMint = new PublicKey(tokenAddress);
-    const escrowTokenAccountAddress = await getAssociatedTokenAddress(tokenMint, escrowPubKey);
-    const escrowTokenAccount = await connection.getTokenAccountBalance(escrowTokenAccountAddress);
-    const escrowOnChainBalance = BigInt(escrowTokenAccount.value.amount);
-
-    // Get current vault balance to calculate total tokens already distributed
-    if (!icoSale.vault_token_account) {
-      return res.status(500).json({
-        error: 'Vault token account not configured'
-      });
-    }
-
-    const vaultTokenAccount = new PublicKey(icoSale.vault_token_account);
-    const vaultBalance = await connection.getTokenAccountBalance(vaultTokenAccount);
-    const tokensInVault = BigInt(vaultBalance.value.amount);
-
-    // Calculate how many tokens have been sold (2x vault balance, since 50% goes to vault)
-    // This is ground truth from the blockchain
-    const tokensSoldOnChain = tokensInVault * BigInt(2);
-
-    // Calculate remaining tokens for sale (on-chain ground truth)
-    const tokensRemainingOnChain = icoSale.total_tokens_for_sale - tokensSoldOnChain;
-
-    // CRITICAL: Verify this purchase doesn't exceed what's actually available on-chain
-    if (tokensBoughtBigInt > tokensRemainingOnChain) {
-      console.error('[OVERSELLING DETECTED]', {
-        tokenAddress,
-        totalForSale: icoSale.total_tokens_for_sale.toString(),
-        tokensInVault: tokensInVault.toString(),
-        tokensSoldOnChain: tokensSoldOnChain.toString(),
-        tokensRemainingOnChain: tokensRemainingOnChain.toString(),
-        tokensBoughtAttempted: tokensBoughtBigInt.toString(),
-        dbTokensSold: (icoSale.tokens_sold || BigInt(0)).toString(),
-        dbTokensRemaining: tokensRemainingDB.toString()
-      });
-
-      return res.status(400).json({
-        error: `OVERSELLING PROTECTION: On-chain verification failed. Available tokens: ${tokensRemainingOnChain}, Requested: ${tokensBoughtBigInt}`,
-        errorCode: 'OVERSELLING_DETECTED',
-        tokensAvailableOnChain: tokensRemainingOnChain.toString(),
-        tokensRequested: tokensBoughtBigInt.toString(),
-        message: 'The database was out of sync with blockchain. This purchase would have exceeded available tokens.'
-      });
-    }
-
-    // Additional safety check: Verify escrow has enough balance for all future claims
-    // escrowOnChainBalance should be >= all remaining claimable tokens (50% of remaining sale)
-    const totalClaimableRemaining = tokensRemainingOnChain / BigInt(2);
-
-    if (escrowOnChainBalance < totalClaimableRemaining) {
-      console.error('[INSUFFICIENT ESCROW BALANCE]', {
-        tokenAddress,
-        escrowBalance: escrowOnChainBalance.toString(),
-        totalClaimableRemaining: totalClaimableRemaining.toString(),
-        deficit: (totalClaimableRemaining - escrowOnChainBalance).toString()
-      });
-
-      return res.status(500).json({
-        error: 'Escrow has insufficient tokens to fulfill remaining claims',
-        errorCode: 'INSUFFICIENT_ESCROW_BALANCE',
-        escrowBalance: escrowOnChainBalance.toString(),
-        requiredBalance: totalClaimableRemaining.toString()
-      });
-    }
-
-    // Record purchase (database will do its best to stay in sync with blockchain)
+    // Record purchase in database
     await processPurchase({
       icoSaleId: parseInt(icoSaleId),
       walletAddress: wallet,
@@ -662,6 +781,7 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
     return res.json({
       success: true,
       message: 'Purchase recorded successfully',
+      signature,
     });
   } catch (error: any) {
     console.error('Error confirming purchase:', error);
@@ -728,7 +848,7 @@ router.get('/:tokenAddress/claim', async (req: Request, res: Response) => {
 
 /**
  * POST /ico/:tokenAddress/claim/prepare
- * Prepare claim transaction (server signs with escrow key)
+ * Prepare unsigned claim transaction for user to sign
  */
 router.post('/:tokenAddress/claim/prepare', async (req: Request, res: Response) => {
   let releaseLock: (() => void) | null = null;
@@ -765,20 +885,14 @@ router.post('/:tokenAddress/claim/prepare', async (req: Request, res: Response) 
       walletAddress: wallet,
     });
 
-    // Sign with escrow key
-    const signedTransaction = await signClaimTransaction({
-      tokenAddress,
-      transaction: result.transaction,
-    });
-
     // SECURITY: Set recent blockhash to prevent replay attacks
     const connection = new Connection(RPC_URL, 'confirmed');
     const { blockhash } = await connection.getLatestBlockhash('confirmed');
-    signedTransaction.recentBlockhash = blockhash;
-    signedTransaction.feePayer = new PublicKey(wallet);
+    result.transaction.recentBlockhash = blockhash;
+    result.transaction.feePayer = new PublicKey(wallet);
 
-    // Serialize for frontend
-    const serializedTx = signedTransaction.serialize({
+    // Serialize unsigned transaction for frontend
+    const serializedTx = result.transaction.serialize({
       requireAllSignatures: false,
       verifySignatures: false,
     });
@@ -787,6 +901,7 @@ router.post('/:tokenAddress/claim/prepare', async (req: Request, res: Response) 
       transaction: Buffer.from(serializedTx).toString('base64'),
       icoSaleId: result.icoSaleId,
       tokensToClaim: result.tokensToClaim.toString(),
+      escrowPubKey: result.escrowPubKey,
     });
   } catch (error: any) {
     console.error('Error preparing claim:', error);
@@ -803,16 +918,29 @@ router.post('/:tokenAddress/claim/prepare', async (req: Request, res: Response) 
 
 /**
  * POST /ico/:tokenAddress/claim/confirm
- * Confirm claim after user signs and submits transaction
+ * Confirm and process a claim after user signs the transaction
+ *
+ * FLOW:
+ * 1. User calls /prepare to get unsigned transaction
+ * 2. User signs transaction on frontend
+ * 3. User sends signed transaction to this endpoint (NOT to blockchain)
+ * 4. Server validates, adds escrow signature, and submits to blockchain
+ * 5. Server records claim in database
+ * 6. Returns transaction signature
  */
 router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) => {
   let releaseLock: (() => void) | null = null;
 
   try {
     const { tokenAddress } = req.params;
-    const { icoSaleId, wallet, tokensClaimed, signature } = req.body;
+    const {
+      icoSaleId,
+      wallet,
+      tokensClaimed,
+      signedTransaction, // User-signed transaction (base64)
+    } = req.body;
 
-    if (!icoSaleId || !wallet || !tokensClaimed || !signature) {
+    if (!icoSaleId || !wallet || !tokensClaimed || !signedTransaction) {
       return res.status(400).json({
         error: 'Missing required fields'
       });
@@ -831,22 +959,18 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
       });
     }
 
-    // Validate signature
-    if (!isValidTransactionSignature(signature)) {
+    // Deserialize the user-signed transaction
+    let transaction: Transaction;
+    try {
+      const txBuffer = Buffer.from(signedTransaction, 'base64');
+      transaction = Transaction.from(txBuffer);
+    } catch (error) {
       return res.status(400).json({
-        error: 'Invalid transaction signature format'
+        error: 'Invalid transaction format'
       });
     }
 
-    // FAIL-FAST: Check if signature already processed (before expensive operations)
-    const alreadyProcessed = await isClaimSignatureProcessed(signature);
-    if (alreadyProcessed) {
-      return res.status(409).json({
-        error: 'Claim transaction already processed'
-      });
-    }
-
-    // Acquire lock to prevent race conditions
+    // Acquire lock to prevent race conditions (CRITICAL for preventing duplicate processing)
     releaseLock = await acquireIcoClaimLock(tokenAddress);
 
     // Get ICO sale to verify escrow address
@@ -857,88 +981,217 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
       });
     }
 
-    // Verify transaction on-chain
+    // CRITICAL: Verify sale is finalized (not active)
+    if (icoSale.status !== 'finalized') {
+      return res.status(400).json({
+        error: 'ICO sale is not finalized. Claiming is only allowed after the sale is complete.',
+        errorCode: 'SALE_NOT_FINALIZED',
+        currentStatus: icoSale.status
+      });
+    }
+
+    // SECURITY: Validate the user-signed transaction before adding escrow signature
     const connection = new Connection(RPC_URL, 'confirmed');
+    const walletPubKey = new PublicKey(wallet);
+    const escrowPubKey = new PublicKey(icoSale.escrow_pub_key);
+
+    // CRITICAL SECURITY: Verify the user signed the transaction
+    const userSignature = transaction.signatures.find(sig =>
+      sig.publicKey.equals(walletPubKey)
+    );
+
+    if (!userSignature || !userSignature.signature) {
+      return res.status(400).json({
+        error: 'Transaction not signed by user wallet'
+      });
+    }
+
+    // CRITICAL SECURITY: Comprehensive transaction validation
+    // We must verify the transaction structure BEFORE adding escrow signature
+
+    // 1. Verify the transaction structure matches what we expect
+    // Should have 1 or 2 instructions: optional ATA creation + token transfer
+    const instructions = transaction.instructions;
+    if (instructions.length < 1 || instructions.length > 2) {
+      return res.status(400).json({
+        error: `Invalid transaction: expected 1-2 instructions, got ${instructions.length}`
+      });
+    }
+
+    // 2. Verify fee payer is the user
+    if (!transaction.feePayer || !transaction.feePayer.equals(walletPubKey)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: fee payer must be user wallet'
+      });
+    }
+
+    // 3. Verify only allowed programs are called
+    const allowedPrograms = new Set([
+      TOKEN_PROGRAM_ID.toBase58(), // For token transfer
+      ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(), // For ATA creation
+    ]);
+
+    for (const instruction of instructions) {
+      if (!allowedPrograms.has(instruction.programId.toBase58())) {
+        console.error('[MALICIOUS PROGRAM DETECTED]', {
+          wallet,
+          tokenAddress,
+          maliciousProgramId: instruction.programId.toBase58(),
+        });
+        return res.status(400).json({
+          error: `Invalid transaction: unauthorized program called: ${instruction.programId.toBase58()}`
+        });
+      }
+    }
+
+    // 4. Find the token transfer instruction (should be last)
+    const tokenTransferIx = instructions[instructions.length - 1];
+    if (!tokenTransferIx.programId.equals(TOKEN_PROGRAM_ID)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: last instruction must be Token Program (token transfer)'
+      });
+    }
+
+    // 5. Verify token transfer instruction structure
+    // Get escrow and user token accounts
+    const tokenMint = new PublicKey(tokenAddress);
+    const escrowTokenAccount = await getAssociatedTokenAddress(tokenMint, escrowPubKey);
+    const userTokenAccount = await getAssociatedTokenAddress(tokenMint, walletPubKey);
+
+    // Verify accounts in token transfer: [source, destination, authority]
+    if (tokenTransferIx.keys.length < 3) {
+      return res.status(400).json({
+        error: 'Invalid transaction: token transfer missing required accounts'
+      });
+    }
+
+    const tokenSource = tokenTransferIx.keys[0].pubkey;
+    const tokenDest = tokenTransferIx.keys[1].pubkey;
+    const tokenAuthority = tokenTransferIx.keys[2].pubkey;
+
+    if (!tokenSource.equals(escrowTokenAccount)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: tokens must be sent FROM escrow token account'
+      });
+    }
+
+    if (!tokenDest.equals(userTokenAccount)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: tokens must be sent TO user token account'
+      });
+    }
+
+    if (!tokenAuthority.equals(escrowPubKey)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: token transfer authority must be escrow'
+      });
+    }
+
+    // 6. Decode token transfer amount
+    const tokenTransferData = tokenTransferIx.data;
+    if (tokenTransferData.length !== 9) {
+      return res.status(400).json({
+        error: 'Invalid transaction: token transfer has invalid data length'
+      });
+    }
+
+    // Token Program transfer instruction format: [1 byte instruction discriminator][8 byte amount]
+    const transferredTokens = tokenTransferData.readBigUInt64LE(1);
+    const expectedTokens = BigInt(tokensClaimed);
+
+    if (transferredTokens !== expectedTokens) {
+      return res.status(400).json({
+        error: `Invalid transaction: token amount mismatch. Expected: ${expectedTokens}, Got: ${transferredTokens}`
+      });
+    }
+
+    // 7. Verify user has enough claimable tokens in database
+    const claimInfo = await getIcoClaimByWallet(tokenAddress, wallet);
+    if (!claimInfo) {
+      return res.status(400).json({
+        error: 'No claimable tokens found for this wallet'
+      });
+    }
+
+    const tokensClaimableBigInt = BigInt(tokensClaimed);
+    const tokensRemainingToClaim = (claimInfo.tokens_claimable || BigInt(0)) - claimInfo.tokens_claimed;
+
+    if (tokensClaimableBigInt > tokensRemainingToClaim) {
+      return res.status(400).json({
+        error: `Claim amount exceeds available tokens. Available: ${tokensRemainingToClaim}, Requested: ${tokensClaimableBigInt}`
+      });
+    }
+
+    // Add escrow signature to the transaction
+    if (!icoSale.escrow_priv_key) {
+      return res.status(500).json({
+        error: 'Escrow private key not configured'
+      });
+    }
+
+    const { decryptEscrowKeypair } = await import('../lib/presale-escrow');
+    const escrowKeypair = decryptEscrowKeypair(icoSale.escrow_priv_key);
+    transaction.partialSign(escrowKeypair);
+
+    // Get blockhash for confirmation
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+
+    // Submit transaction to blockchain
+    const rawTransaction = transaction.serialize();
+    let signature: string;
+    try {
+      signature = await connection.sendRawTransaction(rawTransaction, {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+    } catch (error: any) {
+      console.error('[TX_SUBMISSION_FAILED]', {
+        tokenAddress,
+        wallet,
+        error: error.message,
+      });
+      return res.status(500).json({
+        error: `Failed to submit transaction: ${error.message}`
+      });
+    }
+
+    // Wait for confirmation
+    try {
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      });
+    } catch (error: any) {
+      console.error('[TX_CONFIRMATION_FAILED]', {
+        tokenAddress,
+        wallet,
+        signature,
+        error: error.message,
+      });
+      return res.status(500).json({
+        error: `Transaction submitted but confirmation failed: ${signature}. ${error.message}`
+      });
+    }
+
+    // Verify transaction succeeded on-chain
     const txInfo = await connection.getTransaction(signature, {
       maxSupportedTransactionVersion: 0,
     });
 
     if (!txInfo) {
-      return res.status(404).json({
-        error: 'Transaction not found'
+      return res.status(500).json({
+        error: `Transaction confirmed but not found: ${signature}`
       });
     }
 
     if (txInfo.meta?.err) {
       return res.status(400).json({
-        error: 'Transaction failed on-chain'
+        error: `Transaction failed on-chain: ${JSON.stringify(txInfo.meta.err)}`
       });
     }
 
-    // CRITICAL SECURITY: Verify that the user wallet signed the transaction
-    // Note: For on-chain transactions, the blockchain has already validated signatures
-    // We verify the signer is in the transaction as a security check
-    const userPubKey = new PublicKey(wallet);
-    const escrowPubKey = new PublicKey(icoSale.escrow_pub_key);
-    const signers = txInfo.transaction.message.getAccountKeys().staticAccountKeys;
-    const userIsSigner = signers.some(key => key.equals(userPubKey));
-
-    if (!userIsSigner) {
-      return res.status(400).json({
-        error: 'Invalid transaction: user wallet did not sign the transaction'
-      });
-    }
-
-    // Verify escrow also signed (for token transfer authority)
-    const escrowIsSigner = signers.some(key => key.equals(escrowPubKey));
-    if (!escrowIsSigner) {
-      return res.status(400).json({
-        error: 'Invalid transaction: escrow did not sign the transaction'
-      });
-    }
-
-    // CRITICAL SECURITY: Validate token balance changes
-    // Since this is an on-chain transaction, we can validate the actual token balance changes
-    // This is more reliable than trying to parse versioned transaction instructions
-
-    // Verify the transaction involves token transfers (check for token balance changes)
-    const tokenBalances = txInfo.meta?.postTokenBalances || [];
-    const preTokenBalances = txInfo.meta?.preTokenBalances || [];
-
-    // Look for the token transfer to the user's specific account
-    let foundUserReceived = false;
-    const expectedClaimedAmount = BigInt(tokensClaimed);
-
-    for (const postBalance of tokenBalances) {
-      // Find matching pre-balance
-      const preBalance = preTokenBalances.find(
-        pb => pb.accountIndex === postBalance.accountIndex
-      );
-
-      if (postBalance.mint === tokenAddress) {
-        const postAmount = BigInt(postBalance.uiTokenAmount.amount);
-        const preAmount = preBalance ? BigInt(preBalance.uiTokenAmount.amount) : BigInt(0);
-        const received = postAmount - preAmount;
-
-        // CRITICAL: Verify this is the USER'S token account, not just any account
-        // Check if this is the user's associated token account by verifying the owner
-        if (received > 0 && postBalance.owner === wallet) {
-          // SECURITY: Require exact match to prevent rounding exploits
-          if (received === expectedClaimedAmount) {
-            foundUserReceived = true;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!foundUserReceived) {
-      return res.status(400).json({
-        error: 'Invalid transaction: user wallet did not receive the claimed tokens'
-      });
-    }
-
-    // Record claim
+    // Record claim in database
     await processClaim({
       icoSaleId: parseInt(icoSaleId),
       walletAddress: wallet,
@@ -949,6 +1202,7 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
     return res.json({
       success: true,
       message: 'Claim recorded successfully',
+      signature,
     });
   } catch (error: any) {
     console.error('Error confirming claim:', error);

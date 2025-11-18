@@ -70,10 +70,16 @@ export async function createIcoSale(
   }
 }
 
+// Helper type for ICO sales with guaranteed calculated fields
+export type IcoSaleWithStats = IcoSale & {
+  tokens_sold: bigint;  // Guaranteed by COALESCE in query
+  total_sol_raised: bigint;  // Guaranteed by COALESCE in query
+};
+
 export async function getIcoSaleByTokenAddress(
   pool: Pool,
   tokenAddress: string
-): Promise<IcoSale | null> {
+): Promise<IcoSaleWithStats | null> {
   const query = `
     SELECT
       s.*,
@@ -90,6 +96,17 @@ export async function getIcoSaleByTokenAddress(
     if (result.rows.length === 0) return null;
 
     const row = result.rows[0];
+
+    // Validate critical fields - these should never be null due to COALESCE
+    if (row.tokens_sold === null || row.tokens_sold === undefined) {
+      console.error('[getIcoSaleByTokenAddress] tokens_sold is null/undefined:', row);
+      throw new Error('Database query returned invalid tokens_sold value');
+    }
+    if (row.total_sol_raised === null || row.total_sol_raised === undefined) {
+      console.error('[getIcoSaleByTokenAddress] total_sol_raised is null/undefined:', row);
+      throw new Error('Database query returned invalid total_sol_raised value');
+    }
+
     return {
       ...row,
       total_tokens_for_sale: BigInt(row.total_tokens_for_sale),
@@ -106,7 +123,7 @@ export async function getIcoSaleByTokenAddress(
 export async function getIcoSaleById(
   pool: Pool,
   id: number
-): Promise<IcoSale | null> {
+): Promise<IcoSaleWithStats | null> {
   const query = `
     SELECT
       s.*,
@@ -123,6 +140,17 @@ export async function getIcoSaleById(
     if (result.rows.length === 0) return null;
 
     const row = result.rows[0];
+
+    // Validate critical fields - these should never be null due to COALESCE
+    if (row.tokens_sold === null || row.tokens_sold === undefined) {
+      console.error('[getIcoSaleById] tokens_sold is null/undefined:', row);
+      throw new Error('Database query returned invalid tokens_sold value');
+    }
+    if (row.total_sol_raised === null || row.total_sol_raised === undefined) {
+      console.error('[getIcoSaleById] total_sol_raised is null/undefined:', row);
+      throw new Error('Database query returned invalid total_sol_raised value');
+    }
+
     return {
       ...row,
       total_tokens_for_sale: BigInt(row.total_tokens_for_sale),

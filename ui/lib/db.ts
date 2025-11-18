@@ -1713,11 +1713,11 @@ export async function isClaimSignatureProcessed(signature: string): Promise<bool
   return icoModule.isClaimSignatureProcessed(getPool(), signature);
 }
 
-export async function getIcoSaleByTokenAddress(tokenAddress: string): Promise<IcoSale | null> {
+export async function getIcoSaleByTokenAddress(tokenAddress: string): Promise<icoModule.IcoSaleWithStats | null> {
   return icoModule.getIcoSaleByTokenAddress(getPool(), tokenAddress);
 }
 
-export async function getIcoSaleById(id: number): Promise<IcoSale | null> {
+export async function getIcoSaleById(id: number): Promise<icoModule.IcoSaleWithStats | null> {
   return icoModule.getIcoSaleById(getPool(), id);
 }
 
