@@ -119,6 +119,46 @@ async function acquireLiquidityLock(poolAddress: string): Promise<() => void> {
   };
 }
 
+/**
+ * Get the manager wallet address for a specific pool
+ * Supports per-pool manager wallets via environment variables
+ *
+ * Environment variable priority:
+ * 1. MANAGER_WALLET_<POOL_TICKER> - Pool-specific manager (e.g., MANAGER_WALLET_ZC)
+ * 2. MANAGER_WALLET - Default/fallback manager wallet
+ *
+ * @param poolAddress - The DAMM pool address
+ * @returns Manager wallet public key string
+ */
+function getManagerWalletForPool(poolAddress: string): string {
+  // Pool address to ticker mapping (from whitelist config)
+  const poolToTicker: Record<string, string> = {
+    'CCZdbVvDqPN8DmMLVELfnt9G1Q9pQNt3bTGifSpUY9Ad': 'ZC',
+    '2FCqTyvFcE4uXgRL1yh56riZ9vdjVgoP6yknZW3f8afX': 'OOGWAY',
+  };
+
+  // Get ticker for this pool
+  const ticker = poolToTicker[poolAddress];
+
+  // Try pool-specific manager wallet first
+  if (ticker) {
+    const poolSpecificManager = process.env[`MANAGER_WALLET_${ticker}`];
+    if (poolSpecificManager) {
+      console.log(`Using pool-specific manager for ${ticker}:`, poolSpecificManager);
+      return poolSpecificManager;
+    }
+  }
+
+  // Fallback to default manager wallet
+  const defaultManager = process.env.MANAGER_WALLET;
+  if (!defaultManager) {
+    throw new Error('MANAGER_WALLET environment variable not configured');
+  }
+
+  console.log(`Using default manager wallet:`, defaultManager);
+  return defaultManager;
+}
+
 // Clean up expired requests every 5 minutes
 setInterval(() => {
   const FIFTEEN_MINUTES = 15 * 60 * 1000;
@@ -143,14 +183,25 @@ setInterval(() => {
 
 router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: Response) => {
   try {
-    const { withdrawalPercentage } = req.body;
+    const { withdrawalPercentage, poolAddress: poolAddressInput } = req.body;
 
-    console.log('DAMM withdraw build request received:', { withdrawalPercentage });
+    console.log('DAMM withdraw build request received:', { withdrawalPercentage, poolAddress: poolAddressInput });
 
     // Validate required fields
     if (withdrawalPercentage === undefined || withdrawalPercentage === null) {
       return res.status(400).json({
         error: 'Missing required field: withdrawalPercentage'
+      });
+    }
+
+    // Validate poolAddress is a valid Solana public key (default to main pool if not provided)
+    const DEFAULT_POOL_ADDRESS = 'CCZdbVvDqPN8DmMLVELfnt9G1Q9pQNt3bTGifSpUY9Ad';
+    let poolAddress: PublicKey;
+    try {
+      poolAddress = new PublicKey(poolAddressInput || DEFAULT_POOL_ADDRESS);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid poolAddress: must be a valid Solana public key'
       });
     }
 
@@ -163,11 +214,10 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
 
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    const LIQUIDITY_POOL_ADDRESS = process.env.LIQUIDITY_POOL_ADDRESS;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
     const MANAGER_WALLET = process.env.MANAGER_WALLET;
 
-    if (!RPC_URL || !LIQUIDITY_POOL_ADDRESS || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
       return res.status(500).json({
         error: 'Server configuration incomplete. Missing required environment variables.'
       });
@@ -176,7 +226,6 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
     // Initialize connection and keypairs
     const connection = new Connection(RPC_URL, 'confirmed');
     const lpOwner = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const poolAddress = new PublicKey(LIQUIDITY_POOL_ADDRESS);
     const managerWallet = new PublicKey(MANAGER_WALLET);
 
     // Create CpAmm instance and get pool state
@@ -449,12 +498,13 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
 // ============================================================================
 /**
  * Security measures:
- * 1. Lock system - Prevents concurrent operations for the same pool
- * 2. Blockhash validation - Prevents replay attacks
- * 3. Transaction structure validation - Prevents malicious instruction injection
- * 4. Manager wallet signature verification - ONLY manager wallet can submit
- * 5. Request expiry - 10 minute timeout
- * 6. Comprehensive logging
+ * 1. Authority wallet signature - Transaction must be signed by pool's authority wallet (only percent backend has keys)
+ * 2. Lock system - Prevents concurrent operations for the same pool
+ * 3. Request expiry - 10 minute timeout
+ * 4. Blockhash validation - Prevents replay attacks
+ * 5. Comprehensive logging
+ *
+ * Note: User authorization (attestation & whitelist) validated in percent backend before calling this endpoint.
  */
 
 router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res: Response) => {
@@ -498,11 +548,21 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
     // Validate environment
     const RPC_URL = process.env.RPC_URL;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-    const MANAGER_WALLET = process.env.MANAGER_WALLET;
 
-    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY) {
       return res.status(500).json({
         error: 'Server configuration incomplete'
+      });
+    }
+
+    // Get pool-specific manager wallet
+    let MANAGER_WALLET: string;
+    try {
+      MANAGER_WALLET = getManagerWalletForPool(withdrawData.poolAddress);
+    } catch (error) {
+      return res.status(500).json({
+        error: 'Manager wallet configuration error',
+        details: error instanceof Error ? error.message : String(error)
       });
     }
 
@@ -829,14 +889,25 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
 
 router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Response) => {
   try {
-    const { tokenAAmount, tokenBAmount } = req.body;
+    const { tokenAAmount, tokenBAmount, poolAddress: poolAddressInput } = req.body;
 
-    console.log('DAMM deposit build request received:', { tokenAAmount, tokenBAmount });
+    console.log('DAMM deposit build request received:', { tokenAAmount, tokenBAmount, poolAddress: poolAddressInput });
 
     // Validate required fields
     if (tokenAAmount === undefined || tokenBAmount === undefined) {
       return res.status(400).json({
         error: 'Missing required fields: tokenAAmount and tokenBAmount'
+      });
+    }
+
+    // Validate poolAddress is a valid Solana public key (default to main pool if not provided)
+    const DEFAULT_POOL_ADDRESS = 'CCZdbVvDqPN8DmMLVELfnt9G1Q9pQNt3bTGifSpUY9Ad';
+    let poolAddress: PublicKey;
+    try {
+      poolAddress = new PublicKey(poolAddressInput || DEFAULT_POOL_ADDRESS);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid poolAddress: must be a valid Solana public key'
       });
     }
 
@@ -855,11 +926,10 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
 
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    const LIQUIDITY_POOL_ADDRESS = process.env.LIQUIDITY_POOL_ADDRESS;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
     const MANAGER_WALLET = process.env.MANAGER_WALLET;
 
-    if (!RPC_URL || !LIQUIDITY_POOL_ADDRESS || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
       return res.status(500).json({
         error: 'Server configuration incomplete. Missing required environment variables.'
       });
@@ -868,7 +938,6 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
     // Initialize connection and keypairs
     const connection = new Connection(RPC_URL, 'confirmed');
     const lpOwner = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const poolAddress = new PublicKey(LIQUIDITY_POOL_ADDRESS);
     const managerWallet = new PublicKey(MANAGER_WALLET);
 
     // Create CpAmm instance and get pool state
@@ -1103,16 +1172,14 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
 // ============================================================================
 /**
  * Security measures:
- * 1. Lock system - Prevents concurrent operations for the same pool
- * 2. Transaction hash comparison - Detects any tampering with unsigned transaction
- * 3. Blockhash validation - Prevents replay attacks
- * 4. Transaction structure validation - Prevents malicious instruction injection
- *    - Manager transfers: Must go to LP owner only
- *    - LP owner transfers: Must go to pool vaults only (CRITICAL: prevents fund drainage)
- *    - Transfer amounts validated against expected maximums
- * 5. Manager wallet signature verification - ONLY manager wallet can submit
- * 6. Request expiry - 10 minute timeout
- * 7. Comprehensive logging - All security validations logged
+ * 1. Authority wallet signature - Transaction must be signed by pool's authority wallet (only percent backend has keys)
+ * 2. Lock system - Prevents concurrent operations for the same pool
+ * 3. Request expiry - 10 minute timeout
+ * 4. Blockhash validation - Prevents replay attacks
+ * 5. Transaction structure validation - Prevents malicious instruction injection
+ * 6. Comprehensive logging
+ *
+ * Note: User authorization (attestation & whitelist) validated in percent backend before calling this endpoint.
  */
 
 router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: Response) => {
@@ -1157,11 +1224,21 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
     // Validate environment
     const RPC_URL = process.env.RPC_URL;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-    const MANAGER_WALLET = process.env.MANAGER_WALLET;
 
-    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY) {
       return res.status(500).json({
         error: 'Server configuration incomplete'
+      });
+    }
+
+    // Get pool-specific manager wallet
+    let MANAGER_WALLET: string;
+    try {
+      MANAGER_WALLET = getManagerWalletForPool(depositData.poolAddress);
+    } catch (error) {
+      return res.status(500).json({
+        error: 'Manager wallet configuration error',
+        details: error instanceof Error ? error.message : String(error)
       });
     }
 
@@ -1456,13 +1533,25 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
 
           // SECURITY: Validate destination based on sender
           if (from.equals(managerAddress)) {
-            // Manager can only send to LP owner
-            if (!to.equals(lpOwnerAddress)) {
+            // Manager can send to LP owner OR to their own WSOL account (for wrapping)
+            const managerWsolAta = await getAssociatedTokenAddress(
+              NATIVE_MINT,
+              managerAddress,
+              false,
+              TOKEN_PROGRAM_ID
+            );
+
+            const validDestinations = [
+              lpOwnerAddress.toBase58(),
+              managerWsolAta.toBase58()  // Allow WSOL wrapping for Meteora SDK
+            ];
+
+            if (!validDestinations.includes(to.toBase58())) {
               console.log(`  ⚠️  VALIDATION FAILED: Unauthorized manager SOL transfer in instruction ${i}`);
               console.log(`    To: ${to.toBase58()}`);
-              console.log(`    Expected: ${lpOwnerAddress.toBase58()} (LP owner)`);
+              console.log(`    Valid destinations: ${validDestinations.join(', ')}`);
               return res.status(400).json({
-                error: 'Invalid transaction: manager SOL transfer must be to LP owner',
+                error: 'Invalid transaction: manager SOL transfer must be to LP owner or WSOL account',
                 details: `Instruction ${i} to mismatch`
               });
             }
