@@ -163,6 +163,7 @@ async function testDammDepositApi() {
       body: JSON.stringify({
         signedTransaction,
         requestId: buildData.requestId,
+        creatorWallet: managerKeypair.publicKey.toBase58(),
       }),
     });
 

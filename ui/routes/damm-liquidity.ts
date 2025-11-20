@@ -33,6 +33,7 @@ import bs58 from 'bs58';
 import BN from 'bn.js';
 import { CpAmm, getTokenProgram } from '@meteora-ag/cp-amm-sdk';
 import rateLimit from 'express-rate-limit';
+import { isWalletAuthorizedForPool } from '../lib/whitelist';
 
 /**
  * DAMM Liquidity Routes
@@ -116,6 +117,46 @@ async function acquireLiquidityLock(poolAddress: string): Promise<() => void> {
     liquidityLocks.delete(key);
     releaseLock!();
   };
+}
+
+/**
+ * Get the manager wallet address for a specific pool
+ * Supports per-pool manager wallets via environment variables
+ *
+ * Environment variable priority:
+ * 1. MANAGER_WALLET_<POOL_TICKER> - Pool-specific manager (e.g., MANAGER_WALLET_ZC)
+ * 2. MANAGER_WALLET - Default/fallback manager wallet
+ *
+ * @param poolAddress - The DAMM pool address
+ * @returns Manager wallet public key string
+ */
+function getManagerWalletForPool(poolAddress: string): string {
+  // Pool address to ticker mapping (from whitelist config)
+  const poolToTicker: Record<string, string> = {
+    'CCZdbVvDqPN8DmMLVELfnt9G1Q9pQNt3bTGifSpUY9Ad': 'ZC',
+    '2FCqTyvFcE4uXgRL1yh56riZ9vdjVgoP6yknZW3f8afX': 'OOGWAY',
+  };
+
+  // Get ticker for this pool
+  const ticker = poolToTicker[poolAddress];
+
+  // Try pool-specific manager wallet first
+  if (ticker) {
+    const poolSpecificManager = process.env[`MANAGER_WALLET_${ticker}`];
+    if (poolSpecificManager) {
+      console.log(`Using pool-specific manager for ${ticker}:`, poolSpecificManager);
+      return poolSpecificManager;
+    }
+  }
+
+  // Fallback to default manager wallet
+  const defaultManager = process.env.MANAGER_WALLET;
+  if (!defaultManager) {
+    throw new Error('MANAGER_WALLET environment variable not configured');
+  }
+
+  console.log(`Using default manager wallet:`, defaultManager);
+  return defaultManager;
 }
 
 // Clean up expired requests every 5 minutes
@@ -463,14 +504,27 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
   let releaseLock: (() => void) | null = null;
 
   try {
-    const { signedTransaction, requestId } = req.body;
+    const { signedTransaction, requestId, creatorWallet, creatorSignature, attestationMessage } = req.body;
 
-    console.log('DAMM withdraw confirm request received:', { requestId });
+    console.log('DAMM withdraw confirm request received:', { requestId, creatorWallet });
 
     // Validate required fields
     if (!signedTransaction || !requestId) {
       return res.status(400).json({
         error: 'Missing required fields: signedTransaction and requestId'
+      });
+    }
+
+    if (!creatorWallet) {
+      return res.status(400).json({
+        error: 'Missing required field: creatorWallet'
+      });
+    }
+
+    // Validate attestation fields (user authorization proof)
+    if (!creatorSignature || !attestationMessage) {
+      return res.status(400).json({
+        error: 'Missing required attestation fields: creatorSignature and attestationMessage'
       });
     }
 
@@ -483,6 +537,68 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
     }
 
     console.log('  Pool:', withdrawData.poolAddress);
+
+    // SECURITY: Validate user attestation (proves user authorized the withdrawal)
+    let attestation: { action: string; poolAddress: string; timestamp: number; nonce: string };
+    try {
+      attestation = JSON.parse(attestationMessage);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid attestation format: must be valid JSON'
+      });
+    }
+
+    // Verify attestation timestamp (5-minute window to prevent replay attacks)
+    const FIVE_MINUTES = 5 * 60 * 1000;
+    if (Math.abs(Date.now() - attestation.timestamp) > FIVE_MINUTES) {
+      return res.status(400).json({
+        error: 'Attestation expired: timestamp outside 5-minute window'
+      });
+    }
+
+    // Verify attestation action matches withdrawal
+    if (attestation.action !== 'withdraw') {
+      return res.status(400).json({
+        error: 'Invalid attestation: action must be "withdraw"'
+      });
+    }
+
+    // Verify attestation pool address matches request
+    if (attestation.poolAddress !== withdrawData.poolAddress) {
+      return res.status(400).json({
+        error: 'Attestation pool address mismatch'
+      });
+    }
+
+    // SECURITY: Verify creator signature on attestation message
+    const messageBytes = new TextEncoder().encode(attestationMessage);
+    const signatureBytes = bs58.decode(creatorSignature);
+    const creatorPubKey = new PublicKey(creatorWallet);
+
+    const isCreatorSigValid = nacl.sign.detached.verify(
+      messageBytes,
+      signatureBytes,
+      creatorPubKey.toBytes()
+    );
+
+    if (!isCreatorSigValid) {
+      console.warn('Invalid creator signature on attestation:', { creatorWallet, poolAddress: withdrawData.poolAddress });
+      return res.status(403).json({
+        error: 'Invalid creator signature: attestation verification failed'
+      });
+    }
+
+    console.log('  Attestation verified:', { action: attestation.action, poolAddress: attestation.poolAddress });
+
+    // Whitelist validation: Check if the creator wallet is authorized for this pool
+    if (!isWalletAuthorizedForPool(creatorWallet, withdrawData.poolAddress)) {
+      console.warn('Unauthorized withdrawal confirm attempt:', { creatorWallet, poolAddress: withdrawData.poolAddress });
+      return res.status(403).json({
+        error: 'Wallet not authorized for this pool',
+        wallet: creatorWallet,
+        pool: withdrawData.poolAddress
+      });
+    }
 
     // Acquire lock
     releaseLock = await acquireLiquidityLock(withdrawData.poolAddress);
@@ -500,11 +616,21 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
     // Validate environment
     const RPC_URL = process.env.RPC_URL;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-    const MANAGER_WALLET = process.env.MANAGER_WALLET;
 
-    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY) {
       return res.status(500).json({
         error: 'Server configuration incomplete'
+      });
+    }
+
+    // Get pool-specific manager wallet
+    let MANAGER_WALLET: string;
+    try {
+      MANAGER_WALLET = getManagerWalletForPool(withdrawData.poolAddress);
+    } catch (error) {
+      return res.status(500).json({
+        error: 'Manager wallet configuration error',
+        details: error instanceof Error ? error.message : String(error)
       });
     }
 
@@ -1114,14 +1240,20 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
   let releaseLock: (() => void) | null = null;
 
   try {
-    const { signedTransaction, requestId } = req.body;
+    const { signedTransaction, requestId, creatorWallet } = req.body;
 
-    console.log('DAMM deposit confirm request received:', { requestId });
+    console.log('DAMM deposit confirm request received:', { requestId, creatorWallet });
 
     // Validate required fields
     if (!signedTransaction || !requestId) {
       return res.status(400).json({
         error: 'Missing required fields: signedTransaction and requestId'
+      });
+    }
+
+    if (!creatorWallet) {
+      return res.status(400).json({
+        error: 'Missing required field: creatorWallet'
       });
     }
 
@@ -1135,6 +1267,16 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
 
     console.log('  Pool:', depositData.poolAddress);
     console.log('  Manager:', depositData.managerAddress);
+
+    // Whitelist validation: Check if the creator wallet is authorized for this pool
+    if (!isWalletAuthorizedForPool(creatorWallet, depositData.poolAddress)) {
+      console.warn('Unauthorized deposit confirm attempt:', { creatorWallet, poolAddress: depositData.poolAddress });
+      return res.status(403).json({
+        error: 'Wallet not authorized for this pool',
+        wallet: creatorWallet,
+        pool: depositData.poolAddress
+      });
+    }
 
     // Acquire lock
     releaseLock = await acquireLiquidityLock(depositData.poolAddress);
@@ -1152,11 +1294,21 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
     // Validate environment
     const RPC_URL = process.env.RPC_URL;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-    const MANAGER_WALLET = process.env.MANAGER_WALLET;
 
-    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY) {
       return res.status(500).json({
         error: 'Server configuration incomplete'
+      });
+    }
+
+    // Get pool-specific manager wallet
+    let MANAGER_WALLET: string;
+    try {
+      MANAGER_WALLET = getManagerWalletForPool(depositData.poolAddress);
+    } catch (error) {
+      return res.status(500).json({
+        error: 'Manager wallet configuration error',
+        details: error instanceof Error ? error.message : String(error)
       });
     }
 
@@ -1451,13 +1603,25 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
 
           // SECURITY: Validate destination based on sender
           if (from.equals(managerAddress)) {
-            // Manager can only send to LP owner
-            if (!to.equals(lpOwnerAddress)) {
+            // Manager can send to LP owner OR to their own WSOL account (for wrapping)
+            const managerWsolAta = await getAssociatedTokenAddress(
+              NATIVE_MINT,
+              managerAddress,
+              false,
+              TOKEN_PROGRAM_ID
+            );
+
+            const validDestinations = [
+              lpOwnerAddress.toBase58(),
+              managerWsolAta.toBase58()  // Allow WSOL wrapping for Meteora SDK
+            ];
+
+            if (!validDestinations.includes(to.toBase58())) {
               console.log(`  ⚠️  VALIDATION FAILED: Unauthorized manager SOL transfer in instruction ${i}`);
               console.log(`    To: ${to.toBase58()}`);
-              console.log(`    Expected: ${lpOwnerAddress.toBase58()} (LP owner)`);
+              console.log(`    Valid destinations: ${validDestinations.join(', ')}`);
               return res.status(400).json({
-                error: 'Invalid transaction: manager SOL transfer must be to LP owner',
+                error: 'Invalid transaction: manager SOL transfer must be to LP owner or WSOL account',
                 details: `Instruction ${i} to mismatch`
               });
             }

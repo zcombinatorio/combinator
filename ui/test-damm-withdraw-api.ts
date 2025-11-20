@@ -14,6 +14,8 @@
 import dotenv from 'dotenv';
 import { Keypair, Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
+import nacl from 'tweetnacl';
+import * as crypto from 'crypto';
 
 dotenv.config();
 
@@ -145,12 +147,37 @@ async function testDammWithdrawApi() {
 
     console.log('  ✅ Transaction signed successfully');
     console.log('');
-    // process.exit(0);
 
     // ========================================================================
-    // Step 3: Confirm withdrawal transaction
+    // Step 3: Create and sign attestation
     // ========================================================================
-    console.log('📤 Step 3: Confirming withdrawal transaction...');
+    console.log('✍️  Step 3: Creating attestation for withdrawal...');
+
+    // Create attestation message
+    const attestation = {
+      action: 'withdraw',
+      poolAddress: buildData.poolAddress,
+      timestamp: Date.now(),
+      nonce: crypto.randomBytes(16).toString('hex')
+    };
+
+    const attestationMessage = JSON.stringify(attestation);
+
+    // Sign attestation with manager keypair
+    const messageBytes = new TextEncoder().encode(attestationMessage);
+    const signature = nacl.sign.detached(messageBytes, managerKeypair.secretKey);
+    const creatorSignature = bs58.encode(signature);
+
+    console.log('  ✅ Attestation created and signed');
+    console.log(`  Creator:              ${managerKeypair.publicKey.toBase58()}`);
+    console.log(`  Action:               ${attestation.action}`);
+    console.log(`  Pool:                 ${attestation.poolAddress}`);
+    console.log('');
+
+    // ========================================================================
+    // Step 4: Confirm withdrawal transaction
+    // ========================================================================
+    console.log('📤 Step 4: Confirming withdrawal transaction...');
 
     const confirmResponse = await fetch(`${API_URL}/damm/withdraw/confirm`, {
       method: 'POST',
@@ -160,6 +187,9 @@ async function testDammWithdrawApi() {
       body: JSON.stringify({
         signedTransaction,
         requestId: buildData.requestId,
+        creatorWallet: managerKeypair.publicKey.toBase58(),
+        creatorSignature,
+        attestationMessage,
       }),
     });
 
