@@ -56,6 +56,7 @@ const dammLiquidityLimiter = rateLimit({
 // Maps requestId -> transaction data
 interface DammWithdrawData {
   unsignedTransaction: string;
+  unsignedTransactionHash: string;
   poolAddress: string;
   tokenAMint: string;
   tokenBMint: string;
@@ -384,6 +385,11 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
     // Serialize unsigned transaction
     const unsignedTransaction = bs58.encode(combinedTx.serialize({ requireAllSignatures: false }));
 
+    // Compute hash of unsigned transaction for integrity verification
+    const unsignedTransactionHash = crypto.createHash('sha256')
+      .update(combinedTx.serializeMessage())
+      .digest('hex');
+
     // Generate unique request ID
     const requestId = crypto.randomBytes(16).toString('hex');
 
@@ -398,6 +404,7 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
     // Store transaction data
     withdrawRequests.set(requestId, {
       unsignedTransaction,
+      unsignedTransactionHash,
       poolAddress: poolAddress.toBase58(),
       tokenAMint: poolState.tokenAMint.toBase58(),
       tokenBMint: poolState.tokenBMint.toBase58(),
@@ -570,6 +577,22 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
         error: 'Transaction verification failed: Invalid manager wallet signature'
       });
     }
+
+    // SECURITY: Verify transaction hasn't been tampered with
+    const receivedTransactionHash = crypto.createHash('sha256')
+      .update(transaction.serializeMessage())
+      .digest('hex');
+
+    if (receivedTransactionHash !== withdrawData.unsignedTransactionHash) {
+      console.log(`  ⚠️  Transaction hash mismatch detected`);
+      console.log(`    Expected: ${withdrawData.unsignedTransactionHash.substring(0, 16)}...`);
+      console.log(`    Received: ${receivedTransactionHash.substring(0, 16)}...`);
+      return res.status(400).json({
+        error: 'Transaction verification failed: transaction has been modified',
+        details: 'Transaction structure does not match the original unsigned transaction'
+      });
+    }
+    console.log(`  ✓ Transaction integrity verified`);
 
     // Validate transaction structure
     console.log(`  Validating transaction structure (${transaction.instructions.length} instructions)...`);
