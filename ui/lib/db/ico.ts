@@ -34,12 +34,13 @@ export async function createIcoSale(
       token_metadata_url,
       total_tokens_for_sale,
       token_price_sol,
+      token_decimals,
       escrow_pub_key,
       escrow_priv_key,
       vault_token_account,
       treasury_wallet,
       treasury_sol_amount
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     RETURNING *
   `;
 
@@ -49,6 +50,7 @@ export async function createIcoSale(
     sale.token_metadata_url,
     sale.total_tokens_for_sale.toString(),
     sale.token_price_sol,
+    sale.token_decimals,
     sale.escrow_pub_key || null,
     sale.escrow_priv_key || null,
     sale.vault_token_account || null,

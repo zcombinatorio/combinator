@@ -185,6 +185,7 @@ export interface IcoSale {
   token_metadata_url: string;
   total_tokens_for_sale: bigint; // Total tokens for sale
   token_price_sol: string; // Price per token in SOL (e.g., "0.00001428571")
+  token_decimals: number; // Token decimals (e.g., 9 for most SPL tokens)
   tokens_sold?: bigint; // Calculated from purchases (not stored in DB)
   total_sol_raised?: bigint; // Calculated from purchases in lamports (not stored in DB)
   status: 'active' | 'finalized'; // active -> finalized (when sold out, claiming enabled)

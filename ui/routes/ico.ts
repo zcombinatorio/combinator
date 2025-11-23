@@ -17,9 +17,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { Connection, PublicKey, Transaction, SystemProgram, ComputeBudgetProgram } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from '@solana/spl-token';
+import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import * as nacl from 'tweetnacl';
+import * as crypto from 'crypto';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import {
   createNewIcoSale,
@@ -32,14 +32,11 @@ import {
 } from '../lib/icoService';
 import {
   getIcoSaleByTokenAddress,
-  isPurchaseSignatureProcessed,
   getIcoClaimByWallet,
-  getPool,
 } from '../lib/db';
 import {
   isValidSolanaAddress,
   isValidTokenAddress,
-  isValidTransactionSignature,
   isValidLamportsAmount,
 } from '../lib/validation';
 import {
@@ -105,6 +102,36 @@ const router = Router();
 
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
 
+// In-memory storage for ICO transactions
+// Maps requestId -> transaction data
+interface IcoPurchaseData {
+  unsignedTransaction: string;
+  unsignedTransactionHash: string;
+  tokenAddress: string;
+  icoSaleId: number;
+  buyerWallet: string;
+  solAmountLamports: string;
+  tokensBought: string;
+  tokensToVault: string;
+  tokensClaimable: string;
+  escrowPubKey: string;
+  timestamp: number;
+}
+
+interface IcoClaimData {
+  unsignedTransaction: string;
+  unsignedTransactionHash: string;
+  tokenAddress: string;
+  icoSaleId: number;
+  walletAddress: string;
+  tokensToClaim: string;
+  escrowPubKey: string;
+  timestamp: number;
+}
+
+const purchaseRequests = new Map<string, IcoPurchaseData>();
+const claimRequests = new Map<string, IcoClaimData>();
+
 // ICO rate limiter
 const icoLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
@@ -125,6 +152,24 @@ router.use(icoLimiter);
 
 // Start transaction cleanup
 startIcoTransactionCleanup();
+
+// Clean up expired requests every 5 minutes
+setInterval(() => {
+  const FIFTEEN_MINUTES = 15 * 60 * 1000;
+  const now = Date.now();
+
+  for (const [requestId, data] of purchaseRequests.entries()) {
+    if (now - data.timestamp > FIFTEEN_MINUTES) {
+      purchaseRequests.delete(requestId);
+    }
+  }
+
+  for (const [requestId, data] of claimRequests.entries()) {
+    if (now - data.timestamp > FIFTEEN_MINUTES) {
+      claimRequests.delete(requestId);
+    }
+  }
+}, 5 * 60 * 1000);
 
 /**
  * POST /ico/create
@@ -418,14 +463,39 @@ router.post('/:tokenAddress/purchase/prepare', async (req: Request, res: Respons
     result.transaction.recentBlockhash = blockhash;
     result.transaction.feePayer = new PublicKey(wallet);
 
+    // Compute hash of unsigned transaction for integrity verification
+    const unsignedTransactionHash = crypto.createHash('sha256')
+      .update(result.transaction.serializeMessage())
+      .digest('hex');
+
     // Serialize transaction
     const serializedTx = result.transaction.serialize({
       requireAllSignatures: false,
       verifySignatures: false,
     });
+    const unsignedTransaction = Buffer.from(serializedTx).toString('base64');
+
+    // Generate unique request ID
+    const requestId = crypto.randomBytes(16).toString('hex');
+
+    // Store transaction data
+    purchaseRequests.set(requestId, {
+      unsignedTransaction,
+      unsignedTransactionHash,
+      tokenAddress,
+      icoSaleId: result.icoSaleId,
+      buyerWallet: wallet,
+      solAmountLamports: result.actualSolAmount.toString(),
+      tokensBought: result.tokensBought.toString(),
+      tokensToVault: result.tokensToVault.toString(),
+      tokensClaimable: result.tokensClaimable.toString(),
+      escrowPubKey: result.escrowPubKey,
+      timestamp: Date.now()
+    });
 
     return res.json({
-      transaction: Buffer.from(serializedTx).toString('base64'),
+      transaction: unsignedTransaction,
+      requestId,
       icoSaleId: result.icoSaleId,
       tokensBought: result.tokensBought.toString(),
       tokensToVault: result.tokensToVault.toString(),
@@ -454,8 +524,8 @@ router.post('/:tokenAddress/purchase/prepare', async (req: Request, res: Respons
  * 1. User calls /prepare to get unsigned transaction
  * 2. User signs transaction on frontend
  * 3. User sends signed transaction to this endpoint (NOT to blockchain)
- * 4. Server validates, adds escrow signature, and submits to blockchain
- * 5. Server records purchase in database
+ * 4. Server validates signature and hash, adds escrow signature, and submits to blockchain
+ * 5. Server records purchase in database using stored data
  * 6. Returns transaction signature
  */
 router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Response) => {
@@ -480,39 +550,42 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
     }
 
     const { tokenAddress } = req.params;
-    const {
-      icoSaleId,
-      wallet,
-      solAmount,
-      tokensBought,
-      tokensToVault,
-      tokensClaimable,
-      signedTransaction, // User-signed transaction (base64)
-    } = req.body;
+    const { signedTransaction, requestId } = req.body;
 
-    if (!icoSaleId || !wallet || !solAmount || !tokensBought || !tokensToVault || !tokensClaimable || !signedTransaction) {
+    if (!signedTransaction || !requestId) {
       return res.status(400).json({
-        error: 'Missing required fields'
+        error: 'Missing required fields: signedTransaction and requestId'
       });
     }
 
-    // Validate addresses
+    // Validate token address
     if (!isValidTokenAddress(tokenAddress)) {
       return res.status(400).json({
         error: 'Invalid token address format'
       });
     }
 
-    if (!isValidSolanaAddress(wallet)) {
+    // Retrieve request data
+    const purchaseData = purchaseRequests.get(requestId);
+    if (!purchaseData) {
       return res.status(400).json({
-        error: 'Invalid wallet address format'
+        error: 'Purchase request not found or expired. Please call /purchase/prepare first.'
       });
     }
 
-    // Validate amounts
-    if (!isValidLamportsAmount(solAmount)) {
+    // Verify token address matches
+    if (purchaseData.tokenAddress !== tokenAddress) {
       return res.status(400).json({
-        error: 'Invalid SOL amount'
+        error: 'Token address mismatch'
+      });
+    }
+
+    // Check request age
+    const TEN_MINUTES = 10 * 60 * 1000;
+    if (Date.now() - purchaseData.timestamp > TEN_MINUTES) {
+      purchaseRequests.delete(requestId);
+      return res.status(400).json({
+        error: 'Purchase request expired. Please create a new request.'
       });
     }
 
@@ -530,7 +603,7 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
     // Acquire lock to prevent race conditions (CRITICAL for preventing duplicate processing)
     releaseLock = await acquireIcoPurchaseLock(tokenAddress);
 
-    // Get ICO sale to verify escrow address
+    // Get ICO sale to verify escrow address and status
     const icoSale = await getIcoSaleByTokenAddress(tokenAddress);
     if (!icoSale || !icoSale.escrow_pub_key) {
       return res.status(404).json({
@@ -547,12 +620,36 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
       });
     }
 
-    // SECURITY: Validate the user-signed transaction before adding escrow signature
+    // SECURITY: Validate the user-signed transaction
     const connection = new Connection(RPC_URL, 'confirmed');
-    const buyerPubKey = new PublicKey(wallet);
-    const escrowPubKey = new PublicKey(icoSale.escrow_pub_key);
+    const buyerPubKey = new PublicKey(purchaseData.buyerWallet);
 
-    // CRITICAL SECURITY: Verify the user signed the transaction
+    // SECURITY: Validate blockhash
+    if (!transaction.recentBlockhash) {
+      return res.status(400).json({
+        error: 'Invalid transaction: missing blockhash'
+      });
+    }
+
+    const isBlockhashValid = await connection.isBlockhashValid(
+      transaction.recentBlockhash,
+      { commitment: 'confirmed' }
+    );
+
+    if (!isBlockhashValid.value) {
+      return res.status(400).json({
+        error: 'Invalid transaction: blockhash is expired. Please create a new transaction.'
+      });
+    }
+
+    // SECURITY: Verify fee payer is the buyer
+    if (!transaction.feePayer || !transaction.feePayer.equals(buyerPubKey)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: fee payer must be buyer wallet'
+      });
+    }
+
+    // SECURITY: Verify the user signed the transaction
     const userSignature = transaction.signatures.find(sig =>
       sig.publicKey.equals(buyerPubKey)
     );
@@ -563,161 +660,48 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
       });
     }
 
-    // CRITICAL SECURITY: Comprehensive transaction validation
-    // We must verify the transaction structure BEFORE adding escrow signature
+    // Verify user signature is valid
+    const messageData = transaction.serializeMessage();
+    const userSigValid = nacl.sign.detached.verify(
+      messageData,
+      userSignature.signature,
+      userSignature.publicKey.toBytes()
+    );
 
-    // 1. Verify the transaction structure matches what we expect
-    // Should have exactly 2 instructions: SOL transfer + token transfer
-    const instructions = transaction.instructions;
-    if (instructions.length !== 2) {
+    if (!userSigValid) {
       return res.status(400).json({
-        error: `Invalid transaction: expected 2 instructions, got ${instructions.length}`
+        error: 'Transaction verification failed: Invalid user wallet signature'
       });
     }
 
-    // 2. Verify fee payer is the buyer
-    if (!transaction.feePayer || !transaction.feePayer.equals(buyerPubKey)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: fee payer must be buyer wallet'
+    // SECURITY: Verify transaction hasn't been tampered with
+    const receivedTransactionHash = crypto.createHash('sha256')
+      .update(transaction.serializeMessage())
+      .digest('hex');
+
+    if (receivedTransactionHash !== purchaseData.unsignedTransactionHash) {
+      console.error('[TRANSACTION TAMPERED]', {
+        tokenAddress,
+        wallet: purchaseData.buyerWallet,
+        requestId,
+        expectedHash: purchaseData.unsignedTransactionHash.substring(0, 16),
+        receivedHash: receivedTransactionHash.substring(0, 16)
       });
-    }
-
-    // 3. Verify only allowed programs are called
-    const allowedPrograms = new Set([
-      SystemProgram.programId.toBase58(), // For SOL transfer
-      TOKEN_PROGRAM_ID.toBase58(), // For token transfer
-    ]);
-
-    for (const instruction of instructions) {
-      if (!allowedPrograms.has(instruction.programId.toBase58())) {
-        console.error('[MALICIOUS PROGRAM DETECTED]', {
-          wallet,
-          tokenAddress,
-          maliciousProgramId: instruction.programId.toBase58(),
-        });
-        return res.status(400).json({
-          error: `Invalid transaction: unauthorized program called: ${instruction.programId.toBase58()}`
-        });
-      }
-    }
-
-    // 4. Verify instruction 1: SOL transfer from buyer to escrow
-    const solTransferIx = instructions[0];
-    if (!solTransferIx.programId.equals(SystemProgram.programId)) {
       return res.status(400).json({
-        error: 'Invalid transaction: first instruction must be System Program (SOL transfer)'
-      });
-    }
-
-    // Verify accounts in SOL transfer: [from, to]
-    if (solTransferIx.keys.length < 2) {
-      return res.status(400).json({
-        error: 'Invalid transaction: SOL transfer missing required accounts'
-      });
-    }
-
-    const from = solTransferIx.keys[0].pubkey;
-    const to = solTransferIx.keys[1].pubkey;
-
-    if (!from.equals(buyerPubKey)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: SOL must be sent FROM buyer wallet'
-      });
-    }
-
-    if (!to.equals(escrowPubKey)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: SOL must be sent TO escrow'
-      });
-    }
-
-    // Decode SOL transfer amount
-    const solTransferData = solTransferIx.data;
-    if (solTransferData.length !== 12) {
-      return res.status(400).json({
-        error: 'Invalid transaction: SOL transfer has invalid data length'
-      });
-    }
-
-    // System Program transfer instruction format: [4 byte instruction discriminator][8 byte amount]
-    const transferredLamports = solTransferData.readBigUInt64LE(4);
-    const expectedLamports = BigInt(solAmount);
-
-    if (transferredLamports !== expectedLamports) {
-      return res.status(400).json({
-        error: `Invalid transaction: SOL amount mismatch. Expected: ${expectedLamports}, Got: ${transferredLamports}`
-      });
-    }
-
-    // 5. Verify instruction 2: Token transfer from escrow to vault
-    const tokenTransferIx = instructions[1];
-    if (!tokenTransferIx.programId.equals(TOKEN_PROGRAM_ID)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: second instruction must be Token Program (token transfer)'
-      });
-    }
-
-    // Get vault token account (reusing variables declared below)
-    let tokenMint = new PublicKey(tokenAddress);
-    const vaultTokenAccount = new PublicKey(icoSale.vault_token_account!);
-    let escrowTokenAccount = await getAssociatedTokenAddress(tokenMint, escrowPubKey);
-
-    // Verify accounts in token transfer: [source, destination, authority]
-    if (tokenTransferIx.keys.length < 3) {
-      return res.status(400).json({
-        error: 'Invalid transaction: token transfer missing required accounts'
-      });
-    }
-
-    const tokenSource = tokenTransferIx.keys[0].pubkey;
-    const tokenDest = tokenTransferIx.keys[1].pubkey;
-    const tokenAuthority = tokenTransferIx.keys[2].pubkey;
-
-    if (!tokenSource.equals(escrowTokenAccount)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: tokens must be sent FROM escrow token account'
-      });
-    }
-
-    if (!tokenDest.equals(vaultTokenAccount)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: tokens must be sent TO vault'
-      });
-    }
-
-    if (!tokenAuthority.equals(escrowPubKey)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: token transfer authority must be escrow'
-      });
-    }
-
-    // Decode token transfer amount
-    const tokenTransferData = tokenTransferIx.data;
-    if (tokenTransferData.length !== 9) {
-      return res.status(400).json({
-        error: 'Invalid transaction: token transfer has invalid data length'
-      });
-    }
-
-    // Token Program transfer instruction format: [1 byte instruction discriminator][8 byte amount]
-    const transferredTokens = tokenTransferData.readBigUInt64LE(1);
-    const expectedTokens = BigInt(tokensToVault);
-
-    if (transferredTokens !== expectedTokens) {
-      return res.status(400).json({
-        error: `Invalid transaction: token amount mismatch. Expected: ${expectedTokens}, Got: ${transferredTokens}`
+        error: 'Transaction verification failed: transaction has been modified',
+        details: 'Transaction structure does not match the original unsigned transaction'
       });
     }
 
     // CRITICAL OVERSELLING PROTECTION: Check tokens available BEFORE submitting transaction
-    const tokensBoughtBigInt = BigInt(tokensBought);
+    const tokensBoughtBigInt = BigInt(purchaseData.tokensBought);
     const dbTokensSold = icoSale.tokens_sold;
     const dbTokensRemaining = icoSale.total_tokens_for_sale - dbTokensSold;
 
     if (tokensBoughtBigInt > dbTokensRemaining) {
       console.error('[PURCHASE EXCEEDS AVAILABLE]', {
         tokenAddress,
-        wallet,
+        wallet: purchaseData.buyerWallet,
         totalForSale: icoSale.total_tokens_for_sale.toString(),
         alreadySold: dbTokensSold.toString(),
         remaining: dbTokensRemaining.toString(),
@@ -757,7 +741,7 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
     } catch (error: any) {
       console.error('[TX_SUBMISSION_FAILED]', {
         tokenAddress,
-        wallet,
+        wallet: purchaseData.buyerWallet,
         error: error.message,
       });
       return res.status(500).json({
@@ -775,7 +759,7 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
     } catch (error: any) {
       console.error('[TX_CONFIRMATION_FAILED]', {
         tokenAddress,
-        wallet,
+        wallet: purchaseData.buyerWallet,
         signature,
         error: error.message,
       });
@@ -801,21 +785,28 @@ router.post('/:tokenAddress/purchase/confirm', async (req: Request, res: Respons
       });
     }
 
-    // Record purchase in database
+    // Record purchase in database using stored data (NOT client data)
     await processPurchase({
-      icoSaleId: parseInt(icoSaleId),
-      walletAddress: wallet,
-      solAmountLamports: BigInt(solAmount),
-      tokensBought: BigInt(tokensBought),
-      tokensToVault: BigInt(tokensToVault),
-      tokensClaimable: BigInt(tokensClaimable),
+      icoSaleId: purchaseData.icoSaleId,
+      walletAddress: purchaseData.buyerWallet,
+      solAmountLamports: BigInt(purchaseData.solAmountLamports),
+      tokensBought: BigInt(purchaseData.tokensBought),
+      tokensToVault: BigInt(purchaseData.tokensToVault),
+      tokensClaimable: BigInt(purchaseData.tokensClaimable),
       transactionSignature: signature,
     });
+
+    // Store tokensToVault before cleanup for response
+    const tokensToVault = purchaseData.tokensToVault;
+
+    // Clean up
+    purchaseRequests.delete(requestId);
 
     return res.json({
       success: true,
       message: 'Purchase recorded successfully',
       signature,
+      tokensToVault, // NEW: Return this so bangit-backend can update staked tokens
     });
   } catch (error: any) {
     console.error('Error confirming purchase:', error);
@@ -930,14 +921,36 @@ router.post('/:tokenAddress/claim/prepare', async (req: Request, res: Response) 
     result.transaction.recentBlockhash = blockhash;
     result.transaction.feePayer = new PublicKey(wallet);
 
+    // Compute hash of unsigned transaction for integrity verification
+    const unsignedTransactionHash = crypto.createHash('sha256')
+      .update(result.transaction.serializeMessage())
+      .digest('hex');
+
     // Serialize unsigned transaction for frontend
     const serializedTx = result.transaction.serialize({
       requireAllSignatures: false,
       verifySignatures: false,
     });
+    const unsignedTransaction = Buffer.from(serializedTx).toString('base64');
+
+    // Generate unique request ID
+    const requestId = crypto.randomBytes(16).toString('hex');
+
+    // Store transaction data
+    claimRequests.set(requestId, {
+      unsignedTransaction,
+      unsignedTransactionHash,
+      tokenAddress,
+      icoSaleId: result.icoSaleId,
+      walletAddress: wallet,
+      tokensToClaim: result.tokensToClaim.toString(),
+      escrowPubKey: result.escrowPubKey,
+      timestamp: Date.now()
+    });
 
     return res.json({
-      transaction: Buffer.from(serializedTx).toString('base64'),
+      transaction: unsignedTransaction,
+      requestId,
       icoSaleId: result.icoSaleId,
       tokensToClaim: result.tokensToClaim.toString(),
       escrowPubKey: result.escrowPubKey,
@@ -963,8 +976,8 @@ router.post('/:tokenAddress/claim/prepare', async (req: Request, res: Response) 
  * 1. User calls /prepare to get unsigned transaction
  * 2. User signs transaction on frontend
  * 3. User sends signed transaction to this endpoint (NOT to blockchain)
- * 4. Server validates, adds escrow signature, and submits to blockchain
- * 5. Server records claim in database
+ * 4. Server validates signature and hash, adds escrow signature, and submits to blockchain
+ * 5. Server records claim in database using stored data
  * 6. Returns transaction signature
  */
 router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) => {
@@ -972,29 +985,42 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
 
   try {
     const { tokenAddress } = req.params;
-    const {
-      icoSaleId,
-      wallet,
-      tokensClaimed,
-      signedTransaction, // User-signed transaction (base64)
-    } = req.body;
+    const { signedTransaction, requestId } = req.body;
 
-    if (!icoSaleId || !wallet || !tokensClaimed || !signedTransaction) {
+    if (!signedTransaction || !requestId) {
       return res.status(400).json({
-        error: 'Missing required fields'
+        error: 'Missing required fields: signedTransaction and requestId'
       });
     }
 
-    // Validate addresses
+    // Validate token address
     if (!isValidTokenAddress(tokenAddress)) {
       return res.status(400).json({
         error: 'Invalid token address format'
       });
     }
 
-    if (!isValidSolanaAddress(wallet)) {
+    // Retrieve request data
+    const claimData = claimRequests.get(requestId);
+    if (!claimData) {
       return res.status(400).json({
-        error: 'Invalid wallet address format'
+        error: 'Claim request not found or expired. Please call /claim/prepare first.'
+      });
+    }
+
+    // Verify token address matches
+    if (claimData.tokenAddress !== tokenAddress) {
+      return res.status(400).json({
+        error: 'Token address mismatch'
+      });
+    }
+
+    // Check request age
+    const TEN_MINUTES = 10 * 60 * 1000;
+    if (Date.now() - claimData.timestamp > TEN_MINUTES) {
+      claimRequests.delete(requestId);
+      return res.status(400).json({
+        error: 'Claim request expired. Please create a new request.'
       });
     }
 
@@ -1012,7 +1038,7 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
     // Acquire lock to prevent race conditions (CRITICAL for preventing duplicate processing)
     releaseLock = await acquireIcoClaimLock(tokenAddress);
 
-    // Get ICO sale to verify escrow address
+    // Get ICO sale to verify escrow address and status
     const icoSale = await getIcoSaleByTokenAddress(tokenAddress);
     if (!icoSale || !icoSale.escrow_pub_key) {
       return res.status(404).json({
@@ -1029,12 +1055,36 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
       });
     }
 
-    // SECURITY: Validate the user-signed transaction before adding escrow signature
+    // SECURITY: Validate the user-signed transaction
     const connection = new Connection(RPC_URL, 'confirmed');
-    const walletPubKey = new PublicKey(wallet);
-    const escrowPubKey = new PublicKey(icoSale.escrow_pub_key);
+    const walletPubKey = new PublicKey(claimData.walletAddress);
 
-    // CRITICAL SECURITY: Verify the user signed the transaction
+    // SECURITY: Validate blockhash
+    if (!transaction.recentBlockhash) {
+      return res.status(400).json({
+        error: 'Invalid transaction: missing blockhash'
+      });
+    }
+
+    const isBlockhashValid = await connection.isBlockhashValid(
+      transaction.recentBlockhash,
+      { commitment: 'confirmed' }
+    );
+
+    if (!isBlockhashValid.value) {
+      return res.status(400).json({
+        error: 'Invalid transaction: blockhash is expired. Please create a new transaction.'
+      });
+    }
+
+    // SECURITY: Verify fee payer is the user
+    if (!transaction.feePayer || !transaction.feePayer.equals(walletPubKey)) {
+      return res.status(400).json({
+        error: 'Invalid transaction: fee payer must be user wallet'
+      });
+    }
+
+    // SECURITY: Verify the user signed the transaction
     const userSignature = transaction.signatures.find(sig =>
       sig.publicKey.equals(walletPubKey)
     );
@@ -1045,114 +1095,48 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
       });
     }
 
-    // CRITICAL SECURITY: Comprehensive transaction validation
-    // We must verify the transaction structure BEFORE adding escrow signature
+    // Verify user signature is valid
+    const messageData = transaction.serializeMessage();
+    const userSigValid = nacl.sign.detached.verify(
+      messageData,
+      userSignature.signature,
+      userSignature.publicKey.toBytes()
+    );
 
-    // 1. Verify the transaction structure matches what we expect
-    // Should have 1 or 2 instructions: optional ATA creation + token transfer
-    const instructions = transaction.instructions;
-    if (instructions.length < 1 || instructions.length > 2) {
+    if (!userSigValid) {
       return res.status(400).json({
-        error: `Invalid transaction: expected 1-2 instructions, got ${instructions.length}`
+        error: 'Transaction verification failed: Invalid user wallet signature'
       });
     }
 
-    // 2. Verify fee payer is the user
-    if (!transaction.feePayer || !transaction.feePayer.equals(walletPubKey)) {
+    // SECURITY: Verify transaction hasn't been tampered with
+    const receivedTransactionHash = crypto.createHash('sha256')
+      .update(transaction.serializeMessage())
+      .digest('hex');
+
+    if (receivedTransactionHash !== claimData.unsignedTransactionHash) {
+      console.error('[TRANSACTION TAMPERED]', {
+        tokenAddress,
+        wallet: claimData.walletAddress,
+        requestId,
+        expectedHash: claimData.unsignedTransactionHash.substring(0, 16),
+        receivedHash: receivedTransactionHash.substring(0, 16)
+      });
       return res.status(400).json({
-        error: 'Invalid transaction: fee payer must be user wallet'
+        error: 'Transaction verification failed: transaction has been modified',
+        details: 'Transaction structure does not match the original unsigned transaction'
       });
     }
 
-    // 3. Verify only allowed programs are called
-    const allowedPrograms = new Set([
-      TOKEN_PROGRAM_ID.toBase58(), // For token transfer
-      ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(), // For ATA creation
-    ]);
-
-    for (const instruction of instructions) {
-      if (!allowedPrograms.has(instruction.programId.toBase58())) {
-        console.error('[MALICIOUS PROGRAM DETECTED]', {
-          wallet,
-          tokenAddress,
-          maliciousProgramId: instruction.programId.toBase58(),
-        });
-        return res.status(400).json({
-          error: `Invalid transaction: unauthorized program called: ${instruction.programId.toBase58()}`
-        });
-      }
-    }
-
-    // 4. Find the token transfer instruction (should be last)
-    const tokenTransferIx = instructions[instructions.length - 1];
-    if (!tokenTransferIx.programId.equals(TOKEN_PROGRAM_ID)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: last instruction must be Token Program (token transfer)'
-      });
-    }
-
-    // 5. Verify token transfer instruction structure
-    // Get escrow and user token accounts
-    const tokenMint = new PublicKey(tokenAddress);
-    const escrowTokenAccount = await getAssociatedTokenAddress(tokenMint, escrowPubKey);
-    const userTokenAccount = await getAssociatedTokenAddress(tokenMint, walletPubKey);
-
-    // Verify accounts in token transfer: [source, destination, authority]
-    if (tokenTransferIx.keys.length < 3) {
-      return res.status(400).json({
-        error: 'Invalid transaction: token transfer missing required accounts'
-      });
-    }
-
-    const tokenSource = tokenTransferIx.keys[0].pubkey;
-    const tokenDest = tokenTransferIx.keys[1].pubkey;
-    const tokenAuthority = tokenTransferIx.keys[2].pubkey;
-
-    if (!tokenSource.equals(escrowTokenAccount)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: tokens must be sent FROM escrow token account'
-      });
-    }
-
-    if (!tokenDest.equals(userTokenAccount)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: tokens must be sent TO user token account'
-      });
-    }
-
-    if (!tokenAuthority.equals(escrowPubKey)) {
-      return res.status(400).json({
-        error: 'Invalid transaction: token transfer authority must be escrow'
-      });
-    }
-
-    // 6. Decode token transfer amount
-    const tokenTransferData = tokenTransferIx.data;
-    if (tokenTransferData.length !== 9) {
-      return res.status(400).json({
-        error: 'Invalid transaction: token transfer has invalid data length'
-      });
-    }
-
-    // Token Program transfer instruction format: [1 byte instruction discriminator][8 byte amount]
-    const transferredTokens = tokenTransferData.readBigUInt64LE(1);
-    const expectedTokens = BigInt(tokensClaimed);
-
-    if (transferredTokens !== expectedTokens) {
-      return res.status(400).json({
-        error: `Invalid transaction: token amount mismatch. Expected: ${expectedTokens}, Got: ${transferredTokens}`
-      });
-    }
-
-    // 7. Verify user has enough claimable tokens in database
-    const claimInfo = await getIcoClaimByWallet(tokenAddress, wallet);
+    // Verify user has enough claimable tokens in database
+    const claimInfo = await getIcoClaimByWallet(tokenAddress, claimData.walletAddress);
     if (!claimInfo) {
       return res.status(400).json({
         error: 'No claimable tokens found for this wallet'
       });
     }
 
-    const tokensClaimableBigInt = BigInt(tokensClaimed);
+    const tokensClaimableBigInt = BigInt(claimData.tokensToClaim);
     const tokensRemainingToClaim = (claimInfo.tokens_claimable || BigInt(0)) - claimInfo.tokens_claimed;
 
     if (tokensClaimableBigInt > tokensRemainingToClaim) {
@@ -1186,7 +1170,7 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
     } catch (error: any) {
       console.error('[TX_SUBMISSION_FAILED]', {
         tokenAddress,
-        wallet,
+        wallet: claimData.walletAddress,
         error: error.message,
       });
       return res.status(500).json({
@@ -1204,7 +1188,7 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
     } catch (error: any) {
       console.error('[TX_CONFIRMATION_FAILED]', {
         tokenAddress,
-        wallet,
+        wallet: claimData.walletAddress,
         signature,
         error: error.message,
       });
@@ -1230,13 +1214,16 @@ router.post('/:tokenAddress/claim/confirm', async (req: Request, res: Response) 
       });
     }
 
-    // Record claim in database
+    // Record claim in database using stored data (NOT client data)
     await processClaim({
-      icoSaleId: parseInt(icoSaleId),
-      walletAddress: wallet,
-      tokensClaimed: BigInt(tokensClaimed),
+      icoSaleId: claimData.icoSaleId,
+      walletAddress: claimData.walletAddress,
+      tokensClaimed: BigInt(claimData.tokensToClaim),
       claimSignature: signature,
     });
+
+    // Clean up
+    claimRequests.delete(requestId);
 
     return res.json({
       success: true,

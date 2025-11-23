@@ -111,6 +111,13 @@ export async function createNewIcoSale(params: {
   treasuryWallet: string;
   treasurySolAmount: bigint; // Portion for treasury in lamports
 }): Promise<IcoSale> {
+  const connection = new Connection(RPC_URL, 'confirmed');
+
+  // Fetch token decimals from on-chain mint data
+  const tokenMint = new PublicKey(params.tokenAddress);
+  const mintInfo = await getMint(connection, tokenMint);
+  const tokenDecimals = mintInfo.decimals;
+
   // Calculate total SOL that will be raised
   const priceFloat = parseFloat(params.tokenPriceSol);
   const totalSolLamports = BigInt(Math.floor(priceFloat * Number(params.totalTokensForSale) * 1_000_000_000));
@@ -132,6 +139,7 @@ export async function createNewIcoSale(params: {
     token_metadata_url: params.tokenMetadataUrl,
     total_tokens_for_sale: params.totalTokensForSale,
     token_price_sol: params.tokenPriceSol,
+    token_decimals: tokenDecimals,
     escrow_pub_key: escrowPubKey,
     escrow_priv_key: escrowPrivKey,
     vault_token_account: params.vaultTokenAccount,
