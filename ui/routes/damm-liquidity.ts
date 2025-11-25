@@ -117,6 +117,12 @@ async function acquireLiquidityLock(poolAddress: string): Promise<() => void> {
   };
 }
 
+// Pool address to ticker mapping (shared config)
+const poolToTicker: Record<string, string> = {
+  'CCZdbVvDqPN8DmMLVELfnt9G1Q9pQNt3bTGifSpUY9Ad': 'ZC',
+  '2FCqTyvFcE4uXgRL1yh56riZ9vdjVgoP6yknZW3f8afX': 'OOGWAY',
+};
+
 /**
  * Get the manager wallet address for a specific pool
  * Supports per-pool manager wallets via environment variables
@@ -129,12 +135,6 @@ async function acquireLiquidityLock(poolAddress: string): Promise<() => void> {
  * @returns Manager wallet public key string
  */
 function getManagerWalletForPool(poolAddress: string): string {
-  // Pool address to ticker mapping (from whitelist config)
-  const poolToTicker: Record<string, string> = {
-    'CCZdbVvDqPN8DmMLVELfnt9G1Q9pQNt3bTGifSpUY9Ad': 'ZC',
-    '2FCqTyvFcE4uXgRL1yh56riZ9vdjVgoP6yknZW3f8afX': 'OOGWAY',
-  };
-
   // Get ticker for this pool
   const ticker = poolToTicker[poolAddress];
 
@@ -155,6 +155,41 @@ function getManagerWalletForPool(poolAddress: string): string {
 
   console.log(`Using default manager wallet:`, defaultManager);
   return defaultManager;
+}
+
+/**
+ * Get the LP owner private key for a specific pool
+ * Supports per-pool LP owners via environment variables
+ *
+ * Environment variable priority:
+ * 1. LP_OWNER_PRIVATE_KEY_<POOL_TICKER> - Pool-specific LP owner (e.g., LP_OWNER_PRIVATE_KEY_ZC)
+ * 2. LP_OWNER_PRIVATE_KEY - Default LP owner
+ * 3. PROTOCOL_PRIVATE_KEY - Legacy fallback
+ *
+ * @param poolAddress - The DAMM pool address
+ * @returns LP owner private key (base58 encoded)
+ */
+function getLpOwnerPrivateKeyForPool(poolAddress: string): string {
+  // Get ticker for this pool
+  const ticker = poolToTicker[poolAddress];
+
+  // Try pool-specific LP owner first
+  if (ticker) {
+    const poolSpecificLpOwner = process.env[`LP_OWNER_PRIVATE_KEY_${ticker}`];
+    if (poolSpecificLpOwner) {
+      console.log(`Using pool-specific LP owner for ${ticker}`);
+      return poolSpecificLpOwner;
+    }
+  }
+
+  // Fallback to default LP owner
+  const defaultLpOwner = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+  if (!defaultLpOwner) {
+    throw new Error('LP_OWNER_PRIVATE_KEY environment variable not configured');
+  }
+
+  console.log(`Using default LP owner`);
+  return defaultLpOwner;
 }
 
 // Clean up expired requests every 5 minutes
@@ -212,12 +247,22 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
 
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-    const MANAGER_WALLET = process.env.MANAGER_WALLET;
-
-    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL) {
       return res.status(500).json({
-        error: 'Server configuration incomplete. Missing required environment variables.'
+        error: 'Server configuration incomplete. Missing RPC_URL.'
+      });
+    }
+
+    // Get pool-specific LP owner and manager wallet
+    let LP_OWNER_PRIVATE_KEY: string;
+    let MANAGER_WALLET: string;
+    try {
+      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(poolAddress.toBase58());
+      MANAGER_WALLET = getManagerWalletForPool(poolAddress.toBase58());
+    } catch (error) {
+      return res.status(500).json({
+        error: 'Server configuration incomplete',
+        details: error instanceof Error ? error.message : String(error)
       });
     }
 
@@ -545,21 +590,21 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
 
     // Validate environment
     const RPC_URL = process.env.RPC_URL;
-    const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-
-    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY) {
+    if (!RPC_URL) {
       return res.status(500).json({
-        error: 'Server configuration incomplete'
+        error: 'Server configuration incomplete. Missing RPC_URL.'
       });
     }
 
-    // Get pool-specific manager wallet
+    // Get pool-specific LP owner and manager wallet
+    let LP_OWNER_PRIVATE_KEY: string;
     let MANAGER_WALLET: string;
     try {
+      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(withdrawData.poolAddress);
       MANAGER_WALLET = getManagerWalletForPool(withdrawData.poolAddress);
     } catch (error) {
       return res.status(500).json({
-        error: 'Manager wallet configuration error',
+        error: 'Server configuration incomplete',
         details: error instanceof Error ? error.message : String(error)
       });
     }
@@ -754,12 +799,22 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
 
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-    const MANAGER_WALLET = process.env.MANAGER_WALLET;
-
-    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY || !MANAGER_WALLET) {
+    if (!RPC_URL) {
       return res.status(500).json({
-        error: 'Server configuration incomplete. Missing required environment variables.'
+        error: 'Server configuration incomplete. Missing RPC_URL.'
+      });
+    }
+
+    // Get pool-specific LP owner and manager wallet
+    let LP_OWNER_PRIVATE_KEY: string;
+    let MANAGER_WALLET: string;
+    try {
+      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(poolAddress.toBase58());
+      MANAGER_WALLET = getManagerWalletForPool(poolAddress.toBase58());
+    } catch (error) {
+      return res.status(500).json({
+        error: 'Server configuration incomplete',
+        details: error instanceof Error ? error.message : String(error)
       });
     }
 
@@ -1051,21 +1106,21 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
 
     // Validate environment
     const RPC_URL = process.env.RPC_URL;
-    const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-
-    if (!RPC_URL || !LP_OWNER_PRIVATE_KEY) {
+    if (!RPC_URL) {
       return res.status(500).json({
-        error: 'Server configuration incomplete'
+        error: 'Server configuration incomplete. Missing RPC_URL.'
       });
     }
 
-    // Get pool-specific manager wallet
+    // Get pool-specific LP owner and manager wallet
+    let LP_OWNER_PRIVATE_KEY: string;
     let MANAGER_WALLET: string;
     try {
+      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(depositData.poolAddress);
       MANAGER_WALLET = getManagerWalletForPool(depositData.poolAddress);
     } catch (error) {
       return res.status(500).json({
-        error: 'Manager wallet configuration error',
+        error: 'Server configuration incomplete',
         details: error instanceof Error ? error.message : String(error)
       });
     }
