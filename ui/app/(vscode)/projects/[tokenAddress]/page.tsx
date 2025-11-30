@@ -4,10 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useWallet } from '@/components/WalletProvider';
 import { HistoryContent } from '@/components/HistoryContent';
-import { ProposalCard } from '@/components/ProposalCard';
 import { useLaunchInfo, useTokenInfo } from '@/hooks/useTokenData';
 import { useTheme } from '@/contexts/ThemeContext';
-import { MOCK_PROPOSALS, type MockProposal } from '@/lib/mock/mockProposals';
 
 interface TokenMetadata {
   name: string;
@@ -20,17 +18,6 @@ interface TokenMetadata {
   description?: string;
 }
 
-interface Proposal {
-  id: string;
-  title: string;
-  status: 'Active' | 'Passed' | 'Failed';
-  tokenSymbol?: string;
-  summary: string;
-  twapGap?: number;
-  timeAgo: string;
-  githubUrl?: string;
-}
-
 export default function ProjectDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -40,8 +27,6 @@ export default function ProjectDetailPage() {
 
   const [metadata, setMetadata] = useState<TokenMetadata | null>(null);
   const [marketData, setMarketData] = useState<{ market_cap?: number; price_change_24h?: number } | null>(null);
-  const [proposals, setProposals] = useState<{ active: number; passed: number; failed: number }>({ active: 0, passed: 0, failed: 0 });
-  const [activeProposalsList, setActiveProposalsList] = useState<Proposal[]>([]);
   const [copiedAddress, setCopiedAddress] = useState(false);
 
   const { launchData, isLoading: launchLoading } = useLaunchInfo(tokenAddress);
@@ -100,71 +85,6 @@ export default function ProjectDetailPage() {
         });
     }
   }, [tokenAddress]);
-
-  // Fetch proposals data - use shared proposals from decisions page
-  useEffect(() => {
-    if (!token?.token_symbol) return;
-
-    const rawSymbol = token.token_symbol;
-    const tokenSymbolWithDollar = rawSymbol.startsWith('$') ? rawSymbol : `$${rawSymbol}`;
-    
-    // Filter proposals by token symbol from shared MOCK_PROPOSALS
-    const tokenProposals = MOCK_PROPOSALS.filter(
-      (proposal) => proposal.tokenSymbol === tokenSymbolWithDollar
-    ) as Proposal[];
-    
-    // Parse time strings to milliseconds for sorting - same logic as decisions page
-    const parseTimeToMilliseconds = (timeString: string): number => {
-      const trimmed = timeString.toLowerCase().trim();
-      
-      // Support HH:MM:SS format
-      const hhmmssMatch = trimmed.match(/^(\d{1,3}):(\d{2}):(\d{2})/);
-      if (hhmmssMatch) {
-        const hours = parseInt(hhmmssMatch[1], 10);
-        const minutes = parseInt(hhmmssMatch[2], 10);
-        const seconds = parseInt(hhmmssMatch[3], 10);
-        return ((hours * 60 + minutes) * 60 + seconds) * 1000;
-      }
-      
-      const match = trimmed.match(/(\d+)\s*(hour|hours|day|days|minute|minutes|second|seconds)/);
-      if (!match) return Number.MAX_SAFE_INTEGER;
-      
-      const value = parseInt(match[1], 10);
-      const unit = match[2];
-      
-      if (unit.includes('second')) return value * 1000;
-      if (unit.includes('minute')) return value * 60 * 1000;
-      if (unit.includes('hour')) return value * 60 * 60 * 1000;
-      if (unit.includes('day')) return value * 24 * 60 * 60 * 1000;
-      
-      return Number.MAX_SAFE_INTEGER;
-    };
-    
-    // Sort proposals: Active first (by time remaining ascending), then Passed/Failed
-    // Same logic as decisions page
-    const sortedProposals = [...tokenProposals].sort((a, b) => {
-      const aIsActive = a.status === 'Active';
-      const bIsActive = b.status === 'Active';
-
-      // Active proposals come first
-      if (aIsActive && !bIsActive) return -1;
-      if (bIsActive && !aIsActive) return 1;
-
-      // For same status, sort by time (ascending - less time first)
-      const timeA = parseTimeToMilliseconds(a.timeAgo);
-      const timeB = parseTimeToMilliseconds(b.timeAgo);
-
-      return timeA - timeB;
-    });
-    
-    const activeCount = sortedProposals.filter(p => p.status === 'Active').length;
-    const passedCount = sortedProposals.filter(p => p.status === 'Passed').length;
-    const failedCount = sortedProposals.filter(p => p.status === 'Failed').length;
-    
-    setProposals({ active: activeCount, passed: passedCount, failed: failedCount });
-    // Show last 3 proposals (or fewer if there are less than 3)
-    setActiveProposalsList(sortedProposals.slice(0, 3));
-  }, [token]);
 
   const formatAddress = (address: string) => {
     if (!address) return '';
@@ -410,104 +330,6 @@ export default function ProjectDetailPage() {
                 </a>
               )}
             </div>
-          </div>
-        </div>
-
-        {/* Right Column: Proposals Summary */}
-        <div 
-          className="rounded-[12px] p-[20px] flex flex-col gap-[52px] items-start flex-1 min-w-0"
-          style={{
-            backgroundColor: cardBg,
-            border: `1px solid ${cardBorder}`,
-            boxShadow: shadowStyle,
-            alignSelf: 'stretch',
-          }}
-        >
-          {/* Proposals Summary Header */}
-          <div className="flex items-center justify-between w-full">
-            <div className="flex flex-col gap-[10px] items-start">
-              {proposals.active > 0 ? (
-                <div className="flex gap-[6px] items-center p-[4px] rounded-[12px] w-full" style={{ backgroundColor: theme === 'dark' ? '#B8D5FC' : '#dbeafe' }}>
-                  <p className="font-medium text-[14px] leading-[1.4] text-[#1447e6] text-center tracking-[0.1px] w-[78px] whitespace-pre-wrap" style={{ fontFamily: 'Inter, sans-serif' }}>
-                    {proposals.active} active proposals
-                  </p>
-                </div>
-              ) : (
-                <div className="flex gap-[6px] items-center p-[4px] w-[86px]">
-                  <p className="font-medium text-[14px] leading-[1.4] text-center tracking-[0.1px] w-[78px] whitespace-pre-wrap" style={{ fontFamily: 'Inter, sans-serif', color: mutedTextColor }}>
-                    0 active proposals
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="flex flex-col gap-[6px] items-start justify-center">
-              <p className="font-medium text-[14px] leading-[14px] tracking-[0.1px]" style={{ fontFamily: 'Inter, sans-serif', color: theme === 'dark' ? '#ffffff' : '#0a0a0a' }}>
-                {proposals.passed} passed / {proposals.failed} Failed
-              </p>
-            </div>
-          </div>
-
-          {/* Last 3 Proposal History */}
-          <div className="flex flex-col gap-[12px] items-start w-full">
-            <p className="font-semibold text-[16px] leading-[16px] tracking-[0.32px] whitespace-pre-wrap w-full" style={{ fontFamily: 'Inter, sans-serif', color: theme === 'dark' ? '#ffffff' : '#0a0a0a' }}>
-              Last 3 proposal history
-            </p>
-            {activeProposalsList.map((proposal) => (
-              <div 
-                key={proposal.id} 
-                className={`flex gap-[10px] items-center w-full flex-1 ${proposal.status === 'Active' ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
-                onClick={proposal.status === 'Active' ? () => router.push(`/decisions?proposal=${proposal.id}&token=${tokenAddress}`) : undefined}
-              >
-                {/* Status Tag */}
-                {proposal.status === 'Active' ? (
-                  <div className="bg-[#dbeafe] flex gap-[7px] h-[18px] items-center justify-center px-[4px] py-0 rounded-[6px] shrink-0">
-                    <svg className="w-[11px] h-[11px]" viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <circle cx="6" cy="5.5" r="3" fill="#1447E6"/>
-                    </svg>
-                    <p className="font-medium text-[10px] leading-[14px] text-[#1447e6] capitalize tracking-[0.1px]" style={{ fontFamily: 'Inter, sans-serif' }}>
-                      Active
-                    </p>
-                  </div>
-                ) : proposal.status === 'Passed' ? (
-                  <div className="bg-[#dcfce7] flex gap-[7px] h-[18px] items-center justify-center px-[4px] py-0 rounded-[6px] shrink-0">
-                    <svg className="w-[11px] h-[11px]" viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <g clipPath="url(#clip0_20_992)">
-                        <path fillRule="evenodd" clipRule="evenodd" d="M9.84184 2.6809C10.0527 2.92211 10.0527 3.31318 9.84184 3.55439L4.80184 9.3191C4.59095 9.5603 4.24905 9.5603 4.03816 9.3191L1.15816 6.02498C0.947279 5.78377 0.947279 5.3927 1.15816 5.15149C1.36905 4.91029 1.71095 4.91029 1.92184 5.15149L4.42 8.00887L9.07816 2.6809C9.28905 2.4397 9.63096 2.4397 9.84184 2.6809Z" fill="#008236"/>
-                      </g>
-                      <defs>
-                        <clipPath id="clip0_20_992">
-                          <rect width="11" height="11" fill="white"/>
-                        </clipPath>
-                      </defs>
-                    </svg>
-                    <p className="font-medium text-[10px] leading-[14px] text-[#008236] capitalize tracking-[0.1px]" style={{ fontFamily: 'Inter, sans-serif' }}>
-                      Passed
-                    </p>
-                  </div>
-                ) : (
-                  <div className="bg-[#fee2e2] flex gap-[7px] h-[18px] items-center justify-center px-[4px] py-0 rounded-[6px] shrink-0">
-                    <svg className="w-[11px] h-[11px]" viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <g clipPath="url(#clip0_20_998)">
-                        <path d="M2.99982 8.49982L8 3.49963" stroke="#C90000" strokeWidth="1.5" strokeLinecap="round"/>
-                        <path d="M2.99982 3.50018L8 8.50037" stroke="#C90000" strokeWidth="1.5" strokeLinecap="round"/>
-                      </g>
-                      <defs>
-                        <clipPath id="clip0_20_998">
-                          <rect width="11" height="11" fill="white"/>
-                        </clipPath>
-                      </defs>
-                    </svg>
-                    <p className="font-medium text-[10px] leading-[14px] text-[#dc2626] capitalize tracking-[0.1px]" style={{ fontFamily: 'Inter, sans-serif' }}>
-                      Failed
-                    </p>
-                  </div>
-                )}
-                {/* Proposal Title */}
-                <p className="font-normal text-[14px] leading-[1.4] flex-1 min-w-0" style={{ fontFamily: 'Inter, sans-serif', color: theme === 'dark' ? '#ffffff' : '#0a0a0a' }}>
-                  {proposal.title}
-                </p>
-              </div>
-            ))}
           </div>
         </div>
       </div>

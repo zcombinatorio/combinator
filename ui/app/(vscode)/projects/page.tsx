@@ -23,7 +23,6 @@ import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useWallet } from '@/components/WalletProvider';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTheme } from '@/contexts/ThemeContext';
-import { MOCK_PROPOSALS } from '@/lib/mock/mockProposals';
 
 interface TokenLaunch {
   id: number;
@@ -69,14 +68,13 @@ export default function ProjectsPage() {
   const pathname = usePathname();
   const [tokens, setTokens] = useState<TokenLaunch[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'all' | 'verified' | 'activeQM'>('all');
+  const [viewMode, setViewMode] = useState<'all' | 'verified'>('verified');
   const [searchQuery, setSearchQuery] = useState('');
   const [verifiedPage, setVerifiedPage] = useState(1);
   const [allPage, setAllPage] = useState(1);
   const [tokenMetadata, setTokenMetadata] = useState<Record<string, TokenMetadata>>({});
   const [marketData, setMarketData] = useState<Record<string, MarketData>>({});
-  const [proposalsData, setProposalsData] = useState<Record<string, { active: number; passed: number; failed: number }>>({});
-  const [sortBy, setSortBy] = useState<'mcapHigher' | 'mcapLower' | 'ageNewer' | 'ageOlder' | 'activeProposals'>('mcapHigher');
+  const [sortBy, setSortBy] = useState<'mcapHigher' | 'mcapLower' | 'ageNewer' | 'ageOlder'>('mcapHigher');
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
   const filterDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -103,32 +101,6 @@ export default function ProjectsPage() {
     fetchTokens();
   }, []);
 
-  // Calculate proposals data based on real proposals for each token
-  useEffect(() => {
-    if (tokens.length > 0) {
-      const calculatedProposals: Record<string, { active: number; passed: number; failed: number }> = {};
-      
-      tokens.forEach((token) => {
-        // Get token symbol, with or without $ prefix
-        const rawSymbol = token.token_symbol || '';
-        const tokenSymbolWithDollar = rawSymbol.startsWith('$') ? rawSymbol : `$${rawSymbol}`;
-        
-        // Filter proposals by token symbol
-        const tokenProposals = MOCK_PROPOSALS.filter(
-          (proposal) => proposal.tokenSymbol === tokenSymbolWithDollar
-        );
-        
-        // Count proposals by status
-        const active = tokenProposals.filter(p => p.status === 'Active').length;
-        const passed = tokenProposals.filter(p => p.status === 'Passed').length;
-        const failed = tokenProposals.filter(p => p.status === 'Failed').length;
-        
-        calculatedProposals[token.token_address] = { active, passed, failed };
-      });
-      
-      setProposalsData(calculatedProposals);
-    }
-  }, [tokens]);
 
   const fetchMarketDataBatch = useCallback(async (addresses: string[]) => {
     if (addresses.length === 0) return;
@@ -255,12 +227,6 @@ export default function ProjectsPage() {
     // Apply view mode filter
     if (viewMode === 'verified') {
       filtered = filtered.filter(token => token.verified);
-    } else if (viewMode === 'activeQM') {
-      // Filter by active QM: only tokens with activeProposals > 0
-      filtered = filtered.filter(token => {
-        const proposals = proposalsData[token.token_address];
-        return proposals && proposals.active > 0;
-      });
     }
 
     // Apply search filter
@@ -292,16 +258,12 @@ export default function ProjectsPage() {
         const ageA = new Date(a.launch_time).getTime();
         const ageB = new Date(b.launch_time).getTime();
         return ageA - ageB; // Ascending order (oldest first)
-      } else if (sortBy === 'activeProposals') {
-        const activeA = proposalsData[a.token_address]?.active || 0;
-        const activeB = proposalsData[b.token_address]?.active || 0;
-        return activeB - activeA; // Descending order (most active first)
       }
       return 0;
     });
 
     return sorted;
-  }, [tokens, viewMode, searchQuery, proposalsData, marketData, sortBy]);
+  }, [tokens, viewMode, searchQuery, marketData, sortBy]);
 
   // Calculate pagination
   const currentPage = viewMode === 'verified' ? verifiedPage : allPage;
@@ -379,11 +341,6 @@ export default function ProjectsPage() {
             isActive={viewMode === 'verified'}
             onClick={() => setViewMode('verified')}
           />
-          <FilterButton
-            label="Only active QM"
-            isActive={viewMode === 'activeQM'}
-            onClick={() => setViewMode('activeQM')}
-          />
           <div className="relative" ref={filterDropdownRef}>
             <button
               onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
@@ -428,7 +385,6 @@ export default function ProjectsPage() {
                   { key: 'mcapLower', label: 'MCap (Lower)' },
                   { key: 'ageNewer', label: 'Age (Newer)' },
                   { key: 'ageOlder', label: 'Age (Older)' },
-                  { key: 'activeProposals', label: 'Active Proposals' },
                 ] as const).map(({ key, label }) => {
                   const isCurrent = sortBy === key;
                   const baseBg = theme === 'dark' ? (isCurrent ? '#35343F' : '#2A2A2A') : (isCurrent ? '#f6f6f7' : '#ffffff');
@@ -478,7 +434,6 @@ export default function ProjectsPage() {
             {paginatedTokens.map((token) => {
               const metadata = tokenMetadata[token.token_address];
               const market = marketData[token.token_address];
-              const proposals = proposalsData[token.token_address] || { active: 0, passed: 0, failed: 0 };
               return (
                 <ProjectCard
                   key={token.id}
@@ -491,9 +446,6 @@ export default function ProjectsPage() {
                   launchTime={token.launch_time}
                   marketCap={market?.market_cap}
                   priceChange={market?.price_change_24h}
-                  activeProposals={proposals.active}
-                  passedProposals={proposals.passed}
-                  failedProposals={proposals.failed}
                   verified={token.verified}
                   onClick={() => handleRowClick(token)}
                 />

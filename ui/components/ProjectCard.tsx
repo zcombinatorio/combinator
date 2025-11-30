@@ -39,9 +39,6 @@ interface ProjectCardProps {
   launchTime?: string;
   marketCap?: number;
   priceChange?: number;
-  activeProposals?: number;
-  passedProposals?: number;
-  failedProposals?: number;
   verified?: boolean;
   onClick?: () => void;
 }
@@ -56,9 +53,6 @@ export function ProjectCard({
   launchTime,
   marketCap,
   priceChange,
-  activeProposals = 0,
-  passedProposals = 0,
-  failedProposals = 0,
   verified = false,
   onClick,
 }: ProjectCardProps) {
@@ -70,7 +64,6 @@ export function ProjectCard({
   const cardBorder = theme === 'dark' ? '#1C1C1C' : '#e5e5e5';
   const cardHover = theme === 'dark' ? '#2a2a2a' : '#F9F9F9';
   const socialButtonBg = theme === 'dark' ? '#303030' : '#ffffff';
-  const activeBadgeBg = theme === 'dark' ? '#B8D5FC' : '#dbeafe';
 
   const formatAddress = (address: string) => {
     if (!address) return '';
@@ -244,33 +237,6 @@ export function ProjectCard({
               {formatPriceChange(priceChange)}
             </p>
           )}
-        </div>
-
-        {/* Proposals Info */}
-        <div className="flex gap-[14px] items-center w-[180px]">
-          <div className="flex flex-col gap-[10px] items-start">
-            {activeProposals > 0 ? (
-              <div className="flex gap-[6px] items-center p-[4px] rounded-[12px] w-full" style={{ backgroundColor: activeBadgeBg }}>
-                <p className="font-medium text-[14px] leading-[1.4] text-[#1447e6] text-center tracking-[0.1px] w-[78px] whitespace-pre-wrap" style={{ fontFamily: 'Inter, sans-serif' }}>
-                  {activeProposals} active proposals
-                </p>
-              </div>
-            ) : (
-              <div className="flex gap-[6px] items-center p-[4px] w-[86px]">
-                <p className="font-medium text-[14px] leading-[1.4] text-center tracking-[0.1px] w-[78px] whitespace-pre-wrap" style={{ fontFamily: 'Inter, sans-serif', color: mutedTextColor }}>
-                  0 active proposals
-                </p>
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col gap-[10px] items-start justify-center">
-            <p className="font-medium text-[14px] leading-[14px] tracking-[0.1px]" style={{ fontFamily: 'Inter, sans-serif', color: textColor }}>
-              {passedProposals} passed / 
-            </p>
-            <p className="font-medium text-[14px] leading-[14px] tracking-[0.1px]" style={{ fontFamily: 'Inter, sans-serif', color: textColor }}>
-              {failedProposals} Failed
-            </p>
-          </div>
         </div>
 
         {/* Social Buttons */}
