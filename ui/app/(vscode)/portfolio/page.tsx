@@ -6,11 +6,9 @@ import { useSignTransaction } from '@privy-io/react-auth/solana';
 import { Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import Image from 'next/image';
-import Link from 'next/link';
 import { useTheme } from '@/contexts/ThemeContext';
 import {
   ClaimInfoResult,
-  ClaimInfoResponse,
   MintClaimRequest,
   MintClaimResult,
   ConfirmClaimRequest,
@@ -21,49 +19,10 @@ import {
   isConfirmClaimResponse
 } from '@/types/api';
 
-interface TokenLaunch {
-  id: number;
-  launch_time: string;
-  creator_wallet: string;
-  token_address: string;
-  token_metadata_url: string;
-  token_name: string | null;
-  token_symbol: string | null;
-  verified?: boolean;
-}
-
 interface TokenMetadata {
   name: string;
   symbol: string;
   image: string;
-}
-
-interface MarketData {
-  price: number;
-  market_cap: number;
-  price_change_24h?: number;
-}
-
-interface HeldToken {
-  tokenAddress: string;
-  name: string;
-  symbol: string;
-  balance: string;
-  usdValue: string;
-  usdValueNumber: number; // For sorting
-  image?: string;
-}
-
-interface ClaimableToken {
-  id: string;
-  tokenAddress: string;
-  name: string;
-  symbol: string;
-  balance: string;
-  usdValue: string;
-  usdValueNumber: number;
-  claimLabel: string;
-  image?: string;
 }
 
 interface CreatedToken {
@@ -102,7 +61,7 @@ interface ClaimInfo {
 }
 
 export default function PortfolioPage() {
-  const { wallet, externalWallet, activeWallet, hasTwitter, hasGithub, twitterUsername, githubUsername, isPrivyAuthenticated } = useWallet();
+  const { wallet, activeWallet, twitterUsername, githubUsername, isPrivyAuthenticated } = useWallet();
   const { signTransaction } = useSignTransaction();
   const { theme } = useTheme();
   const cardBg = theme === 'dark' ? '#222222' : '#ffffff';
@@ -113,14 +72,8 @@ export default function PortfolioPage() {
   const primaryTextColor = theme === 'dark' ? '#ffffff' : '#0a0a0a';
   const secondaryTextColor = theme === 'dark' ? '#B8B8B8' : '#717182';
 
-  const [activeTab, setActiveTab] = useState<'held' | 'created'>('held');
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
-  const [tokens, setTokens] = useState<TokenLaunch[]>([]);
-  const [heldTokens, setHeldTokens] = useState<HeldToken[]>([]);
-  const [loading, setLoading] = useState(true);
   const [tokenMetadata, setTokenMetadata] = useState<Record<string, TokenMetadata>>({});
-  const [marketData, setMarketData] = useState<Record<string, MarketData>>({});
-  const [claimableTokens, setClaimableTokens] = useState<ClaimableToken[]>([]);
   const [claiming, setClaiming] = useState<Record<string, boolean>>({});
 
   const [createdTokens, setCreatedTokens] = useState<CreatedToken[]>([]);
@@ -128,44 +81,6 @@ export default function PortfolioPage() {
   const [createdTokenClaimInfo, setCreatedTokenClaimInfo] = useState<Record<string, ClaimInfo>>({});
   const [createdTokenClaimLoading, setCreatedTokenClaimLoading] = useState<Record<string, boolean>>({});
   const [createdTokenFilter, setCreatedTokenFilter] = useState<'all' | 'verified' | 'unverified'>('all');
-
-  // Fetch all ZC tokens
-  useEffect(() => {
-    const fetchTokens = async () => {
-      try {
-        const response = await fetch('/api/tokens', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh: false })
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setTokens(data.tokens || []);
-
-          // Fetch metadata for all tokens
-          (data.tokens || []).forEach((token: TokenLaunch) => {
-            if (token.token_metadata_url) {
-              fetch(token.token_metadata_url)
-                .then(res => res.json())
-                .then(metadata => {
-                  setTokenMetadata(prev => ({
-                    ...prev,
-                    [token.token_address]: metadata
-                  }));
-                })
-                .catch(err => console.error(`Error fetching metadata for ${token.token_address}:`, err));
-            }
-          });
-        }
-      } catch (error) {
-        console.error('Error fetching tokens:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchTokens();
-  }, []);
 
   // Fetch created tokens (tokens launched by this wallet or designated to this user via socials)
   useEffect(() => {
@@ -271,113 +186,6 @@ export default function PortfolioPage() {
     if (createdTokenFilter === 'verified') return createdTokens.filter(t => t.verified);
     return createdTokens.filter(t => !t.verified);
   }, [createdTokens, createdTokenFilter]);
-
-  // Fetch balances for all tokens when wallet is connected
-  useEffect(() => {
-    // Show mock data when wallet is not connected (for demonstration)
-    if (!wallet) {
-      setHeldTokens([]);
-      setClaimableTokens([]);
-      setLoading(false);
-      return;
-    }
-
-    if (tokens.length === 0) {
-      setHeldTokens([]);
-      return;
-    }
-
-    const fetchBalances = async () => {
-      setLoading(true);
-      const walletAddress = wallet.toString();
-      const tokensWithBalances: HeldToken[] = [];
-
-      // Fetch balances in batches
-      const BATCH_SIZE = 10;
-      for (let i = 0; i < tokens.length; i += BATCH_SIZE) {
-        const batch = tokens.slice(i, i + BATCH_SIZE);
-        
-        const balancePromises = batch.map(async (token) => {
-          try {
-            const balanceResponse = await fetch(`/api/balance/${token.token_address}/${walletAddress}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                tokenAddress: token.token_address,
-                walletAddress: walletAddress
-              })
-            });
-
-            if (balanceResponse.ok) {
-              const balanceData = await balanceResponse.json();
-              const balance = parseFloat(balanceData.balance || '0');
-
-              // Only include tokens with balance > 0
-              if (balance > 0) {
-                const metadata = tokenMetadata[token.token_address];
-                const name = metadata?.name || token.token_name || 'Unknown Token';
-                const symbol = metadata?.symbol || token.token_symbol || 'UNKNOWN';
-                const image = metadata?.image;
-
-                  // Fetch market data for USD value calculation
-                let usdValue = '$0 USD';
-                let usdValueNumber = 0;
-                try {
-                  const marketResponse = await fetch(`/api/market-data/${token.token_address}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tokenAddress: token.token_address })
-                  });
-
-                  if (marketResponse.ok) {
-                    const marketResult = await marketResponse.json();
-                    if (marketResult.success && marketResult.data) {
-                      const price = marketResult.data.price || 0;
-                      usdValueNumber = balance * price;
-                      usdValue = `$${usdValueNumber.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
-                    }
-                  }
-                } catch (error) {
-                  console.error(`Error fetching market data for ${token.token_address}:`, error);
-                }
-
-                // Format balance
-                const formattedBalance = formatBalance(balance);
-
-                const heldToken: HeldToken = {
-                  tokenAddress: token.token_address,
-                  name,
-                  symbol,
-                  balance: formattedBalance,
-                  usdValue,
-                  usdValueNumber,
-                  image
-                };
-                return heldToken;
-              }
-            }
-          } catch (error) {
-            console.error(`Error fetching balance for ${token.token_address}:`, error);
-          }
-          return null;
-        });
-
-        const results = await Promise.all(balancePromises);
-        const validTokens = results.filter((token): token is HeldToken => token !== null);
-        tokensWithBalances.push(...validTokens);
-      }
-
-      // Sort tokens by USD value (descending - highest first)
-      tokensWithBalances.sort((a, b) => {
-        return b.usdValueNumber - a.usdValueNumber; // Descending order (highest USD value first)
-      });
-
-      setHeldTokens(tokensWithBalances);
-      setLoading(false);
-    };
-
-    fetchBalances();
-  }, [wallet, tokens, tokenMetadata]);
 
   const formatBalance = (balance: number): string => {
     if (balance >= 1_000_000) {
@@ -522,256 +330,9 @@ export default function PortfolioPage() {
   return (
     <div className="flex-1" style={{ padding: '20px 40px', marginLeft: '-20px', marginRight: '-20px' }}>
       <div className="flex flex-col gap-[20px] w-full">
-      {/* Token Filters (Tabs) */}
-      <div className="flex gap-[12px] items-start">
-        <button
-          onClick={() => setActiveTab('held')}
-          className="rounded-[6px] px-[12px] py-[10px] text-[12px] font-semibold leading-[12px] tracking-[0.24px] capitalize transition-colors"
-          style={{
-            fontFamily: 'Inter, sans-serif',
-            backgroundColor: activeTab === 'held'
-              ? (theme === 'dark' ? '#5A5798' : '#403d6d')
-              : (theme === 'dark' ? '#222222' : '#ffffff'),
-            border: activeTab === 'held' ? 'none' : (theme === 'dark' ? '1px solid #1C1C1C' : '1px solid #e5e5e5'),
-            color: activeTab === 'held' ? '#ffffff' : (theme === 'dark' ? '#ffffff' : '#0a0a0a')
-          }}
-          onMouseEnter={(e) => {
-            if (activeTab !== 'held') {
-              e.currentTarget.style.backgroundColor = theme === 'dark' ? '#2a2a2a' : '#f6f6f7';
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (activeTab !== 'held') {
-              e.currentTarget.style.backgroundColor = theme === 'dark' ? '#222222' : '#ffffff';
-            }
-          }}
-        >
-          Held Tokens
-        </button>
-        <button
-          onClick={() => setActiveTab('created')}
-          className="rounded-[6px] px-[12px] py-[10px] text-[12px] font-semibold leading-[12px] tracking-[0.24px] capitalize transition-colors"
-          style={{
-            fontFamily: 'Inter, sans-serif',
-            backgroundColor: activeTab === 'created'
-              ? (theme === 'dark' ? '#5A5798' : '#403d6d')
-              : (theme === 'dark' ? '#222222' : '#ffffff'),
-            border: activeTab === 'created' ? 'none' : (theme === 'dark' ? '1px solid #1C1C1C' : '1px solid #e5e5e5'),
-            color: activeTab === 'created' ? '#ffffff' : (theme === 'dark' ? '#ffffff' : '#0a0a0a')
-          }}
-          onMouseEnter={(e) => {
-            if (activeTab !== 'created') {
-              e.currentTarget.style.backgroundColor = theme === 'dark' ? '#2a2a2a' : '#f6f6f7';
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (activeTab !== 'created') {
-              e.currentTarget.style.backgroundColor = theme === 'dark' ? '#222222' : '#ffffff';
-            }
-          }}
-        >
-          Created tokens
-        </button>
-      </div>
-
       {/* Token List */}
       <div className="flex flex-col gap-[12px] w-full">
-        {activeTab === 'held' && (
-          <>
-            {loading ? (
-              <div className="bg-[#ffffff] border border-[#e5e5e5] rounded-[12px] px-[12px] py-[20px] flex items-center justify-center min-h-[100px]">
-                <p className="text-[14px] text-[#717182]" style={{ fontFamily: 'Inter, sans-serif' }}>
-                  Loading tokens...
-                </p>
-              </div>
-            ) : heldTokens.length === 0 ? (
-              <div className="bg-[#ffffff] border border-[#e5e5e5] rounded-[12px] px-[12px] py-[20px] flex items-center justify-center min-h-[100px]">
-                <p className="text-[14px] text-[#717182]" style={{ fontFamily: 'Inter, sans-serif' }}>
-                  No ZC tokens found in your wallet
-                </p>
-              </div>
-            ) : (
-              <>
-                {claimableTokens.length > 0 && claimableTokens.map((token) => (
-                  <div
-                    key={`claimable-${token.id}`}
-                    className="border rounded-[12px] px-[12px] py-[20px] flex flex-col gap-[10px]"
-                    style={{
-                      background: theme === 'dark' ? 'linear-gradient(103deg, #2E1F69 13.26%, #944FF4 93.84%)' : 'linear-gradient(103deg, #B09EFA 13.26%, #6A6DE8 93.84%)',
-                      border: `1px solid ${theme === 'dark' ? '#1C1C1C' : '#e5e5e5'}`,
-                      boxShadow: theme === 'dark' ? '0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08)' : '0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03)',
-                      fontFamily: 'Inter, sans-serif',
-                    }}
-                  >
-                    <div className="flex gap-[72px] items-center pl-[12px] pr-[20px]">
-                      <div className="flex gap-[14px] items-center">
-                        <div className="bg-[#030213] rounded-[12px] w-[42px] h-[42px] flex items-center justify-center shrink-0 overflow-hidden">
-                          {token.image ? (
-                            <Image
-                              src={token.image}
-                              alt={token.name}
-                              width={30}
-                              height={30}
-                              className="w-[30px] h-[30px]"
-                            />
-                          ) : (
-                            <Image
-                              src="/logos/z-logo-white.png"
-                              alt="Token"
-                              width={30}
-                              height={30}
-                              className="w-[30px] h-[30px]"
-                            />
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-[8px] w-[148px]">
-                          <div className="flex gap-[6px] items-center text-[16px] font-medium leading-[1.4]" style={{ fontFamily: 'Inter, sans-serif' }}>
-                            <p className="whitespace-nowrap" style={{ color: theme === 'dark' ? '#ffffff' : '#0a0a0a' }}>{token.name}</p>
-                            <p className="uppercase whitespace-nowrap" style={{ color: theme === 'dark' ? '#ffffff' : '#0a0a0a' }}>{token.symbol}</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyAddress(token.tokenAddress)}
-                            className="flex gap-[4px] items-center cursor-pointer group"
-                            title="Click to copy address"
-                            style={{ fontFamily: 'Inter, sans-serif' }}
-                          >
-                            <p className="text-[14px] font-medium leading-[14px] capitalize transition-opacity group-hover:opacity-80" style={{ color: secondaryTextColor }}>
-                              {formatAddress(token.tokenAddress)}
-                            </p>
-                            {copiedAddress === token.tokenAddress ? (
-                              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
-                                <path d="M11.6667 3.5L5.25 9.91667L2.33333 7" stroke="#327755" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            ) : (
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0 transition-opacity group-hover:opacity-80">
-                                <path d="M15.002 6.96045L15 4.60049C15 4.44136 14.9368 4.28875 14.8243 4.17622C14.7117 4.0637 14.5591 4.00049 14.4 4.00049H4.6C4.44087 4.00049 4.28826 4.0637 4.17574 4.17622C4.06321 4.28875 4 4.44136 4 4.60049V14.4005C4 14.5596 4.06321 14.7122 4.17574 14.8248C4.28826 14.9373 4.44087 15.0005 4.6 15.0005H7.00195M19.4 20.0005H9.6C9.44087 20.0005 9.28826 19.9373 9.17574 19.8248C9.06321 19.7122 9 19.5596 9 19.4005V9.60049C9 9.44136 9.06321 9.28875 9.17574 9.17622C9.28826 9.0637 9.44087 9.00049 9.6 9.00049H19.4C19.5591 9.00049 19.7117 9.0637 19.8243 9.17622C19.9368 9.28875 20 9.44136 20 9.60049V19.4005C20 19.5596 19.9368 19.7122 19.8243 19.8248C19.7117 19.9373 19.5591 20.0005 19.4 20.0005Z" stroke={secondaryTextColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                              </svg>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-[10px] items-start">
-                        <div className="flex gap-[6px] items-center">
-                          <p className="text-[16px] font-medium leading-[1.4]" style={{ fontFamily: 'Inter, sans-serif', color: primaryTextColor }}>
-                            {token.balance} ${token.symbol}
-                          </p>
-                        </div>
-                        <p className="text-[14px] font-medium leading-[14px] capitalize" style={{ fontFamily: 'Inter, sans-serif', color: theme === 'dark' ? secondaryTextColor : '#717182' }}>
-                          {token.usdValue}
-                        </p>
-                      </div>
-
-                      <div className="flex gap-[12px] items-center ml-auto">
-                        <button
-                          type="button"
-                          onClick={() => handleClaim(token.tokenAddress, token.symbol)}
-                          disabled={claiming[token.tokenAddress] || !wallet}
-                          className="bg-[#403d6d] rounded-[6px] px-[12px] py-[10px] text-[12px] font-semibold leading-[12px] tracking-[0.24px] capitalize text-white transition-opacity hover:opacity-90 disabled:bg-[#403d6d] disabled:text-white disabled:opacity-100 disabled:cursor-default disabled:hover:opacity-90"
-                          style={{ fontFamily: 'Inter, sans-serif' }}
-                        >
-                          {claiming[token.tokenAddress] ? 'Claiming...' : token.claimLabel}
-                        </button>
-                        <p className="max-w-[260px] text-[12px] leading-[16px]" style={{ fontFamily: 'Inter, sans-serif', color: '#ffffff' }}>
-                          You have unclaimed contributor rewards. Claim to instantly add tokens to your wallet.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {heldTokens.map((token) => (
-                  <div
-                    key={token.tokenAddress}
-                    className="rounded-[12px] px-[12px] py-[20px] flex flex-col gap-[10px]"
-                    style={{
-                      backgroundColor: cardBg,
-                      border: `1px solid ${cardBorder}`,
-                      boxShadow: cardShadow,
-                      fontFamily: 'Inter, sans-serif',
-                    }}
-                  >
-                    <div className="flex gap-[72px] items-center pl-[12px] pr-[20px]">
-                      {/* Token Info */}
-                      <div className="flex gap-[14px] items-center">
-                        {/* Token Icon */}
-                        <div className="bg-[#030213] rounded-[12px] w-[42px] h-[42px] flex items-center justify-center shrink-0 overflow-hidden">
-                          {token.image ? (
-                            <img
-                              src={token.image}
-                              alt={token.name}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <Image
-                              src="/logos/z-logo-white.png"
-                              alt="Token"
-                              width={30}
-                              height={30}
-                              className="w-[30px] h-[30px]"
-                            />
-                          )}
-                        </div>
-
-                        {/* Token Text */}
-                        <div className="flex flex-col gap-[8px] w-[148px]">
-                          {/* Token Name */}
-                          <div className="flex gap-[6px] items-center text-[16px] font-medium leading-[1.4]" style={{ fontFamily: 'Inter, sans-serif' }}>
-                            <p className="whitespace-nowrap" style={{ color: primaryTextColor }}>{token.name}</p>
-                            <p className="uppercase whitespace-nowrap" style={{ color: secondaryTextColor }}>{token.symbol}</p>
-                          </div>
-
-                          {/* Token Address */}
-                          <div className="flex gap-[4px] items-center">
-                            <button
-                              onClick={() => handleCopyAddress(token.tokenAddress)}
-                              className="flex gap-[4px] items-center cursor-pointer group"
-                              style={{ fontFamily: 'Inter, sans-serif' }}
-                              title="Click to copy address"
-                            >
-                              <p className="text-[14px] font-medium leading-[14px] capitalize transition-opacity group-hover:opacity-80" style={{ color: secondaryTextColor }}>
-                                {formatAddress(token.tokenAddress)}
-                              </p>
-                              {copiedAddress === token.tokenAddress ? (
-                                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
-                                  <path d="M11.6667 3.5L5.25 9.91667L2.33333 7" stroke="#327755" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                                </svg>
-                              ) : (
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0 transition-opacity group-hover:opacity-80">
-                                  <path d="M15.002 6.96045L15 4.60049C15 4.44136 14.9368 4.28875 14.8243 4.17622C14.7117 4.0637 14.5591 4.00049 14.4 4.00049H4.6C4.44087 4.00049 4.28826 4.0637 4.17574 4.17622C4.06321 4.28875 4 4.44136 4 4.60049V14.4005C4 14.5596 4.06321 14.7122 4.17574 14.8248C4.28826 14.9373 4.44087 15.0005 4.6 15.0005H7.00195M19.4 20.0005H9.6C9.44087 20.0005 9.28826 19.9373 9.17574 19.8248C9.06321 19.7122 9 19.5596 9 19.4005V9.60049C9 9.44136 9.06321 9.28875 9.17574 9.17622C9.28826 9.0637 9.44087 9.00049 9.6 9.00049H19.4C19.5591 9.00049 19.7117 9.0637 19.8243 9.17622C19.9368 9.28875 20 9.44136 20 9.60049V19.4005C20 19.5596 19.9368 19.7122 19.8243 19.8248C19.7117 19.9373 19.5591 20.0005 19.4 20.0005Z" stroke={secondaryTextColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                                </svg>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Token Value */}
-                      <div className="flex gap-[8px] items-center">
-                        <div className="flex flex-col gap-[8px]">
-                          <div className="flex flex-col gap-[10px]">
-                            <div className="flex gap-[6px] items-center">
-                              <p className="text-[16px] font-medium leading-[1.4]" style={{ fontFamily: 'Inter, sans-serif', color: primaryTextColor }}>
-                                {token.balance} ${token.symbol}
-                              </p>
-                            </div>
-                          </div>
-                          <p className="text-[14px] font-medium leading-[14px] capitalize" style={{ fontFamily: 'Inter, sans-serif', color: secondaryTextColor }}>
-                            {token.usdValue}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-          </>
-        )}
-
-        {activeTab === 'created' && (
-          <>
+        <>
             {/* Filter buttons for verified/unverified */}
             {createdTokens.length > 0 && !createdTokensLoading && (
               <div className="flex gap-[8px] mb-[12px]">
@@ -974,8 +535,7 @@ export default function PortfolioPage() {
               );
               })
             )}
-          </>
-        )}
+        </>
       </div>
       </div>
     </div>
