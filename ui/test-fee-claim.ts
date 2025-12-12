@@ -103,82 +103,71 @@ async function testFeeClaim() {
     console.log('✓ Transaction signed');
 
     if (SIMULATE_ONLY) {
-      // Step 3: Simulate the transaction to preview balance changes
+      // Step 3: Simulate the transaction
       console.log('\nStep 3: Simulating transaction...');
 
       const connection = new Connection(RPC_URL!, 'confirmed');
 
-      // Get accounts involved in the transaction for balance tracking
-      const accountKeys = transaction.compileMessage().accountKeys;
+      // Get a fresh blockhash and set it before simulation
+      const { blockhash } = await connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+
+      // Re-sign after changing blockhash (signature covers blockhash)
+      transaction.signatures = [];
+      transaction.partialSign(payerKeypair);
+
+      // Get fee recipients to check their balance changes
       const feeRecipients = claimResponse.data.feeRecipients as { address: string; percent: number }[];
-      const lpOwnerAddress = claimResponse.data.lpOwnerAddress;
+      const recipientAddresses = feeRecipients.map(r => new PublicKey(r.address));
 
-      // Get pre-simulation balances for fee recipients
-      console.log('\nPre-simulation balances:');
-      const preBalances: Record<string, { sol: number; tokenA?: number; tokenB?: number }> = {};
-
-      for (const recipient of feeRecipients) {
-        const pubkey = new PublicKey(recipient.address);
-        const solBalance = await connection.getBalance(pubkey);
-        preBalances[recipient.address] = { sol: solBalance / 1e9 };
-        console.log(`  ${recipient.address.substring(0, 8)}...:`);
-        console.log(`    SOL: ${preBalances[recipient.address].sol}`);
+      // Get pre-simulation balances
+      const preBalances: Record<string, number> = {};
+      for (const addr of recipientAddresses) {
+        preBalances[addr.toBase58()] = await connection.getBalance(addr);
       }
 
-      // Simulate the transaction
-      const simulation = await connection.simulateTransaction(transaction, {
-        sigVerify: false,
-        replaceRecentBlockhash: true,
-      });
+      // Simulate (legacy API - pass addresses as third param)
+      const simulation = await connection.simulateTransaction(
+        transaction,
+        undefined,
+        recipientAddresses
+      );
 
       if (simulation.value.err) {
         console.log('\n✗ Simulation failed:');
         console.log(`  Error: ${JSON.stringify(simulation.value.err)}`);
-        if (simulation.value.logs) {
-          console.log('\n  Logs:');
-          for (const log of simulation.value.logs) {
-            console.log(`    ${log}`);
-          }
-        }
-        return;
-      }
+      } else {
+        console.log('\n✓ Simulation successful');
+        console.log(`  Compute units: ${simulation.value.unitsConsumed}`);
 
-      console.log('\n✓ Simulation successful!');
-      console.log(`  Compute units consumed: ${simulation.value.unitsConsumed}`);
-
-      // Show post-simulation balances from simulation results
-      if (simulation.value.accounts) {
-        console.log('\nPost-simulation account states:');
-        for (let i = 0; i < accountKeys.length && i < simulation.value.accounts.length; i++) {
-          const account = simulation.value.accounts[i];
-          if (account) {
-            const pubkey = accountKeys[i].toBase58();
-            const isRecipient = feeRecipients.some(r => r.address === pubkey);
-            if (isRecipient) {
-              console.log(`  ${pubkey.substring(0, 8)}...: ${account.lamports / 1e9} SOL`);
+        // Show balance changes
+        console.log('\nBalance changes:');
+        if (simulation.value.accounts) {
+          for (let i = 0; i < recipientAddresses.length; i++) {
+            const addr = recipientAddresses[i].toBase58();
+            const account = simulation.value.accounts[i];
+            if (account) {
+              const preBal = preBalances[addr] / 1e9;
+              const postBal = account.lamports / 1e9;
+              const change = postBal - preBal;
+              console.log(`  ${addr}:`);
+              console.log(`    Before: ${preBal.toFixed(4)} SOL`);
+              console.log(`    After:  ${postBal.toFixed(4)} SOL`);
+              console.log(`    Change: +${change.toFixed(4)} SOL`);
             }
           }
         }
       }
 
-      // Show logs
-      if (simulation.value.logs && simulation.value.logs.length > 0) {
-        console.log('\nTransaction logs:');
+      if (simulation.value.logs) {
+        console.log('\nLogs:');
         for (const log of simulation.value.logs) {
-          // Filter to show relevant logs
-          if (log.includes('Transfer') || log.includes('success') || log.includes('Program log')) {
-            console.log(`  ${log}`);
-          }
+          console.log(`  ${log}`);
         }
       }
 
-      console.log('\n=========================');
-      console.log('SIMULATION MODE - Transaction was not submitted');
-      console.log('Set SIMULATE_ONLY = false to execute for real');
-      console.log('=========================');
-
     } else {
-      process.exit(0);
+      // process.exit(0);
       // Step 3: Submit to confirm endpoint
       console.log('\nStep 3: Calling /fee-claim/confirm...');
       const confirmResponse = await axios.post(`${API_URL}/fee-claim/confirm`, {
