@@ -19,15 +19,13 @@
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
 import nacl from 'tweetnacl';
-import { Connection, Keypair, Transaction, PublicKey, SystemProgram, ComputeBudgetProgram } from '@solana/web3.js';
+import { Connection, Keypair, Transaction, PublicKey, SystemProgram } from '@solana/web3.js';
 import {
   createTransferInstruction,
   getAssociatedTokenAddress,
   getMint,
   createAssociatedTokenAccountIdempotentInstruction,
-  NATIVE_MINT,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID
+  NATIVE_MINT
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
@@ -42,6 +40,35 @@ import rateLimit from 'express-rate-limit';
 
 const router = Router();
 
+// ============================================================================
+// Pool Fee Configuration
+// ============================================================================
+// Maps pool address to list of fee recipients with their percentage share
+// Percentages must sum to 100 for each pool
+
+interface FeeRecipient {
+  address: string;  // Solana wallet address
+  percent: number;  // Percentage of fees (0-100)
+}
+
+const POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
+  // SolPay
+  'BTYhoRPEUXs8ESYFjKDXRYf5qjH4chzZoBokMEApKEfJ': [
+    { address: '3KJab78N7AmVU8ZwRx5bVyVnSxHd9W1cKzvuwbx3sW1r', percent: 70 },
+    { address: '7rajfxUQBHRXiSrQWQo9FZ2zBbLy4Xvh9yYfa7tkvj4U', percent: 30 },
+  ],
+  // SurfCash
+  'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': [
+    { address: 'BmfaxQCRqf4xZFmQa5GswShBZhRBf4bED7hadFkpgBC3', percent: 34.375 },
+    { address: 'HU65idnreBAe9gsLzSGTV7w7tVTzaSzXBw518F1aQrGv', percent: 34.375 },
+    { address: '7rajfxUQBHRXiSrQWQo9FZ2zBbLy4Xvh9yYfa7tkvj4U', percent: 31.25 },
+  ],
+};
+
+function getPoolFeeConfig(poolAddress: string): FeeRecipient[] | null {
+  return POOL_FEE_CONFIG[poolAddress] || null;
+}
+
 // Rate limiter for fee claim endpoints
 const feeClaimLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
@@ -55,12 +82,13 @@ const feeClaimLimiter = rateLimit({
 // Maps requestId -> transaction data
 interface FeeClaimData {
   unsignedTransaction: string; // Single base58-encoded unsigned transaction
+  unsignedTransactionHash: string; // SHA-256 hash for tamper detection
   poolAddress: string;
   tokenAMint: string;
   tokenBMint: string;
   lpOwnerAddress: string;
   feePayerAddress: string;
-  destinationAddress: string;
+  feeRecipients: FeeRecipient[];  // List of fee recipients with their percentages
   estimatedTokenAFees: string;
   estimatedTokenBFees: string;
   positionsCount: number;
@@ -119,14 +147,14 @@ setInterval(() => {
 
 router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
   try {
-    const { payerPublicKey } = req.body;
+    const { payerPublicKey, poolAddress: poolAddressInput } = req.body;
 
-    console.log('Fee claim request received:', { payerPublicKey });
+    console.log('Fee claim request received:', { payerPublicKey, poolAddress: poolAddressInput });
 
     // Validate required fields
-    if (!payerPublicKey) {
+    if (!payerPublicKey || !poolAddressInput) {
       return res.status(400).json({
-        error: 'Missing required field: payerPublicKey'
+        error: 'Missing required fields: payerPublicKey and poolAddress'
       });
     }
 
@@ -140,23 +168,55 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       });
     }
 
+    // Validate pool address format
+    let poolAddress: PublicKey;
+    try {
+      poolAddress = new PublicKey(poolAddressInput);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid poolAddress format'
+      });
+    }
+
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    const DAMM_POOL_ADDRESS = process.env.DAMM_POOL_ADDRESS;
-    const PROTOCOL_PRIVATE_KEY = process.env.PROTOCOL_PRIVATE_KEY;
-    const FEE_DESTINATION_ADDRESS = process.env.FEE_DESTINATION_ADDRESS;
 
-    if (!RPC_URL || !DAMM_POOL_ADDRESS || !PROTOCOL_PRIVATE_KEY || !FEE_DESTINATION_ADDRESS) {
+    if (!RPC_URL) {
       return res.status(500).json({
         error: 'Server configuration incomplete. Missing required environment variables.'
       });
     }
 
+    // Get pool fee configuration
+    const feeConfig = getPoolFeeConfig(poolAddress.toBase58());
+    if (!feeConfig || feeConfig.length === 0) {
+      return res.status(400).json({
+        error: `Pool not supported for fee claiming. No fee configuration for pool: ${poolAddress.toBase58()}`
+      });
+    }
+
+    // Validate fee percentages sum to 100
+    const totalPercent = feeConfig.reduce((sum, r) => sum + r.percent, 0);
+    if (totalPercent !== 100) {
+      return res.status(500).json({
+        error: `Invalid fee configuration for pool. Percentages sum to ${totalPercent}, expected 100.`
+      });
+    }
+
+    // Get pool-specific LP private key using first 8 characters of pool address
+    const poolPrefix = poolAddress.toBase58().substring(0, 8);
+    const lpPrivateKeyEnvName = `LP_PRIVATE_KEY_${poolPrefix}`;
+    const lpPrivateKey = process.env[lpPrivateKeyEnvName];
+
+    if (!lpPrivateKey) {
+      return res.status(400).json({
+        error: `Pool not supported for fee claiming. No LP key configured for pool prefix: ${poolPrefix}`
+      });
+    }
+
     // Initialize connection and keypairs
     const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwner = Keypair.fromSecretKey(bs58.decode(PROTOCOL_PRIVATE_KEY));
-    const poolAddress = new PublicKey(DAMM_POOL_ADDRESS);
-    const destinationAddress = new PublicKey(FEE_DESTINATION_ADDRESS);
+    const lpOwner = Keypair.fromSecretKey(bs58.decode(lpPrivateKey));
 
     // Create CpAmm instance and get pool state
     const cpAmm = new CpAmm(connection);
@@ -174,15 +234,10 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
     // IMPORTANT: This endpoint only claims fees from the FIRST position
     // This is intentional to keep transaction size manageable and reduce complexity
     // If multiple positions exist, only the first position's fees will be claimed
-    // Calculate total unclaimed fees using SDK helper
-    let totalTokenAFees = new BN(0);
-    let totalTokenBFees = new BN(0);
-
-    for (const { positionState } of userPositions) {
-      const unclaimedFees = getUnClaimReward(poolState, positionState);
-      totalTokenAFees = totalTokenAFees.add(unclaimedFees.feeTokenA);
-      totalTokenBFees = totalTokenBFees.add(unclaimedFees.feeTokenB);
-    }
+    const { positionState } = userPositions[0];
+    const unclaimedFees = getUnClaimReward(poolState, positionState);
+    const totalTokenAFees = unclaimedFees.feeTokenA;
+    const totalTokenBFees = unclaimedFees.feeTokenB;
 
     // Check if there are any fees to claim
     if (totalTokenAFees.isZero() && totalTokenBFees.isZero()) {
@@ -219,22 +274,24 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       lpOwner.publicKey
     );
 
-    // Create LP owner's Token A ATA (required before claim)
+    // Create LP owner's Token A ATA only if there are Token A fees to claim
     // Token A is always an SPL token, so we need an ATA to receive it
-    combinedTx.add(
-      createAssociatedTokenAccountIdempotentInstruction(
-        payerPubKey,
-        tokenAAta,
-        lpOwner.publicKey,
-        poolState.tokenAMint,
-        tokenAProgram
-      )
-    );
+    if (!totalTokenAFees.isZero()) {
+      combinedTx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          payerPubKey,
+          tokenAAta,
+          lpOwner.publicKey,
+          poolState.tokenAMint,
+          tokenAProgram
+        )
+      );
+    }
 
-    // Only create Token B ATA if it's NOT native SOL
+    // Create LP owner's Token B ATA only if there are Token B fees AND it's NOT native SOL
     // If Token B is native SOL (NATIVE_MINT), the Meteora claim automatically unwraps it
     // to native SOL in the wallet, so no token account is needed
-    if (!isTokenBNativeSOL) {
+    if (!totalTokenBFees.isZero() && !isTokenBNativeSOL) {
       combinedTx.add(
         createAssociatedTokenAccountIdempotentInstruction(
           payerPubKey,
@@ -264,106 +321,100 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
     // Add all claim instructions to combined transaction
     combinedTx.add(...claimTx.instructions);
 
-    // Recalculate fees for first position only (since we're only claiming from the first position)
-    // This overwrites the total calculated earlier, ensuring we only transfer what was actually claimed
-    const { positionState } = userPositions[0];
-    const unclaimedFees = getUnClaimReward(poolState, positionState);
-    totalTokenAFees = unclaimedFees.feeTokenA;
-    totalTokenBFees = unclaimedFees.feeTokenB;
+    // Add transfer instructions for each fee recipient based on their percentage
+    for (const recipient of feeConfig) {
+      const destinationAddress = new PublicKey(recipient.address);
 
-    // Get destination token accounts
-    // Token A is always an SPL token, so we need the ATA address
-    const destTokenAAta = await getAssociatedTokenAddress(
-      poolState.tokenAMint,
-      destinationAddress
-    );
-    // For native SOL transfers, the destination is the wallet address itself (not an ATA)
-    // For SPL tokens, we need to get the ATA address
-    const destTokenBAta = isTokenBNativeSOL ? destinationAddress : await getAssociatedTokenAddress(
-      poolState.tokenBMint,
-      destinationAddress
-    );
+      // Calculate this recipient's share of fees
+      // Use basis points (percent * 1000) for precision with decimal percentages
+      const basisPoints = Math.round(recipient.percent * 1000);
+      const tokenATransferAmount = totalTokenAFees.mul(new BN(basisPoints)).div(new BN(100000));
+      const tokenBTransferAmount = totalTokenBFees.mul(new BN(basisPoints)).div(new BN(100000));
 
-    // Calculate 70% of claimed fees
-    const tokenATransferAmount = totalTokenAFees.mul(new BN(70)).div(new BN(100));
-    const tokenBTransferAmount = totalTokenBFees.mul(new BN(70)).div(new BN(100));
-
-    // Add ATA creation instruction for Token A destination (always SPL token)
-    // Token A is always an SPL token, so we need to ensure the destination has a token account
-    if (!tokenATransferAmount.isZero()) {
-      combinedTx.add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          payerPubKey,
-          destTokenAAta,
-          destinationAddress,
-          poolState.tokenAMint,
-          tokenAProgram
-        )
+      // Get destination token accounts
+      const destTokenAAta = await getAssociatedTokenAddress(
+        poolState.tokenAMint,
+        destinationAddress
       );
-    }
-
-    // Add ATA creation instruction for Token B destination (only if it's NOT native SOL)
-    // For native SOL, no ATA is needed since we transfer directly to the wallet
-    // For SPL tokens, we need to create the destination's token account
-    if (!tokenBTransferAmount.isZero() && !isTokenBNativeSOL) {
-      combinedTx.add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          payerPubKey,
-          destTokenBAta,
-          destinationAddress,
-          poolState.tokenBMint,
-          tokenBProgram
-        )
+      const destTokenBAta = isTokenBNativeSOL ? destinationAddress : await getAssociatedTokenAddress(
+        poolState.tokenBMint,
+        destinationAddress
       );
-    }
 
-    // Add transfer instruction for Token A (always an SPL token)
-    // Transfer 70% of claimed Token A fees from LP owner to destination using SPL Token program
-    if (!tokenATransferAmount.isZero()) {
-      combinedTx.add(
-        createTransferInstruction(
-          tokenAAta,
-          destTokenAAta,
-          lpOwner.publicKey,
-          BigInt(tokenATransferAmount.toString()),
-          [],
-          tokenAProgram
-        )
-      );
-    }
-
-    // Add transfer instruction for Token B
-    // The transfer method depends on whether Token B is native SOL or an SPL token
-    if (!tokenBTransferAmount.isZero()) {
-      if (isTokenBNativeSOL) {
-        // Transfer native SOL using SystemProgram.transfer
-        // After Meteora unwraps the wSOL, we have native SOL in the wallet
-        // So we use a regular SOL transfer (not SPL token transfer)
+      // Add ATA creation instruction for Token A destination (always SPL token)
+      if (!tokenATransferAmount.isZero()) {
         combinedTx.add(
-          SystemProgram.transfer({
-            fromPubkey: lpOwner.publicKey,
-            toPubkey: destinationAddress,
-            lamports: Number(tokenBTransferAmount.toString())
-          })
+          createAssociatedTokenAccountIdempotentInstruction(
+            payerPubKey,
+            destTokenAAta,
+            destinationAddress,
+            poolState.tokenAMint,
+            tokenAProgram
+          )
         );
-      } else {
-        // Transfer SPL token using Token Program
-        // For non-SOL tokens, we use standard SPL token transfer between ATAs
+      }
+
+      // Add ATA creation instruction for Token B destination (only if it's NOT native SOL)
+      if (!tokenBTransferAmount.isZero() && !isTokenBNativeSOL) {
         combinedTx.add(
-          createTransferInstruction(
-            tokenBAta,
+          createAssociatedTokenAccountIdempotentInstruction(
+            payerPubKey,
             destTokenBAta,
-            lpOwner.publicKey,
-            BigInt(tokenBTransferAmount.toString()),
-            [],
+            destinationAddress,
+            poolState.tokenBMint,
             tokenBProgram
           )
         );
+      }
+
+      // Add transfer instruction for Token A (always an SPL token)
+      if (!tokenATransferAmount.isZero()) {
+        combinedTx.add(
+          createTransferInstruction(
+            tokenAAta,
+            destTokenAAta,
+            lpOwner.publicKey,
+            BigInt(tokenATransferAmount.toString()),
+            [],
+            tokenAProgram
+          )
+        );
+      }
+
+      // Add transfer instruction for Token B
+      if (!tokenBTransferAmount.isZero()) {
+        if (isTokenBNativeSOL) {
+          // Transfer native SOL using SystemProgram.transfer
+          combinedTx.add(
+            SystemProgram.transfer({
+              fromPubkey: lpOwner.publicKey,
+              toPubkey: destinationAddress,
+              lamports: Number(tokenBTransferAmount.toString())
+            })
+          );
+        } else {
+          // Transfer SPL token using Token Program
+          combinedTx.add(
+            createTransferInstruction(
+              tokenBAta,
+              destTokenBAta,
+              lpOwner.publicKey,
+              BigInt(tokenBTransferAmount.toString()),
+              [],
+              tokenBProgram
+            )
+          );
+        }
       }
     }
 
     // Serialize the combined unsigned transaction
     const unsignedTransaction = bs58.encode(combinedTx.serialize({ requireAllSignatures: false }));
+
+    // Compute hash of unsigned transaction for integrity verification
+    const unsignedTransactionHash = crypto.createHash('sha256')
+      .update(combinedTx.serializeMessage())
+      .digest('hex');
 
     // Generate unique request ID
     const requestId = crypto.randomBytes(16).toString('hex');
@@ -373,18 +424,19 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
     console.log(`  Positions: ${userPositions.length} (claiming from position 1)`);
     console.log(`  Token A fees: ${totalTokenAFees.toString()}`);
     console.log(`  Token B fees: ${totalTokenBFees.toString()}`);
-    console.log(`  70% split to: ${destinationAddress.toBase58()}`);
+    console.log(`  Fee recipients: ${feeConfig.map(r => `${r.address.substring(0, 8)}...(${r.percent}%)`).join(', ')}`);
     console.log(`  Request ID: ${requestId}`);
 
     // Store transaction data in memory
     feeClaimRequests.set(requestId, {
       unsignedTransaction,
+      unsignedTransactionHash,
       poolAddress: poolAddress.toBase58(),
       tokenAMint: poolState.tokenAMint.toBase58(),
       tokenBMint: poolState.tokenBMint.toBase58(),
       lpOwnerAddress: lpOwner.publicKey.toBase58(),
       feePayerAddress: payerPubKey.toBase58(),
-      destinationAddress: destinationAddress.toBase58(),
+      feeRecipients: feeConfig,
       estimatedTokenAFees: totalTokenAFees.toString(),
       estimatedTokenBFees: totalTokenBFees.toString(),
       positionsCount: 1,
@@ -402,11 +454,10 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       totalPositions: userPositions.length,
       claimingPosition: 1,
       instructionsCount: combinedTx.instructions.length,
+      feeRecipients: feeConfig,
       estimatedFees: {
         tokenA: totalTokenAFees.toString(),
         tokenB: totalTokenBFees.toString(),
-        tokenATransfer: tokenATransferAmount.toString(),
-        tokenBTransfer: tokenBTransferAmount.toString(),
       },
       message: `Sign this transaction and submit to /fee-claim/confirm${isTokenBNativeSOL ? ' (Token B will be transferred as native SOL)' : ''}`
     });
@@ -426,16 +477,15 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
  * Security measures implemented:
  * 1. Lock system - Prevents concurrent claims for the same pool
  * 2. Blockhash validation - Prevents replay attacks
- * 3. Transaction structure validation - Prevents malicious instruction injection
- *    - Only allows specific program IDs (Token, ATA, ComputeBudget, Lighthouse, Meteora, System)
- *    - Validates instruction opcodes
- *    - Validates transfer authorities and destinations
- *    - Validates transfer amounts don't exceed expected values
+ * 3. Transaction hash verification - SHA-256 hash comparison ensures the exact
+ *    transaction built in /claim is submitted, preventing any tampering
  * 4. Fee payer signature verification - Ensures user authorized the transaction
  * 5. Request expiry - 10 minute timeout for pending claims
- * 6. Comprehensive logging - Transaction details logged for monitoring and troubleshooting
+ * 6. Request deletion on tamper detection - Prevents retry attacks
+ * 7. Comprehensive logging - Transaction details logged for monitoring
  *
- * No authorization required - destinations are hardcoded, fee payer only covers tx costs
+ * No authorization required - fee recipients are hardcoded in POOL_FEE_CONFIG,
+ * fee payer only covers tx costs and cannot redirect funds
  */
 
 router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => {
@@ -467,9 +517,9 @@ router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => 
     releaseLock = await acquireFeeClaimLock(feeClaimData.poolAddress);
     console.log('  Lock acquired');
 
-    // NOTE: No authorization check needed - destinations are hardcoded in environment variables
-    // Transaction validation ensures funds can ONLY go to FEE_DESTINATION_ADDRESS (70%) and LP owner (30%)
-    // Fee payer only covers transaction costs, cannot redirect funds to themselves
+    // NOTE: No authorization check needed - fee recipients are hardcoded in POOL_FEE_CONFIG
+    // Transaction hash verification ensures the exact transaction from /claim is submitted
+    // Fee payer only covers transaction costs, cannot redirect funds
     // This allows anyone to trigger fee claims, which is the intended design
 
     // Check if request is not too old (10 minutes timeout)
@@ -483,17 +533,27 @@ router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => 
 
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    const PROTOCOL_PRIVATE_KEY = process.env.PROTOCOL_PRIVATE_KEY;
 
-    if (!RPC_URL || !PROTOCOL_PRIVATE_KEY) {
+    if (!RPC_URL) {
       return res.status(500).json({
         error: 'Server configuration incomplete'
       });
     }
 
+    // Get pool-specific LP private key using first 8 characters of pool address
+    const poolPrefix = feeClaimData.poolAddress.substring(0, 8);
+    const lpPrivateKeyEnvName = `LP_PRIVATE_KEY_${poolPrefix}`;
+    const lpPrivateKey = process.env[lpPrivateKeyEnvName];
+
+    if (!lpPrivateKey) {
+      return res.status(400).json({
+        error: `Pool not supported for fee claiming. No LP key configured for pool prefix: ${poolPrefix}`
+      });
+    }
+
     // Initialize connection and LP owner keypair
     const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(PROTOCOL_PRIVATE_KEY));
+    const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(lpPrivateKey));
 
     // Deserialize and verify the transaction
     const expectedFeePayer = new PublicKey(feeClaimData.feePayerAddress);
@@ -587,218 +647,23 @@ router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => 
     }
 
     // ========================================================================
-    // CRITICAL SECURITY: Validate transaction structure
+    // CRITICAL SECURITY: Verify transaction hasn't been tampered with
     // ========================================================================
-    // Ensure only authorized instructions are present to prevent attacks
+    // Compare hash of received transaction message against stored hash from /claim
+    const receivedTransactionHash = crypto.createHash('sha256')
+      .update(transaction.serializeMessage())
+      .digest('hex');
 
-    console.log(`  Validating transaction structure (${transaction.instructions.length} instructions)...`);
-
-    // Define safe program IDs that wallets may add for optimization
-    const COMPUTE_BUDGET_PROGRAM_ID = ComputeBudgetProgram.programId;
-    const LIGHTHOUSE_PROGRAM_ID = new PublicKey("L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95");
-    const METEORA_CP_AMM_PROGRAM_ID = new PublicKey("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
-    const METEORA_DAMM_V2_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
-
-    // Parse stored data for validation
-    const lpOwnerAddress = new PublicKey(feeClaimData.lpOwnerAddress);
-    const destinationAddress = new PublicKey(feeClaimData.destinationAddress);
-    const tokenAMint = new PublicKey(feeClaimData.tokenAMint);
-    const tokenBMint = new PublicKey(feeClaimData.tokenBMint);
-
-    // Check if Token B is native SOL
-    const isTokenBNativeSOL = tokenBMint.equals(NATIVE_MINT);
-
-    // Validate ONLY allowed instruction types are present
-    for (let i = 0; i < transaction.instructions.length; i++) {
-      const instruction = transaction.instructions[i];
-      const programId = instruction.programId;
-
-      // Allow safe programs: TOKEN_PROGRAM, ASSOCIATED_TOKEN_PROGRAM, ComputeBudget, Lighthouse, Meteora CP AMM, and Meteora DAMM v2
-      if (!programId.equals(TOKEN_PROGRAM_ID) &&
-          !programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID) &&
-          !programId.equals(COMPUTE_BUDGET_PROGRAM_ID) &&
-          !programId.equals(LIGHTHOUSE_PROGRAM_ID) &&
-          !programId.equals(METEORA_CP_AMM_PROGRAM_ID) &&
-          !programId.equals(METEORA_DAMM_V2_PROGRAM_ID) &&
-          !programId.equals(SystemProgram.programId)) {
-        return res.status(400).json({
-          error: 'Invalid transaction: unauthorized program instruction detected',
-          details: `Instruction ${i} uses unauthorized program: ${programId.toBase58()}`
-        });
-      }
-
-      // Validate TOKEN_PROGRAM instructions
-      if (programId.equals(TOKEN_PROGRAM_ID)) {
-        const opcode = instruction.data[0];
-
-        // Allow Transfer (3), CloseAccount (9), and TransferChecked (12) opcodes only
-        if (opcode !== 3 && opcode !== 9 && opcode !== 12) {
-          return res.status(400).json({
-            error: 'Invalid transaction: unauthorized token instruction detected',
-            details: `Instruction ${i} has invalid opcode: ${opcode}. Only Transfer (3), CloseAccount (9), and TransferChecked (12) allowed.`
-          });
-        }
-
-        // Validate CloseAccount instructions
-        if (opcode === 9) {
-          // CloseAccount: accounts are [account, destination, authority]
-          if (instruction.keys.length >= 3) {
-            const authority = instruction.keys[2].pubkey;
-            const destination = instruction.keys[1].pubkey;
-
-            // Authority must be LP owner
-            if (!authority.equals(lpOwnerAddress)) {
-              return res.status(400).json({
-                error: 'Invalid transaction: close account authority must be LP owner',
-                details: `Instruction ${i} authority ${authority.toBase58()} does not match LP owner ${lpOwnerAddress.toBase58()}`
-              });
-            }
-
-            // Destination for rent refund must be LP owner or destination address
-            if (!destination.equals(lpOwnerAddress) && !destination.equals(destinationAddress)) {
-              return res.status(400).json({
-                error: 'Invalid transaction: close account destination not authorized',
-                details: `Instruction ${i} destination ${destination.toBase58()} must be LP owner or destination address`
-              });
-            }
-          }
-        }
-
-        // Validate transfer instructions have correct authority (LP owner)
-        // For Transfer: accounts are [source, destination, authority]
-        // For TransferChecked: accounts are [source, mint, destination, authority]
-        if (opcode === 3 || opcode === 12) {
-          const authorityIndex = opcode === 3 ? 2 : 3;
-
-          if (instruction.keys.length > authorityIndex) {
-          const authority = instruction.keys[authorityIndex].pubkey;
-
-          if (!authority.equals(lpOwnerAddress)) {
-            return res.status(400).json({
-              error: 'Invalid transaction: transfer authority must be LP owner',
-              details: `Instruction ${i} authority ${authority.toBase58()} does not match LP owner ${lpOwnerAddress.toBase58()}`
-            });
-          }
-
-          // Validate destination is the expected destination address or LP owner's ATA
-          const destIndex = opcode === 3 ? 1 : 2;
-          const destination = instruction.keys[destIndex].pubkey;
-
-          // Get expected destination token accounts
-          const destTokenAAta = await getAssociatedTokenAddress(tokenAMint, destinationAddress);
-          const destTokenBAta = isTokenBNativeSOL ? destinationAddress : await getAssociatedTokenAddress(tokenBMint, destinationAddress);
-          const lpTokenAAta = await getAssociatedTokenAddress(tokenAMint, lpOwnerAddress);
-          const lpTokenBAta = isTokenBNativeSOL ? lpOwnerAddress : await getAssociatedTokenAddress(tokenBMint, lpOwnerAddress);
-
-          // Destination must be one of: destination's Token A/B ATA, or LP owner's Token A/B ATA (for claims)
-          const validDestinations = [
-            destTokenAAta.toBase58(),
-            destTokenBAta.toBase58(),
-            lpTokenAAta.toBase58(),
-            lpTokenBAta.toBase58()
-          ];
-
-          if (!validDestinations.includes(destination.toBase58())) {
-            return res.status(400).json({
-              error: 'Invalid transaction: transfer destination not authorized',
-              details: `Instruction ${i} destination ${destination.toBase58()} is not in allowed list`
-            });
-          }
-
-          // Validate transfer amounts don't exceed stored expected amounts
-          const amountBytes = Buffer.from(instruction.data.subarray(1, 9));
-          const transferAmount = new BN(amountBytes, 'le');
-
-          // Determine which token is being transferred by checking destination
-          const destinationKey = destination.toBase58();
-          const isTokenATransfer = destinationKey === destTokenAAta.toBase58() || destinationKey === lpTokenAAta.toBase58();
-          const isTokenBTransfer = destinationKey === destTokenBAta.toBase58() || destinationKey === lpTokenBAta.toBase58();
-
-          // Validate amount against the appropriate token's expected fees
-          if (isTokenATransfer) {
-            const maxTokenAFees = new BN(feeClaimData.estimatedTokenAFees);
-            if (transferAmount.gt(maxTokenAFees)) {
-              return res.status(400).json({
-                error: 'Invalid transaction: Token A transfer amount exceeds expected fees',
-                details: `Instruction ${i} amount ${transferAmount.toString()} exceeds Token A fees ${maxTokenAFees.toString()}`
-              });
-            }
-          } else if (isTokenBTransfer) {
-            const maxTokenBFees = new BN(feeClaimData.estimatedTokenBFees);
-            if (transferAmount.gt(maxTokenBFees)) {
-              return res.status(400).json({
-                error: 'Invalid transaction: Token B transfer amount exceeds expected fees',
-                details: `Instruction ${i} amount ${transferAmount.toString()} exceeds Token B fees ${maxTokenBFees.toString()}`
-              });
-            }
-          }
-          }
-        }
-      }
-
-      // Validate ASSOCIATED_TOKEN_PROGRAM instructions are only CreateIdempotent (opcode 1)
-      if (programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)) {
-        if (instruction.data.length < 1 || instruction.data[0] !== 1) {
-          return res.status(400).json({
-            error: 'Invalid transaction: unauthorized ATA instruction detected',
-            details: `Instruction ${i} has invalid ATA opcode: ${instruction.data[0]}`
-          });
-        }
-      }
-
-      // Validate SystemProgram instructions (for native SOL transfers)
-      // SystemProgram is only used when Token B is native SOL (after Meteora unwraps wSOL)
-      if (programId.equals(SystemProgram.programId)) {
-        // Decode instruction type (first 4 bytes are instruction discriminator)
-        const instructionType = instruction.data.readUInt32LE(0);
-
-        // Allow Transfer (2) instruction only
-        // This prevents other system operations like CreateAccount, Allocate, etc.
-        if (instructionType !== 2) {
-          return res.status(400).json({
-            error: 'Invalid transaction: unauthorized system program instruction',
-            details: `Instruction ${i} has invalid system instruction type: ${instructionType}`
-          });
-        }
-
-        // Validate transfer is from LP owner and to authorized destination
-        // For SystemProgram.transfer: keys[0] = from, keys[1] = to
-        if (instruction.keys.length >= 2) {
-          const from = instruction.keys[0].pubkey;
-          const to = instruction.keys[1].pubkey;
-
-          // Source must be the LP owner (who received the unwrapped SOL)
-          if (!from.equals(lpOwnerAddress)) {
-            return res.status(400).json({
-              error: 'Invalid transaction: system transfer must be from LP owner',
-              details: `Instruction ${i} from ${from.toBase58()} does not match LP owner ${lpOwnerAddress.toBase58()}`
-            });
-          }
-
-          // Destination must be the hardcoded fee destination address (70% recipient)
-          if (!to.equals(destinationAddress)) {
-            return res.status(400).json({
-              error: 'Invalid transaction: system transfer destination not authorized',
-              details: `Instruction ${i} destination ${to.toBase58()} does not match expected ${destinationAddress.toBase58()}`
-            });
-          }
-
-          // Validate transfer amount doesn't exceed Token B fees (only if Token B is native SOL)
-          // Amount is encoded as 8 bytes starting at offset 4 (after the 4-byte instruction discriminator)
-          if (isTokenBNativeSOL && instruction.data.length >= 12) {
-            const amountBytes = Buffer.from(instruction.data.subarray(4, 12));
-            const transferAmount = new BN(amountBytes, 'le');
-            const maxTokenBFees = new BN(feeClaimData.estimatedTokenBFees);
-
-            if (transferAmount.gt(maxTokenBFees)) {
-              return res.status(400).json({
-                error: 'Invalid transaction: SOL transfer amount exceeds expected Token B fees',
-                details: `Instruction ${i} amount ${transferAmount.toString()} exceeds Token B fees ${maxTokenBFees.toString()}`
-              });
-            }
-          }
-        }
-      }
+    if (receivedTransactionHash !== feeClaimData.unsignedTransactionHash) {
+      console.log(`  ⚠️  Transaction hash mismatch detected`);
+      console.log(`    Expected: ${feeClaimData.unsignedTransactionHash.substring(0, 16)}...`);
+      console.log(`    Received: ${receivedTransactionHash.substring(0, 16)}...`);
+      // Delete the request to prevent further attempts with tampered transactions
+      feeClaimRequests.delete(requestId);
+      return res.status(400).json({
+        error: 'Transaction verification failed: transaction has been modified',
+        details: 'Transaction structure does not match the original unsigned transaction'
+      });
     }
 
     console.log('  ✓ Transaction structure validated');
@@ -819,7 +684,7 @@ router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => 
     console.log(`  Pool: ${feeClaimData.poolAddress}`);
     console.log(`  Token A: ${feeClaimData.tokenAMint}, Fees: ${feeClaimData.estimatedTokenAFees}`);
     console.log(`  Token B: ${feeClaimData.tokenBMint}, Fees: ${feeClaimData.estimatedTokenBFees}`);
-    console.log(`  Destination: ${feeClaimData.destinationAddress} (70% split)`);
+    console.log(`  Fee recipients: ${feeClaimData.feeRecipients.map(r => `${r.address.substring(0, 8)}...(${r.percent}%)`).join(', ')}`);
     console.log(`  Solscan: https://solscan.io/tx/${signature}`);
 
     // Wait for confirmation
@@ -844,7 +709,7 @@ router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => 
       poolAddress: feeClaimData.poolAddress,
       tokenAMint: feeClaimData.tokenAMint,
       tokenBMint: feeClaimData.tokenBMint,
-      destinationAddress: feeClaimData.destinationAddress,
+      feeRecipients: feeClaimData.feeRecipients,
       positionsCount: feeClaimData.positionsCount,
       estimatedFees: {
         tokenA: feeClaimData.estimatedTokenAFees,

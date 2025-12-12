@@ -13,6 +13,8 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  Transaction,
+  TransactionMessage,
   VersionedTransaction,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
@@ -31,8 +33,9 @@ const CONFIG = {
   // RPC endpoint
   RPC_URL: process.env.RPC_URL || 'https://api.mainnet-beta.solana.com',
 
-  // Wallet private key (base58 encoded)
-  WALLET_PRIVATE_KEY: process.env.BUYBACK_WALLET_PRIVATE_KEY || '',
+  // Protocol fee wallet private key (base58 encoded)
+  // This is the wallet that receives the protocol's share of LP fees (7rajfxUQBHRXiSrQWQo9FZ2zBbLy4Xvh9yYfa7tkvj4U)
+  WALLET_PRIVATE_KEY: process.env.FEE_WALLET_PRIVATE_KEY || '',
 
   // Token addresses
   ZC_MINT: process.env.ZC_MINT || 'YOUR_ZC_TOKEN_MINT_ADDRESS',
@@ -40,13 +43,12 @@ const CONFIG = {
 
   // LP pool addresses to claim fees from
   LP_POOLS: [
-    // Add your LP pool addresses here
-    // 'POOL_ADDRESS_1',
-    // 'POOL_ADDRESS_2',
+    'BTYhoRPEUXs8ESYFjKDXRYf5qjH4chzZoBokMEApKEfJ', // SolPay
+    'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1', // SurfCash
   ] as string[],
 
-  // API endpoints for fee claiming (your custom endpoints)
-  FEE_CLAIM_API_BASE: process.env.FEE_CLAIM_API_BASE || 'https://your-api.com',
+  // API endpoint for fee claiming (zcombinator api-server)
+  FEE_CLAIM_API_BASE: process.env.FEE_CLAIM_API_BASE || 'https://api.zcombinator.io',
 
   // Reserve SOL for gas (0.1 SOL)
   SOL_RESERVE_LAMPORTS: BigInt(0.1 * LAMPORTS_PER_SOL),
@@ -62,18 +64,38 @@ const CONFIG = {
 // TYPES
 // ============================================================================
 
+interface FeeRecipient {
+  address: string;
+  percent: number;
+}
+
 interface FeeClaimPrepareResponse {
-  transaction: string; // base64 encoded unsigned transaction
+  success: boolean;
+  transaction: string; // base58 encoded unsigned transaction
   requestId: string;
-  feesClaimable: {
-    sol: string;
-    token: string;
+  poolAddress: string;
+  tokenAMint: string;
+  tokenBMint: string;
+  isTokenBNativeSOL: boolean;
+  feeRecipients: FeeRecipient[];
+  estimatedFees: {
+    tokenA: string;
+    tokenB: string;
   };
 }
 
 interface FeeClaimConfirmResponse {
   success: boolean;
   signature: string;
+  poolAddress: string;
+  tokenAMint: string;
+  tokenBMint: string;
+  feeRecipients: FeeRecipient[];
+  positionsCount: number;
+  estimatedFees: {
+    tokenA: string;
+    tokenB: string;
+  };
 }
 
 interface JupiterQuoteResponse {
@@ -120,53 +142,40 @@ async function sleep(ms: number): Promise<void> {
 }
 
 // ============================================================================
-// FEE CLAIMING (PSEUDOCODE - Replace with actual implementation)
+// FEE CLAIMING (via zcombinator api-server)
 // ============================================================================
 
 async function prepareFeeClaim(
-  poolAddress: string,
-  walletAddress: string
+  walletAddress: string,
+  poolAddress: string
 ): Promise<FeeClaimPrepareResponse> {
-  // TODO: Replace with actual API call
-  // This should call your custom fee claim API endpoint
-
-  /*
-  const response = await fetch(`${CONFIG.FEE_CLAIM_API_BASE}/pool/${poolAddress}/claim/prepare`, {
+  const response = await fetch(`${CONFIG.FEE_CLAIM_API_BASE}/fee-claim/claim`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': process.env.FEE_CLAIM_API_KEY || '',
     },
     body: JSON.stringify({
-      wallet: walletAddress,
+      payerPublicKey: walletAddress,
+      poolAddress,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to prepare fee claim: ${response.statusText}`);
+    const errorBody = await response.text();
+    throw new Error(`Failed to prepare fee claim: ${response.statusText} - ${errorBody}`);
   }
 
   return response.json();
-  */
-
-  // Placeholder - remove when implementing
-  throw new Error('prepareFeeClaim not implemented - replace with actual API call');
 }
 
 async function confirmFeeClaim(
-  poolAddress: string,
   signedTransaction: string,
   requestId: string
 ): Promise<FeeClaimConfirmResponse> {
-  // TODO: Replace with actual API call
-  // This should call your custom fee claim confirm endpoint
-
-  /*
-  const response = await fetch(`${CONFIG.FEE_CLAIM_API_BASE}/pool/${poolAddress}/claim/confirm`, {
+  const response = await fetch(`${CONFIG.FEE_CLAIM_API_BASE}/fee-claim/confirm`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': process.env.FEE_CLAIM_API_KEY || '',
     },
     body: JSON.stringify({
       signedTransaction,
@@ -175,18 +184,14 @@ async function confirmFeeClaim(
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to confirm fee claim: ${response.statusText}`);
+    const errorBody = await response.text();
+    throw new Error(`Failed to confirm fee claim: ${response.statusText} - ${errorBody}`);
   }
 
   return response.json();
-  */
-
-  // Placeholder - remove when implementing
-  throw new Error('confirmFeeClaim not implemented - replace with actual API call');
 }
 
 async function claimFeesFromPool(
-  connection: Connection,
   wallet: Keypair,
   poolAddress: string
 ): Promise<string | null> {
@@ -194,31 +199,35 @@ async function claimFeesFromPool(
 
   try {
     // Step 1: Prepare the fee claim transaction
-    const prepareResponse = await prepareFeeClaim(poolAddress, wallet.publicKey.toBase58());
+    const prepareResponse = await prepareFeeClaim(wallet.publicKey.toBase58(), poolAddress);
 
-    log(`Fees claimable from ${poolAddress}:`, prepareResponse.feesClaimable);
+    if (!prepareResponse.success) {
+      log(`No fees available to claim from pool ${poolAddress}`);
+      return null;
+    }
+
+    log(`Fees claimable from pool ${prepareResponse.poolAddress}:`, prepareResponse.estimatedFees);
 
     // Check if there are fees to claim
-    const solFees = BigInt(prepareResponse.feesClaimable.sol);
-    const tokenFees = BigInt(prepareResponse.feesClaimable.token);
+    const tokenAFees = BigInt(prepareResponse.estimatedFees.tokenA);
+    const tokenBFees = BigInt(prepareResponse.estimatedFees.tokenB);
 
-    if (solFees === BigInt(0) && tokenFees === BigInt(0)) {
+    if (tokenAFees === BigInt(0) && tokenBFees === BigInt(0)) {
       log(`No fees to claim from pool ${poolAddress}`);
       return null;
     }
 
-    // Step 2: Deserialize and sign the transaction
-    const txBuffer = Buffer.from(prepareResponse.transaction, 'base64');
-    const transaction = VersionedTransaction.deserialize(txBuffer);
-    transaction.sign([wallet]);
+    // Step 2: Deserialize and sign the transaction (base58 encoded)
+    const txBuffer = bs58.decode(prepareResponse.transaction);
+    const transaction = Transaction.from(txBuffer);
+    transaction.partialSign(wallet);
 
-    // Step 3: Serialize the signed transaction
-    const signedTxBase64 = Buffer.from(transaction.serialize()).toString('base64');
+    // Step 3: Serialize the signed transaction (base58 for API)
+    const signedTxBase58 = bs58.encode(transaction.serialize());
 
     // Step 4: Submit to the confirm endpoint
     const confirmResponse = await confirmFeeClaim(
-      poolAddress,
-      signedTxBase64,
+      signedTxBase58,
       prepareResponse.requestId
     );
 
@@ -364,8 +373,6 @@ async function burnZcTokens(
     // Build transaction
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
 
-    // Import TransactionMessage and create versioned transaction
-    const { TransactionMessage } = await import('@solana/web3.js');
     const messageV0 = new TransactionMessage({
       payerKey: wallet.publicKey,
       recentBlockhash: blockhash,
@@ -433,11 +440,7 @@ async function main() {
 
   // Validate configuration
   if (!CONFIG.WALLET_PRIVATE_KEY) {
-    throw new Error('BUYBACK_WALLET_PRIVATE_KEY environment variable is required');
-  }
-
-  if (CONFIG.LP_POOLS.length === 0) {
-    log('Warning: No LP pools configured. Skipping fee claiming.');
+    throw new Error('FEE_WALLET_PRIVATE_KEY environment variable is required');
   }
 
   // Initialize connection and wallet
@@ -451,10 +454,14 @@ async function main() {
   // ========================================================================
   log('\n--- STEP 1: Claiming LP Fees ---');
 
+  if (CONFIG.LP_POOLS.length === 0) {
+    log('Warning: No LP pools configured. Skipping fee claiming.');
+  }
+
   const claimResults: { pool: string; signature: string | null }[] = [];
 
   for (const poolAddress of CONFIG.LP_POOLS) {
-    const signature = await claimFeesFromPool(connection, wallet, poolAddress);
+    const signature = await claimFeesFromPool(wallet, poolAddress);
     claimResults.push({ pool: poolAddress, signature });
 
     // Small delay between claims to avoid rate limiting
