@@ -38,20 +38,25 @@ const CONFIG = {
   WALLET_PRIVATE_KEY: process.env.FEE_WALLET_PRIVATE_KEY || '',
 
   // Token addresses
-  ZC_MINT: process.env.ZC_MINT || 'YOUR_ZC_TOKEN_MINT_ADDRESS',
+  ZC_MINT: 'GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC',
   USDC_MINT: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // Mainnet USDC
 
-  // LP pool addresses to claim fees from
-  LP_POOLS: [
+  // DAMM pool addresses to claim fees from (Dynamic AMM v2)
+  DAMM_POOLS: [
     'BTYhoRPEUXs8ESYFjKDXRYf5qjH4chzZoBokMEApKEfJ', // SolPay
     'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1', // SurfCash
+  ] as string[],
+
+  // DLMM pool addresses to claim fees from (Dynamic Liquidity Market Maker)
+  DLMM_POOLS: [
+    '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2', // ZC DLMM pool
   ] as string[],
 
   // API endpoint for fee claiming (zcombinator api-server)
   FEE_CLAIM_API_BASE: process.env.FEE_CLAIM_API_BASE || 'https://api.zcombinator.io',
 
   // Reserve SOL for gas (0.1 SOL)
-  SOL_RESERVE_LAMPORTS: BigInt(0.1 * LAMPORTS_PER_SOL),
+  SOL_RESERVE_LAMPORTS: BigInt(100_000_000),
 
   // Jupiter API
   JUPITER_API_URL: 'https://quote-api.jup.ag/v6',
@@ -95,6 +100,42 @@ interface FeeClaimConfirmResponse {
   estimatedFees: {
     tokenA: string;
     tokenB: string;
+  };
+}
+
+// DLMM API response types (handles multiple transactions)
+interface DlmmFeeClaimPrepareResponse {
+  success: boolean;
+  transactions: string[]; // Array of base58 encoded unsigned transactions
+  requestId: string;
+  poolAddress: string;
+  tokenXMint: string;
+  tokenYMint: string;
+  isTokenXNativeSOL: boolean;
+  isTokenYNativeSOL: boolean;
+  feeRecipients: FeeRecipient[];
+  transactionCount: number;
+  instructionsCount: number;
+  positionAddress: string;
+  totalPositions: number;
+  estimatedFees: {
+    tokenX: string;
+    tokenY: string;
+  };
+}
+
+interface DlmmFeeClaimConfirmResponse {
+  success: boolean;
+  signatures: string[];
+  poolAddress: string;
+  tokenXMint: string;
+  tokenYMint: string;
+  feeRecipients: FeeRecipient[];
+  transactionCount: number;
+  positionAddress: string;
+  estimatedFees: {
+    tokenX: string;
+    tokenY: string;
   };
 }
 
@@ -142,7 +183,7 @@ async function sleep(ms: number): Promise<void> {
 }
 
 // ============================================================================
-// FEE CLAIMING (via zcombinator api-server)
+// DAMM FEE CLAIMING (via zcombinator api-server)
 // ============================================================================
 
 async function prepareFeeClaim(
@@ -239,7 +280,114 @@ async function claimFeesFromPool(
       return null;
     }
   } catch (error) {
-    logError(`Error claiming fees from pool ${poolAddress}`, error);
+    logError(`Error claiming fees from DAMM pool ${poolAddress}`, error);
+    return null;
+  }
+}
+
+// ============================================================================
+// DLMM FEE CLAIMING (via zcombinator api-server)
+// ============================================================================
+
+async function prepareDlmmFeeClaim(
+  walletAddress: string,
+  poolAddress: string
+): Promise<DlmmFeeClaimPrepareResponse> {
+  const response = await fetch(`${CONFIG.FEE_CLAIM_API_BASE}/dlmm-fee-claim/claim`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      payerPublicKey: walletAddress,
+      poolAddress,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to prepare DLMM fee claim: ${response.statusText} - ${errorBody}`);
+  }
+
+  return response.json();
+}
+
+async function confirmDlmmFeeClaim(
+  signedTransactions: string[],
+  requestId: string
+): Promise<DlmmFeeClaimConfirmResponse> {
+  const response = await fetch(`${CONFIG.FEE_CLAIM_API_BASE}/dlmm-fee-claim/confirm`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      signedTransactions,
+      requestId,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to confirm DLMM fee claim: ${response.statusText} - ${errorBody}`);
+  }
+
+  return response.json();
+}
+
+async function claimFeesFromDlmmPool(
+  wallet: Keypair,
+  poolAddress: string
+): Promise<string[] | null> {
+  log(`Claiming fees from DLMM pool: ${poolAddress}`);
+
+  try {
+    // Step 1: Prepare the fee claim transactions
+    const prepareResponse = await prepareDlmmFeeClaim(wallet.publicKey.toBase58(), poolAddress);
+
+    if (!prepareResponse.success) {
+      log(`No fees available to claim from DLMM pool ${poolAddress}`);
+      return null;
+    }
+
+    log(`DLMM fees claimable from pool ${prepareResponse.poolAddress}:`, prepareResponse.estimatedFees);
+    log(`Transaction count: ${prepareResponse.transactionCount}`);
+
+    // Check if there are fees to claim
+    const tokenXFees = BigInt(prepareResponse.estimatedFees.tokenX);
+    const tokenYFees = BigInt(prepareResponse.estimatedFees.tokenY);
+
+    if (tokenXFees === BigInt(0) && tokenYFees === BigInt(0)) {
+      log(`No fees to claim from DLMM pool ${poolAddress}`);
+      return null;
+    }
+
+    // Step 2: Sign all transactions
+    const signedTransactions: string[] = [];
+
+    for (let i = 0; i < prepareResponse.transactions.length; i++) {
+      const txBuffer = bs58.decode(prepareResponse.transactions[i]);
+      const transaction = Transaction.from(txBuffer);
+      transaction.partialSign(wallet);
+      signedTransactions.push(bs58.encode(transaction.serialize({ requireAllSignatures: false })));
+      log(`Signed DLMM transaction ${i + 1}/${prepareResponse.transactions.length}`);
+    }
+
+    // Step 3: Submit all signed transactions to the confirm endpoint
+    const confirmResponse = await confirmDlmmFeeClaim(
+      signedTransactions,
+      prepareResponse.requestId
+    );
+
+    if (confirmResponse.success) {
+      log(`Successfully claimed fees from DLMM ${poolAddress}. Signatures:`, confirmResponse.signatures);
+      return confirmResponse.signatures;
+    } else {
+      logError(`DLMM fee claim failed for pool ${poolAddress}`, confirmResponse);
+      return null;
+    }
+  } catch (error) {
+    logError(`Error claiming fees from DLMM pool ${poolAddress}`, error);
     return null;
   }
 }
@@ -450,28 +598,49 @@ async function main() {
   log(`Wallet address: ${wallet.publicKey.toBase58()}`);
 
   // ========================================================================
-  // STEP 1: Claim fees from all LP pools
+  // STEP 1: Claim fees from all LP pools (DAMM and DLMM)
   // ========================================================================
   log('\n--- STEP 1: Claiming LP Fees ---');
 
-  if (CONFIG.LP_POOLS.length === 0) {
-    log('Warning: No LP pools configured. Skipping fee claiming.');
+  // Track results for both DAMM and DLMM claims
+  const dammClaimResults: { pool: string; signature: string | null }[] = [];
+  const dlmmClaimResults: { pool: string; signatures: string[] | null }[] = [];
+
+  // Claim from DAMM pools
+  if (CONFIG.DAMM_POOLS.length === 0) {
+    log('No DAMM pools configured.');
+  } else {
+    log(`Claiming from ${CONFIG.DAMM_POOLS.length} DAMM pool(s)...`);
+    for (const poolAddress of CONFIG.DAMM_POOLS) {
+      const signature = await claimFeesFromPool(wallet, poolAddress);
+      dammClaimResults.push({ pool: poolAddress, signature });
+
+      // Small delay between claims to avoid rate limiting
+      await sleep(1000);
+    }
   }
 
-  const claimResults: { pool: string; signature: string | null }[] = [];
+  // Claim from DLMM pools
+  if (CONFIG.DLMM_POOLS.length === 0) {
+    log('No DLMM pools configured.');
+  } else {
+    log(`Claiming from ${CONFIG.DLMM_POOLS.length} DLMM pool(s)...`);
+    for (const poolAddress of CONFIG.DLMM_POOLS) {
+      const signatures = await claimFeesFromDlmmPool(wallet, poolAddress);
+      dlmmClaimResults.push({ pool: poolAddress, signatures });
 
-  for (const poolAddress of CONFIG.LP_POOLS) {
-    const signature = await claimFeesFromPool(wallet, poolAddress);
-    claimResults.push({ pool: poolAddress, signature });
-
-    // Small delay between claims to avoid rate limiting
-    await sleep(1000);
+      // Small delay between claims to avoid rate limiting
+      await sleep(1000);
+    }
   }
 
-  log('Fee claim results:', claimResults);
+  log('DAMM fee claim results:', dammClaimResults);
+  log('DLMM fee claim results:', dlmmClaimResults);
 
   // Wait for claims to settle
-  if (claimResults.some((r) => r.signature !== null)) {
+  const anyDammClaims = dammClaimResults.some((r) => r.signature !== null);
+  const anyDlmmClaims = dlmmClaimResults.some((r) => r.signatures !== null);
+  if (anyDammClaims || anyDlmmClaims) {
     log('Waiting for fee claims to settle...');
     await sleep(5000);
   }
