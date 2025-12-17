@@ -29,6 +29,7 @@ import {
 import claimsRouter from './routes/claims';
 import presaleRouter from './routes/presale';
 import feeClaimRouter from './routes/fee-claim';
+import dlmmFeeClaimRouter from './routes/dlmm-fee-claim';
 import dammLiquidityRouter from './routes/damm-liquidity';
 import dlmmLiquidityRouter from './routes/dlmm-liquidity';
 import icoRouter from './routes/ico';
@@ -99,8 +100,11 @@ app.use('/claims', claimsRouter);
 // Mount presale routes
 app.use('/presale', presaleRouter);
 
-// Mount fee claim routes
+// Mount fee claim routes (DAMM)
 app.use('/fee-claim', feeClaimRouter);
+
+// Mount DLMM fee claim routes
+app.use('/dlmm-fee-claim', dlmmFeeClaimRouter);
 
 // Mount DAMM liquidity routes
 app.use('/damm', dammLiquidityRouter);
@@ -362,6 +366,8 @@ async function startServer() {
       console.log(`  POST /confirm-launch                        - Confirm partially signed transaction`);
       console.log(`  POST /fee-claim/claim                       - Build fee claim transaction for Meteora DAMM v2`);
       console.log(`  POST /fee-claim/confirm                     - Confirm fee claim transaction`);
+      console.log(`  POST /dlmm-fee-claim/claim                  - Build fee claim transaction for Meteora DLMM`);
+      console.log(`  POST /dlmm-fee-claim/confirm                - Confirm DLMM fee claim transaction`);
       console.log(`  POST /damm/withdraw/build                   - Build DAMM liquidity withdrawal transaction`);
       console.log(`  POST /damm/withdraw/confirm                 - Confirm DAMM withdrawal (manager only)`);
       console.log(`  POST /damm/deposit/build                    - Build DAMM liquidity deposit transaction`);
