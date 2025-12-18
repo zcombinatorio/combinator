@@ -58,7 +58,7 @@ const request = {
 };
 
 // 5. POST to API
-const response = await fetch("https://api.combinator.xyz/dao/parent", {
+const response = await fetch("https://api.zcombinator.io/dao/parent", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(request),
@@ -70,7 +70,7 @@ const response = await fetch("https://api.combinator.xyz/dao/parent", {
 ## Base URL
 
 ```
-https://api.combinator.xyz
+https://api.zcombinator.io
 ```
 
 ---
@@ -107,7 +107,7 @@ Creates a new parent DAO with its own liquidity pool, treasury, and mint authori
 **Example:**
 
 ```bash
-curl -X POST https://api.combinator.xyz/dao/parent \
+curl -X POST https://api.zcombinator.io/dao/parent \
   -H "Content-Type: application/json" \
   -d '{
     "wallet": "YourWalletAddress...",
@@ -307,6 +307,126 @@ Any 2 of 3 signatures required to move treasury funds. 2 of the 3 keys are futar
 | 2 | Futarchy Mint Key B | Futarchy governed |
 
 Both signatures required to mint new tokens. Both keys are futarchy governed.
+
+---
+
+## Usage Examples
+
+### Setup
+
+```typescript
+import { Keypair } from "@solana/web3.js";
+import { sha256 } from "@noble/hashes/sha256";
+import nacl from "tweetnacl";
+import bs58 from "bs58";
+
+// Load keypair from file or environment
+const secretKey = bs58.decode(process.env.WALLET_PRIVATE_KEY!);
+const keypair = Keypair.fromSecretKey(secretKey);
+```
+
+### Helper Function
+
+```typescript
+async function signedRequest<T>(
+  endpoint: string,
+  body: Record<string, any>,
+  keypair: Keypair
+): Promise<T> {
+  // 1. Add wallet to body
+  const bodyWithWallet = {
+    wallet: keypair.publicKey.toBase58(),
+    ...body,
+  };
+
+  // 2. Hash the stringified body
+  const hash = sha256(JSON.stringify(bodyWithWallet));
+
+  // 3. Sign the hash
+  const signature = nacl.sign.detached(hash, keypair.secretKey);
+
+  // 4. Build final request with signed_hash
+  const request = {
+    ...bodyWithWallet,
+    signed_hash: bs58.encode(signature),
+  };
+
+  // 5. POST to API
+  const response = await fetch(`https://api.zcombinator.io${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+```
+
+### Create Parent DAO
+
+```typescript
+const dao = await signedRequest<DaoResponse>("/dao/parent", {
+  token_mint: "YourTokenMintAddress...",
+  treasury_cosigner: keypair.publicKey.toBase58(),
+  pool_address: "YourPoolAddress...",
+}, keypair);
+
+console.log("DAO created:", dao.dao_pda);
+console.log("Transfer LP to:", dao.admin_wallet);
+console.log("Transfer treasury to:", dao.treasury_multisig);
+console.log("Transfer mint authority to:", dao.mint_multisig);
+```
+
+### Create Child DAO
+
+```typescript
+const childDao = await signedRequest<DaoResponse>("/dao/child", {
+  parent_pda: "ParentDaoPdaAddress...",
+  treasury_cosigner: keypair.publicKey.toBase58(),
+}, keypair); // keypair must be the parent DAO creator
+
+console.log("Child DAO created:", childDao.dao_pda);
+```
+
+### Add Proposer
+
+```typescript
+const result = await signedRequest<ProposerResponse>("/dao/proposer/add", {
+  dao_pda: "DaoPdaAddress...",
+  proposer: "ProposerWalletAddress...",
+}, keypair); // keypair must be the DAO creator
+
+console.log("Proposer added:", result.success);
+```
+
+### Remove Proposer
+
+```typescript
+const result = await signedRequest<ProposerResponse>("/dao/proposer/remove", {
+  dao_pda: "DaoPdaAddress...",
+  proposer: "ProposerWalletAddress...",
+}, keypair); // keypair must be the DAO creator
+
+console.log("Proposer removed:", result.success);
+```
+
+### Create Decision Market
+
+```typescript
+const proposal = await signedRequest<ProposalResponse>("/proposal", {
+  dao_pda: "DaoPdaAddress...",
+  title: "Should we expand to new markets?",
+  description: "Proposal to allocate treasury funds for market expansion.",
+  length_secs: 86400, // 24 hours
+  options: ["Yes", "No"],
+}, keypair); // keypair must be on the proposer whitelist
+
+console.log("Decision market created:", proposal.proposal_pda);
+```
 
 ---
 
