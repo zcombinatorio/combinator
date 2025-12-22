@@ -172,16 +172,8 @@ async function testDlmmWithdraw() {
     console.log(`  Generated ${removeLiquidityTxs.length} remove liquidity transaction(s)`);
     console.log('');
 
-    // Step 5: Build combined withdrawal and transfer transaction
-    console.log('🔨 Step 5: Building combined withdrawal and transfer transaction...');
-
-    const combinedTx = new Transaction();
-    combinedTx.feePayer = feePayer.publicKey;
-
-    // Add all remove liquidity instructions
-    for (const tx of removeLiquidityTxs) {
-      combinedTx.add(...tx.instructions);
-    }
+    // Step 5: Build withdrawal and transfer transactions (separate to avoid size limits)
+    console.log('🔨 Step 5: Building withdrawal and transfer transactions...');
 
     // Get ATAs
     const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey);
@@ -189,8 +181,11 @@ async function testDlmmWithdraw() {
     const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, managerWallet);
     const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, managerWallet);
 
+    // Build transfer transaction (separate from liquidity removal to avoid tx size limits)
+    const transferTx = new Transaction();
+
     // Create manager ATAs
-    combinedTx.add(
+    transferTx.add(
       createAssociatedTokenAccountIdempotentInstruction(
         feePayer.publicKey,
         managerTokenXAta,
@@ -200,7 +195,7 @@ async function testDlmmWithdraw() {
     );
 
     if (!isTokenYNativeSOL) {
-      combinedTx.add(
+      transferTx.add(
         createAssociatedTokenAccountIdempotentInstruction(
           feePayer.publicKey,
           managerTokenYAta,
@@ -214,7 +209,7 @@ async function testDlmmWithdraw() {
     if (!estimatedXWithdraw.isZero()) {
       if (isTokenXNativeSOL) {
         console.log(`  Adding native SOL transfer of ${tokenXUiAmount.toFixed(6)} SOL (Token X) to ${managerWallet.toBase58()}`);
-        combinedTx.add(
+        transferTx.add(
           SystemProgram.transfer({
             fromPubkey: lpOwner.publicKey,
             toPubkey: managerWallet,
@@ -222,7 +217,7 @@ async function testDlmmWithdraw() {
           })
         );
       } else {
-        combinedTx.add(
+        transferTx.add(
           createTransferInstruction(
             lpOwnerTokenXAta,
             managerTokenXAta,
@@ -237,7 +232,7 @@ async function testDlmmWithdraw() {
     if (!estimatedYWithdraw.isZero()) {
       if (isTokenYNativeSOL) {
         console.log(`  Adding native SOL transfer of ${tokenYUiAmount.toFixed(6)} SOL (Token Y) to ${managerWallet.toBase58()}`);
-        combinedTx.add(
+        transferTx.add(
           SystemProgram.transfer({
             fromPubkey: lpOwner.publicKey,
             toPubkey: managerWallet,
@@ -245,7 +240,7 @@ async function testDlmmWithdraw() {
           })
         );
       } else {
-        combinedTx.add(
+        transferTx.add(
           createTransferInstruction(
             lpOwnerTokenYAta,
             managerTokenYAta,
@@ -256,43 +251,62 @@ async function testDlmmWithdraw() {
       }
     }
 
-    console.log(`  Combined transaction has ${combinedTx.instructions.length} instruction(s)`);
+    // Build all transactions (keep SDK transactions separate + add transfer tx at end)
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+    const allTransactions: Transaction[] = [];
+
+    // Add each removal transaction from the SDK (keeps them properly chunked)
+    for (const tx of removeLiquidityTxs) {
+      const removeTx = new Transaction();
+      removeTx.add(...tx.instructions);
+      removeTx.recentBlockhash = blockhash;
+      removeTx.feePayer = feePayer.publicKey;
+      allTransactions.push(removeTx);
+    }
+
+    // Add the transfer transaction as the final tx
+    transferTx.recentBlockhash = blockhash;
+    transferTx.feePayer = feePayer.publicKey;
+    allTransactions.push(transferTx);
+
+    console.log(`  Total transactions: ${allTransactions.length} (${removeLiquidityTxs.length} removal + 1 transfer)`);
     console.log('');
 
-    // Step 6: Simulate/Execute combined transaction
-    const stepLabel6 = SIMULATE_ONLY ? '🔍 Step 6: Simulating withdrawal transaction...' : '📤 Step 6: Sending withdrawal transaction...';
+    // Step 6: Simulate/Execute transactions
+    const stepLabel6 = SIMULATE_ONLY ? '🔍 Step 6: Simulating withdrawal transactions...' : '📤 Step 6: Sending withdrawal transactions...';
     console.log(stepLabel6);
 
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-    combinedTx.recentBlockhash = blockhash;
-
-    // Sign transaction
-    if (feePayer.publicKey.equals(lpOwner.publicKey)) {
-      combinedTx.sign(lpOwner);
-    } else {
-      combinedTx.partialSign(lpOwner);
-      combinedTx.partialSign(feePayer);
+    // Sign all transactions
+    for (const tx of allTransactions) {
+      if (feePayer.publicKey.equals(lpOwner.publicKey)) {
+        tx.sign(lpOwner);
+      } else {
+        tx.partialSign(lpOwner);
+        tx.partialSign(feePayer);
+      }
     }
 
     if (SIMULATE_ONLY) {
-      // Simulate combined transaction
-      const simulation = await connection.simulateTransaction(combinedTx);
+      // Simulate all transactions
+      for (let i = 0; i < allTransactions.length; i++) {
+        const simulation = await connection.simulateTransaction(allTransactions[i]);
 
-      console.log(`  Withdrawal Transaction Simulation:`);
-      if (simulation.value.err) {
-        console.log(`    ❌ Error: ${JSON.stringify(simulation.value.err)}`);
-        if (simulation.value.logs) {
-          console.log(`    Logs:`);
-          simulation.value.logs.forEach(log => console.log(`      ${log}`));
+        console.log(`  Transaction ${i + 1}/${allTransactions.length} Simulation:`);
+        if (simulation.value.err) {
+          console.log(`    ❌ Error: ${JSON.stringify(simulation.value.err)}`);
+          if (simulation.value.logs) {
+            console.log(`    Logs:`);
+            simulation.value.logs.forEach(log => console.log(`      ${log}`));
+          }
+          console.log('');
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          console.log('❌ Simulation failed!');
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          process.exit(1);
+        } else {
+          console.log(`    ✅ Success`);
+          console.log(`    Compute Units: ${simulation.value.unitsConsumed || 'N/A'}`);
         }
-        console.log('');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('❌ Simulation failed!');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-        process.exit(1);
-      } else {
-        console.log(`    ✅ Success`);
-        console.log(`    Compute Units: ${simulation.value.unitsConsumed || 'N/A'}`);
       }
 
       console.log('');
@@ -305,6 +319,7 @@ async function testDlmmWithdraw() {
       console.log(`  Token X Mint: ${tokenXMint.toBase58()}`);
       console.log(`  Token Y Mint: ${tokenYMint.toBase58()}`);
       console.log(`  Position Range: Bin ${positionData.lowerBinId} - ${positionData.upperBinId}`);
+      console.log(`  Transactions: ${allTransactions.length}`);
       console.log(`\n  💧 Estimated Tokens to Withdraw and Transfer to ${managerWallet.toBase58()}:`);
       console.log(`    Token X: ${tokenXUiAmount.toFixed(6)} (${estimatedXWithdraw.toString()} raw)`);
       console.log(`    Token Y: ${tokenYUiAmount.toFixed(6)} ${isTokenYNativeSOL ? 'SOL' : ''} (${estimatedYWithdraw.toString()} raw)`);
@@ -315,27 +330,36 @@ async function testDlmmWithdraw() {
       console.log('\n⚠️  To execute for real, set SIMULATE_ONLY=false');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     } else {
-      // Send combined transaction
-      const signature = await connection.sendRawTransaction(combinedTx.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed'
-      });
-      console.log(`  Withdrawal TX: ${signature}`);
-      console.log(`  Solscan: https://solscan.io/tx/${signature}`);
+      // Send all transactions sequentially
+      const signatures: string[] = [];
 
-      // Wait for confirmation
-      console.log('  Waiting for confirmation...');
-      await connection.confirmTransaction({
-        signature,
-        blockhash,
-        lastValidBlockHeight
-      });
-      console.log('  ✅ Transaction confirmed');
+      for (let i = 0; i < allTransactions.length; i++) {
+        console.log(`  Sending transaction ${i + 1}/${allTransactions.length}...`);
+        const signature = await connection.sendRawTransaction(allTransactions[i].serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed'
+        });
+        signatures.push(signature);
+        console.log(`    TX: ${signature}`);
+        console.log(`    Solscan: https://solscan.io/tx/${signature}`);
+
+        // Wait for confirmation before sending next
+        console.log('    Waiting for confirmation...');
+        await connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight
+        });
+        console.log('    ✅ Confirmed');
+      }
+
       console.log('');
-
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('✅ Test completed successfully!');
-      console.log(`\nTransaction: https://solscan.io/tx/${signature}`);
+      console.log('\nTransactions:');
+      signatures.forEach((sig, i) => {
+        console.log(`  ${i + 1}. https://solscan.io/tx/${sig}`);
+      });
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     }
 

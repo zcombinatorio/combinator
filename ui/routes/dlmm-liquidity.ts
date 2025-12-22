@@ -53,8 +53,8 @@ const dlmmLiquidityLimiter = rateLimit({
 
 // In-memory storage for liquidity transactions
 interface DlmmWithdrawData {
-  unsignedTransaction: string;
-  unsignedTransactionHash: string;
+  unsignedTransactions: string[];
+  unsignedTransactionHashes: string[];
   poolAddress: string;
   tokenXMint: string;
   tokenYMint: string;
@@ -318,26 +318,23 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
       skipUnwrapSOL: false,
     });
 
-    // Combine all transactions if there are multiple
-    const combinedTx = new Transaction();
-    for (const tx of removeLiquidityTxs) {
-      combinedTx.add(...tx.instructions);
-    }
-
     // Get token mints info
     const tokenXMintInfo = await getMint(connection, tokenXMint);
     const tokenYMintInfo = await getMint(connection, tokenYMint);
     const isTokenXNativeSOL = tokenXMint.equals(NATIVE_MINT);
     const isTokenYNativeSOL = tokenYMint.equals(NATIVE_MINT);
 
-    // Add transfer instructions to send tokens to manager wallet
+    // Get ATAs
     const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey);
     const lpOwnerTokenYAta = await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey);
     const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, managerWallet);
     const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, managerWallet);
 
+    // Build transfer transaction (separate from liquidity removal)
+    const transferTx = new Transaction();
+
     // Create manager ATAs if needed
-    combinedTx.add(
+    transferTx.add(
       createAssociatedTokenAccountIdempotentInstruction(
         lpOwner.publicKey,
         managerTokenXAta,
@@ -347,7 +344,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
     );
 
     if (!isTokenYNativeSOL) {
-      combinedTx.add(
+      transferTx.add(
         createAssociatedTokenAccountIdempotentInstruction(
           lpOwner.publicKey,
           managerTokenYAta,
@@ -360,7 +357,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
     // Transfer Token X to manager
     if (!estimatedTokenXAmount.isZero()) {
       if (isTokenXNativeSOL) {
-        combinedTx.add(
+        transferTx.add(
           SystemProgram.transfer({
             fromPubkey: lpOwner.publicKey,
             toPubkey: managerWallet,
@@ -368,7 +365,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
           })
         );
       } else {
-        combinedTx.add(
+        transferTx.add(
           createTransferInstruction(
             lpOwnerTokenXAta,
             managerTokenXAta,
@@ -382,7 +379,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
     // Transfer Token Y to manager
     if (!estimatedTokenYAmount.isZero()) {
       if (isTokenYNativeSOL) {
-        combinedTx.add(
+        transferTx.add(
           SystemProgram.transfer({
             fromPubkey: lpOwner.publicKey,
             toPubkey: managerWallet,
@@ -390,7 +387,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
           })
         );
       } else {
-        combinedTx.add(
+        transferTx.add(
           createTransferInstruction(
             lpOwnerTokenYAta,
             managerTokenYAta,
@@ -401,34 +398,51 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
       }
     }
 
-    // Set transaction properties (manager wallet is fee payer for security)
+    // Prepare all transactions (SDK removal txs + transfer tx)
     const { blockhash } = await connection.getLatestBlockhash();
-    combinedTx.recentBlockhash = blockhash;
-    combinedTx.feePayer = managerWallet;
+    const allTransactions: Transaction[] = [];
 
-    // Serialize unsigned transaction (base58 like DAMM)
-    const unsignedTransaction = bs58.encode(combinedTx.serialize({ requireAllSignatures: false }));
+    // Add each removal transaction from the SDK (keeps them properly chunked)
+    for (const tx of removeLiquidityTxs) {
+      const removeTx = new Transaction();
+      removeTx.add(...tx.instructions);
+      removeTx.recentBlockhash = blockhash;
+      removeTx.feePayer = managerWallet;
+      allTransactions.push(removeTx);
+    }
 
-    // Create hash of serialized message for tamper detection
-    const unsignedTransactionHash = crypto
-      .createHash('sha256')
-      .update(combinedTx.serializeMessage())
-      .digest('hex');
+    // Add the transfer transaction as the final tx
+    transferTx.recentBlockhash = blockhash;
+    transferTx.feePayer = managerWallet;
+    allTransactions.push(transferTx);
+
+    console.log(`  Number of transactions: ${allTransactions.length}`);
+
+    // Serialize all unsigned transactions
+    const unsignedTransactions = allTransactions.map(tx =>
+      bs58.encode(tx.serialize({ requireAllSignatures: false }))
+    );
+
+    // Create hashes of serialized messages for tamper detection
+    const unsignedTransactionHashes = allTransactions.map(tx =>
+      crypto.createHash('sha256').update(tx.serializeMessage()).digest('hex')
+    );
 
     // Generate request ID
     const requestId = crypto.randomBytes(16).toString('hex');
 
-    console.log('✓ Withdrawal transaction built successfully');
+    console.log('✓ Withdrawal transactions built successfully');
     console.log(`  Pool: ${poolAddress.toBase58()}`);
     console.log(`  Withdrawal: ${withdrawalPercentage}%`);
     console.log(`  Token X: ${estimatedTokenXAmount.toString()}`);
     console.log(`  Token Y: ${estimatedTokenYAmount.toString()}`);
     console.log(`  Request ID: ${requestId}`);
+    console.log(`  Transaction count: ${allTransactions.length}`);
 
     // Store request data
     withdrawRequests.set(requestId, {
-      unsignedTransaction,
-      unsignedTransactionHash,
+      unsignedTransactions,
+      unsignedTransactionHashes,
       poolAddress: poolAddress.toBase58(),
       tokenXMint: tokenXMint.toBase58(),
       tokenYMint: tokenYMint.toBase58(),
@@ -446,7 +460,8 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
 
     return res.json({
       success: true,
-      transaction: unsignedTransaction,
+      transactions: unsignedTransactions,
+      transactionCount: unsignedTransactions.length,
       requestId,
       poolAddress: poolAddress.toBase58(),
       tokenXMint: tokenXMint.toBase58(),
@@ -456,12 +471,11 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
       lpOwnerAddress: lpOwner.publicKey.toBase58(),
       destinationAddress: managerWallet.toBase58(),
       withdrawalPercentage,
-      instructionsCount: combinedTx.instructions.length,
       estimatedAmounts: {
         tokenX: estimatedTokenXAmount.toString(),
         tokenY: estimatedTokenYAmount.toString(),
       },
-      message: 'Sign this transaction with the manager wallet and submit to /dlmm/withdraw/confirm'
+      message: 'Sign all transactions with the manager wallet and submit to /dlmm/withdraw/confirm'
     });
 
   } catch (error) {
@@ -490,14 +504,14 @@ router.post('/withdraw/confirm', dlmmLiquidityLimiter, async (req: Request, res:
   let releaseLock: (() => void) | null = null;
 
   try {
-    const { signedTransaction, requestId } = req.body;
+    const { signedTransactions, requestId } = req.body;
 
     console.log('DLMM withdraw confirm request received:', { requestId });
 
     // Validate required fields
-    if (!signedTransaction || !requestId) {
+    if (!signedTransactions || !Array.isArray(signedTransactions) || signedTransactions.length === 0 || !requestId) {
       return res.status(400).json({
-        error: 'Missing required fields: signedTransaction and requestId'
+        error: 'Missing required fields: signedTransactions (array) and requestId'
       });
     }
 
@@ -509,7 +523,15 @@ router.post('/withdraw/confirm', dlmmLiquidityLimiter, async (req: Request, res:
       });
     }
 
+    // Validate transaction count matches
+    if (signedTransactions.length !== requestData.unsignedTransactions.length) {
+      return res.status(400).json({
+        error: `Expected ${requestData.unsignedTransactions.length} transactions, got ${signedTransactions.length}`
+      });
+    }
+
     console.log('  Pool:', requestData.poolAddress);
+    console.log('  Transaction count:', signedTransactions.length);
 
     // Acquire lock
     releaseLock = await acquireLiquidityLock(requestData.poolAddress);
@@ -548,124 +570,143 @@ router.post('/withdraw/confirm', dlmmLiquidityLimiter, async (req: Request, res:
     const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
     const managerWalletPubKey = new PublicKey(requestData.managerAddress);
 
-    // Deserialize transaction
-    let transaction: Transaction;
-    try {
-      const transactionBuffer = bs58.decode(signedTransaction);
-      transaction = Transaction.from(transactionBuffer);
-    } catch (error) {
-      return res.status(400).json({
-        error: `Failed to deserialize transaction: ${error instanceof Error ? error.message : 'Unknown error'}`
-      });
-    }
+    // Validate and prepare all transactions first
+    const transactions: Transaction[] = [];
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const signedTx = signedTransactions[i];
+      const expectedHash = requestData.unsignedTransactionHashes[i];
 
-    // SECURITY: Validate blockhash
-    if (!transaction.recentBlockhash) {
-      return res.status(400).json({
-        error: 'Invalid transaction: missing blockhash'
-      });
-    }
+      // Deserialize transaction
+      let transaction: Transaction;
+      try {
+        const transactionBuffer = bs58.decode(signedTx);
+        transaction = Transaction.from(transactionBuffer);
+      } catch (error) {
+        return res.status(400).json({
+          error: `Failed to deserialize transaction ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        });
+      }
 
+      // SECURITY: Validate blockhash
+      if (!transaction.recentBlockhash) {
+        return res.status(400).json({
+          error: `Invalid transaction ${i + 1}: missing blockhash`
+        });
+      }
+
+      // SECURITY: Verify fee payer is manager wallet
+      if (!transaction.feePayer) {
+        return res.status(400).json({
+          error: `Transaction ${i + 1} missing fee payer`
+        });
+      }
+
+      if (!transaction.feePayer.equals(managerWalletPubKey)) {
+        return res.status(400).json({
+          error: `Transaction ${i + 1} fee payer must be manager wallet`
+        });
+      }
+
+      // SECURITY: Verify manager wallet has signed
+      const managerSignature = transaction.signatures.find(sig =>
+        sig.publicKey.equals(managerWalletPubKey)
+      );
+
+      if (!managerSignature || !managerSignature.signature) {
+        return res.status(400).json({
+          error: `Transaction ${i + 1} verification failed: Manager wallet has not signed`
+        });
+      }
+
+      // Verify manager signature is valid
+      const messageData = transaction.serializeMessage();
+      const managerSigValid = nacl.sign.detached.verify(
+        messageData,
+        managerSignature.signature,
+        managerSignature.publicKey.toBytes()
+      );
+
+      if (!managerSigValid) {
+        return res.status(400).json({
+          error: `Transaction ${i + 1} verification failed: Invalid manager wallet signature`
+        });
+      }
+
+      // SECURITY: Verify transaction hasn't been tampered with
+      const receivedTransactionHash = crypto.createHash('sha256')
+        .update(transaction.serializeMessage())
+        .digest('hex');
+
+      if (receivedTransactionHash !== expectedHash) {
+        console.log(`  ⚠️  Transaction ${i + 1} hash mismatch detected`);
+        console.log(`    Expected: ${expectedHash.substring(0, 16)}...`);
+        console.log(`    Received: ${receivedTransactionHash.substring(0, 16)}...`);
+        return res.status(400).json({
+          error: `Transaction ${i + 1} verification failed: transaction has been modified`,
+          details: 'Transaction structure does not match the original unsigned transaction'
+        });
+      }
+
+      transactions.push(transaction);
+    }
+    console.log(`  ✓ All ${transactions.length} transactions verified`);
+
+    // Check blockhash validity (use first transaction's blockhash as they should all be the same)
     const isBlockhashValid = await connection.isBlockhashValid(
-      transaction.recentBlockhash,
+      transactions[0].recentBlockhash!,
       { commitment: 'confirmed' }
     );
 
     if (!isBlockhashValid) {
       return res.status(400).json({
-        error: 'Invalid transaction: blockhash is expired. Please create a new transaction.'
+        error: 'Invalid transaction: blockhash is expired. Please create new transactions.'
       });
     }
 
-    // SECURITY: Verify fee payer is manager wallet
-    if (!transaction.feePayer) {
-      return res.status(400).json({
-        error: 'Transaction missing fee payer'
-      });
-    }
-
-    if (!transaction.feePayer.equals(managerWalletPubKey)) {
-      return res.status(400).json({
-        error: 'Transaction fee payer must be manager wallet'
-      });
-    }
-
-    // SECURITY: Verify manager wallet has signed
-    const managerSignature = transaction.signatures.find(sig =>
-      sig.publicKey.equals(managerWalletPubKey)
-    );
-
-    if (!managerSignature || !managerSignature.signature) {
-      return res.status(400).json({
-        error: 'Transaction verification failed: Manager wallet has not signed'
-      });
-    }
-
-    // Verify manager signature is valid
-    const messageData = transaction.serializeMessage();
-    const managerSigValid = nacl.sign.detached.verify(
-      messageData,
-      managerSignature.signature,
-      managerSignature.publicKey.toBytes()
-    );
-
-    if (!managerSigValid) {
-      return res.status(400).json({
-        error: 'Transaction verification failed: Invalid manager wallet signature'
-      });
-    }
-
-    // SECURITY: Verify transaction hasn't been tampered with
-    const receivedTransactionHash = crypto.createHash('sha256')
-      .update(transaction.serializeMessage())
-      .digest('hex');
-
-    if (receivedTransactionHash !== requestData.unsignedTransactionHash) {
-      console.log(`  ⚠️  Transaction hash mismatch detected`);
-      console.log(`    Expected: ${requestData.unsignedTransactionHash.substring(0, 16)}...`);
-      console.log(`    Received: ${receivedTransactionHash.substring(0, 16)}...`);
-      return res.status(400).json({
-        error: 'Transaction verification failed: transaction has been modified',
-        details: 'Transaction structure does not match the original unsigned transaction'
-      });
-    }
-    console.log(`  ✓ Transaction integrity verified (cryptographic hash match)`);
-
-    // Add LP owner signature
-    transaction.partialSign(lpOwnerKeypair);
-
-    // Send transaction
-    console.log('  Sending transaction...');
+    // Send all transactions sequentially
+    const signatures: string[] = [];
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-    const signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed'
-    });
 
-    console.log('✓ DLMM withdrawal transaction sent');
-    console.log(`  Signature: ${signature}`);
+    for (let i = 0; i < transactions.length; i++) {
+      const transaction = transactions[i];
+
+      // Add LP owner signature
+      transaction.partialSign(lpOwnerKeypair);
+
+      console.log(`  Sending transaction ${i + 1}/${transactions.length}...`);
+      const signature = await connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed'
+      });
+      signatures.push(signature);
+
+      console.log(`  ✓ Transaction ${i + 1} sent: ${signature}`);
+
+      // Wait for confirmation before sending next transaction
+      try {
+        await connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight
+        });
+        console.log(`  ✓ Transaction ${i + 1} confirmed`);
+      } catch (error) {
+        console.error(`  ⚠ Transaction ${i + 1} confirmation timeout:`, error);
+        // Continue anyway - the transaction may still succeed
+      }
+    }
+
+    console.log('✓ DLMM withdrawal transactions completed');
     console.log(`  Pool: ${requestData.poolAddress}`);
     console.log(`  Withdrawal: ${requestData.withdrawalPercentage}%`);
-    console.log(`  Solscan: https://solscan.io/tx/${signature}`);
-
-    // Wait for confirmation
-    try {
-      await connection.confirmTransaction({
-        signature,
-        blockhash,
-        lastValidBlockHeight
-      });
-      console.log(`✓ Withdrawal confirmed: ${signature}`);
-    } catch (error) {
-      console.error(`⚠ Confirmation timeout for ${signature}:`, error);
-    }
+    console.log(`  Signatures: ${signatures.join(', ')}`);
 
     // Clean up
     withdrawRequests.delete(requestId);
 
     res.json({
       success: true,
-      signature,
+      signatures,
       poolAddress: requestData.poolAddress,
       tokenXMint: requestData.tokenXMint,
       tokenYMint: requestData.tokenYMint,
@@ -674,7 +715,7 @@ router.post('/withdraw/confirm', dlmmLiquidityLimiter, async (req: Request, res:
         tokenX: requestData.estimatedTokenXAmount,
         tokenY: requestData.estimatedTokenYAmount,
       },
-      message: 'Withdrawal transaction submitted successfully'
+      message: 'Withdrawal transactions submitted successfully'
     });
 
   } catch (error) {

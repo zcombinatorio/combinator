@@ -35,7 +35,8 @@ const DEPOSIT_SOL_PERCENTAGE = 90; // Only deposit 80% of the withdrawn SOL (to 
 
 interface WithdrawBuildResponse {
   success: boolean;
-  transaction: string;
+  transactions: string[];
+  transactionCount: number;
   requestId: string;
   poolAddress: string;
   tokenXMint: string;
@@ -45,7 +46,6 @@ interface WithdrawBuildResponse {
   lpOwnerAddress: string;
   destinationAddress: string;
   withdrawalPercentage: number;
-  instructionsCount: number;
   estimatedAmounts: {
     tokenX: string;
     tokenY: string;
@@ -55,7 +55,7 @@ interface WithdrawBuildResponse {
 
 interface WithdrawConfirmResponse {
   success: boolean;
-  signature: string;
+  signatures: string[];
   poolAddress: string;
   tokenXMint: string;
   tokenYMint: string;
@@ -112,6 +112,13 @@ function signTransaction(unsignedTxBase58: string, privateKey: string): string {
 
   // Return signed transaction as base58
   return bs58.encode(transaction.serialize({ requireAllSignatures: false }));
+}
+
+/**
+ * Sign multiple transactions with the manager's private key
+ */
+function signTransactions(unsignedTxsBase58: string[], privateKey: string): string[] {
+  return unsignedTxsBase58.map(tx => signTransaction(tx, privateKey));
 }
 
 /**
@@ -183,39 +190,41 @@ async function testDlmmApi() {
       }
     );
 
-    console.log('  ✅ Withdrawal transaction built successfully');
+    console.log('  ✅ Withdrawal transactions built successfully');
     console.log(`     Request ID: ${withdrawBuildResponse.requestId}`);
     console.log(`     Pool: ${withdrawBuildResponse.poolAddress}`);
     console.log(`     Token X Mint: ${withdrawBuildResponse.tokenXMint}`);
     console.log(`     Token Y Mint: ${withdrawBuildResponse.tokenYMint}`);
-    console.log(`     Instructions: ${withdrawBuildResponse.instructionsCount}`);
+    console.log(`     Transaction Count: ${withdrawBuildResponse.transactionCount}`);
     console.log(`     Estimated X Amount: ${withdrawBuildResponse.estimatedAmounts.tokenX}`);
     console.log(`     Estimated Y Amount: ${withdrawBuildResponse.estimatedAmounts.tokenY}`);
     console.log('');
 
-    // Step 1b: Sign the full transaction
-    console.log('🔐 Step 2: Signing withdrawal transaction...');
-    const signedWithdrawTx = signTransaction(
-      withdrawBuildResponse.transaction,
+    // Step 1b: Sign all transactions
+    console.log('🔐 Step 2: Signing withdrawal transactions...');
+    const signedWithdrawTxs = signTransactions(
+      withdrawBuildResponse.transactions,
       MANAGER_PRIVATE_KEY
     );
-    console.log(`  ✅ Transaction signed (${signedWithdrawTx.length} chars)`);
+    console.log(`  ✅ ${signedWithdrawTxs.length} transaction(s) signed`);
     console.log('');
 
     // Step 1c: Confirm withdrawal
-    console.log('📤 Step 3: Confirming withdrawal transaction...');
+    console.log('📤 Step 3: Confirming withdrawal transactions...');
     const withdrawConfirmResponse = await apiRequest<WithdrawConfirmResponse>(
       '/dlmm/withdraw/confirm',
       'POST',
       {
         requestId: withdrawBuildResponse.requestId,
-        signedTransaction: signedWithdrawTx,
+        signedTransactions: signedWithdrawTxs,
       }
     );
 
     console.log('  ✅ Withdrawal confirmed!');
-    console.log(`     TX Signature: ${withdrawConfirmResponse.signature}`);
-    console.log(`     Explorer: https://solscan.io/tx/${withdrawConfirmResponse.signature}`);
+    console.log(`     TX Signatures: ${withdrawConfirmResponse.signatures.length}`);
+    for (const sig of withdrawConfirmResponse.signatures) {
+      console.log(`       - https://solscan.io/tx/${sig}`);
+    }
     console.log(`     Token X Withdrawn: ${withdrawConfirmResponse.estimatedAmounts.tokenX}`);
     console.log(`     Token Y Withdrawn: ${withdrawConfirmResponse.estimatedAmounts.tokenY}`);
     console.log('');
@@ -305,7 +314,10 @@ async function testDlmmApi() {
 
     console.log('📊 Summary:');
     console.log(`  Pool: ${DLMM_POOL_ADDRESS}`);
-    console.log(`  Withdrawal TX: ${withdrawConfirmResponse.signature}`);
+    console.log(`  Withdrawal TXs: ${withdrawConfirmResponse.signatures.length}`);
+    for (const sig of withdrawConfirmResponse.signatures) {
+      console.log(`    - ${sig}`);
+    }
     console.log(`  Deposit TX: ${depositConfirmResponse.signature}`);
     console.log('');
     console.log('  💧 Withdrawal:');
