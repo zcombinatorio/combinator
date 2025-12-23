@@ -312,51 +312,15 @@ router.post('/mint', async (
     // claimersTotal represents the 90% portion for claimers (excluding 10% admin fee)
     const splitRecipients: SplitRecipient[] = [];
 
-    // Special case for ZC token: 2.5% to ztorio, 1% to solpay, 10% to admin, rest to developer
-    const ZC_TOKEN_ADDRESS = 'GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC';
-    const ZTORIO_ADDRESS = 'A6R6fD82TaTSWKTpKKcRhBotYtc5izyauPFw3yHVYwuP'; // ztorio
-    const SOLPAY_ADDRESS = 'J7xnWtfi5Fa3JC1creRBHzo7DkRf6etugCBv1s9vEe5N'; // solpay ($SP)
+    // All tokens: 100% of claimersTotal goes to the developer/creator
+    splitRecipients.push({
+      wallet: trimmedCreatorWallet,
+      amount: claimersTotal, // 100% of the 90% claimers portion = 90% total
+      amountWithDecimals: claimersTotal * BigInt(10 ** decimals),
+      label: 'Developer'
+    });
 
-    if (tokenAddress === ZC_TOKEN_ADDRESS) {
-      // Split: 2.5% to ztorio, 1% to solpay, 10% to admin (already calculated), 86.5% to developer
-      // Calculate in basis points for precision: 2.5% = 250/10000, 1% = 100/10000
-      const ztorioAmount = (requestedAmount * BigInt(250)) / BigInt(10000); // 2.5% of total
-      const solpayAmount = (requestedAmount * BigInt(100)) / BigInt(10000); // 1% of total
-      const devAmount = requestedAmount - ztorioAmount - solpayAmount - adminAmount; // 86.5% of total
-
-      splitRecipients.push(
-        {
-          wallet: ZTORIO_ADDRESS,
-          amount: ztorioAmount,
-          amountWithDecimals: ztorioAmount * BigInt(10 ** decimals),
-          label: 'ztorio'
-        },
-        {
-          wallet: SOLPAY_ADDRESS,
-          amount: solpayAmount,
-          amountWithDecimals: solpayAmount * BigInt(10 ** decimals),
-          label: 'solpay'
-        },
-        {
-          wallet: trimmedCreatorWallet,
-          amount: devAmount,
-          amountWithDecimals: devAmount * BigInt(10 ** decimals),
-          label: 'Developer'
-        }
-      );
-
-      console.log(`ZC token emission split: 2.5% to ztorio ${ZTORIO_ADDRESS}, 1% to solpay ${SOLPAY_ADDRESS}, 86.5% to developer ${trimmedCreatorWallet}, 10% to admin`);
-    } else {
-      // Default: 100% of claimersTotal goes to the developer/creator
-      splitRecipients.push({
-        wallet: trimmedCreatorWallet,
-        amount: claimersTotal, // 100% of the 90% claimers portion = 90% total
-        amountWithDecimals: claimersTotal * BigInt(10 ** decimals),
-        label: 'Developer'
-      });
-
-      console.log(`Hardcoded emission split: 100% of claimers portion (90% total) to creator ${trimmedCreatorWallet}`);
-    }
+    console.log(`Emission split: 100% of claimers portion (90% total) to creator ${trimmedCreatorWallet}`);
 
     // Get admin token account address
     const adminTokenAccount = await getAssociatedTokenAddress(

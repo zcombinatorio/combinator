@@ -313,9 +313,9 @@ export async function calculateClaimEligibility(
   const msElapsed = now.getTime() - tokenLaunchTime.getTime();
   const fullDaysElapsed = Math.floor(msElapsed / (24 * 60 * 60 * 1000));
 
-  // Special case: ZC token emissions end on March 2, 2026 at 11pm ET (March 3, 2026 4am UTC)
+  // Special case: ZC token emissions end on March 2, 2027 at 11pm ET (March 3, 2027 4am UTC)
   const ZC_TOKEN_ADDRESS = 'GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC';
-  const ZC_EMISSIONS_CUTOFF = new Date('2026-03-03T04:00:00.000Z');
+  const ZC_EMISSIONS_CUTOFF = new Date('2027-03-03T04:00:00.000Z');
 
   // Special case: Token emissions end on December 31, 2025 at 23:59:59 UTC
   const EOY_2025_TOKEN_ADDRESS = 'CtmadLp7st6DSehwFBE4BFvizBQib7kv8quJDTyoUJSP';
