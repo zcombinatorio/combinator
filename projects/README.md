@@ -1,1 +1,0 @@
-This will host links to all projects and their tokens on Z Combinator.

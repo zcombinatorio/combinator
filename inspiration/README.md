@@ -1,1 +1,0 @@
-This will host links to cool open source crypto projects that could inspire other builders to extend and scale as Z Combinator projects.
