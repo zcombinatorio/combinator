@@ -78,7 +78,7 @@ async function testDlmmSwapFallback() {
 
   let jupiterSuccess = false;
   try {
-    const quoteUrl = `https://api.jup.ag/swap/v1/quote?inputMint=${swapInputMint.toBase58()}&outputMint=${swapOutputMint.toBase58()}&amount=${swapInputAmount.toString()}&slippageBps=100&asLegacyTransaction=true`;
+    const quoteUrl = `https://api.jup.ag/swap/v1/quote?inputMint=${swapInputMint.toBase58()}&outputMint=${swapOutputMint.toBase58()}&amount=${swapInputAmount.toString()}&slippageBps=500&asLegacyTransaction=true`;
     console.log(`   Quote URL: ${quoteUrl}`);
 
     const quoteResponse = await fetchWithTimeout(quoteUrl, { headers: jupiterHeaders }, 10000);
@@ -124,7 +124,7 @@ async function testDlmmSwapFallback() {
 
     // Get swap quote from DLMM
     console.log('   Getting DLMM swap quote...');
-    const slippageBps = new BN(100); // 1% slippage
+    const slippageBps = new BN(500); // 5% slippage
     const swapQuote = dlmmPool.swapQuote(swapInputAmount, swapForY, slippageBps, binArrays);
 
     console.log(`   DLMM quote:`);

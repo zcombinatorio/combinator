@@ -1770,7 +1770,7 @@ router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, re
 
     try {
       console.log('  Fetching Jupiter quote...');
-      const quoteUrl = `https://api.jup.ag/swap/v1/quote?inputMint=${swapInputMint.toBase58()}&outputMint=${swapOutputMint.toBase58()}&amount=${swapInputAmount.toString()}&slippageBps=100&asLegacyTransaction=true`;
+      const quoteUrl = `https://api.jup.ag/swap/v1/quote?inputMint=${swapInputMint.toBase58()}&outputMint=${swapOutputMint.toBase58()}&amount=${swapInputAmount.toString()}&slippageBps=500&asLegacyTransaction=true`;
 
       const quoteResponse = await fetchWithTimeout(quoteUrl, { headers: jupiterHeaders }, 10000);
 
@@ -1841,7 +1841,7 @@ router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, re
         const swapQuote = cpAmm.getQuote({
           inAmount: swapInputAmount,
           inputTokenMint: swapInputMint,
-          slippage: 1, // 1% slippage
+          slippage: 5, // 5% slippage
           poolState,
           currentTime,
           currentSlot: slot,

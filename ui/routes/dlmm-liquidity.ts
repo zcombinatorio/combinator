@@ -1947,7 +1947,7 @@ router.post('/cleanup/swap/build', dlmmLiquidityLimiter, async (req: Request, re
     try {
       // Attempt Jupiter swap
       console.log('  Fetching Jupiter quote...');
-      const quoteUrl = `https://api.jup.ag/swap/v1/quote?inputMint=${swapInputMint.toBase58()}&outputMint=${swapOutputMint.toBase58()}&amount=${swapInputAmount.toString()}&slippageBps=100&asLegacyTransaction=true`;
+      const quoteUrl = `https://api.jup.ag/swap/v1/quote?inputMint=${swapInputMint.toBase58()}&outputMint=${swapOutputMint.toBase58()}&amount=${swapInputAmount.toString()}&slippageBps=500&asLegacyTransaction=true`;
 
       const quoteResponse = await fetchWithTimeout(quoteUrl, { headers: jupiterHeaders }, 10000);
 
@@ -2018,7 +2018,7 @@ router.post('/cleanup/swap/build', dlmmLiquidityLimiter, async (req: Request, re
         }
 
         // Get swap quote from DLMM
-        const slippageBps = new BN(100); // 1% slippage
+        const slippageBps = new BN(500); // 5% slippage
         const swapQuote = dlmmPool.swapQuote(swapInputAmount, swapForY, slippageBps, binArrays);
 
         expectedOutputAmount = swapQuote.outAmount.toString();
