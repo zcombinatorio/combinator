@@ -157,6 +157,7 @@ async function acquireLiquidityLock(poolAddress: string): Promise<() => void> {
 // Pool address to ticker mapping (whitelist)
 const poolToTicker: Record<string, string> = {
   '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2': 'ZC',
+  'EC7MUufEpZcRZyXTFt16MMNLjJVnj9Vkku4UwdZ713Hx': 'TESTSURF',
 };
 
 // Whitelisted DLMM pools
