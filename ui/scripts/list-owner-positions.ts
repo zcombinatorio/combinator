@@ -2,32 +2,40 @@
  * List all Meteora LP positions owned by a given wallet
  * Works for both DLMM and DAMM positions
  *
+ * Uses the SDK to properly resolve positions by checking which position NFTs
+ * are held by the wallet.
+ *
  * Usage:
  *   1. Update OWNER_ADDRESS below
  *   2. Run: pnpm ts-node scripts/list-owner-positions.ts
  */
 import 'dotenv/config';
 import { Connection, PublicKey } from '@solana/web3.js';
+import { getMint } from '@solana/spl-token';
 import DLMM from '@meteora-ag/dlmm';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
+import BN from 'bn.js';
 
 // ============================================================================
 // CONFIGURATION - Update these values before running
 // ============================================================================
 
 // Owner wallet address to query
-const OWNER_ADDRESS = '6VnokgtsvgbwXuP9mSiMVXkjo8iLNZJRrpA1bMy3rwqe';
+// Manager wallets: ZC=54A1ki4t5K9sB6oqLBVxVkUbkkCEAGeRACphsZuNPU5R, OOGWAY=DaSkykmLmr1n1ExAWWZDYCfzFxX7UuUn1CnjYca8gz9D
+// SURF=etBt7Ki2Gr2rhidNmXtHyxiGHkokKPayNhG787SusMj, SURFTEST=ESMiG5ppoVMtYq3EG8aKx3XzEtKPfiGQuAx2S4jhw3zf
+// TESTSURF=BnzxLbNmM63RxhHDdfeWa7BmV2YM4q7KxDJ3w75kDZo
+const OWNER_ADDRESS = 'etBt7Ki2Gr2rhidNmXtHyxiGHkokKPayNhG787SusMj'; // SURF
 
 // ============================================================================
 
-// Known pools for context
-const KNOWN_POOLS: Record<string, { ticker: string; type: string }> = {
-  '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2': { ticker: 'ZC', type: 'DLMM' },
-  '2FCqTyvFcE4uXgRL1yh56riZ9vdjVgoP6yknZW3f8afX': { ticker: 'OOGWAY', type: 'DAMM' },
-  'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': { ticker: 'SURF', type: 'DAMM' },
-  'PS3rPSb49GnAkmh3tec1RQizgNSb1hUwPsYHGGuAy5r': { ticker: 'SURFTEST', type: 'DAMM' },
-  'EC7MUufEpZcRZyXTFt16MMNLjJVnj9Vkku4UwdZ713Hx': { ticker: 'TESTSURF', type: 'DLMM' },
-};
+// Known pools to check for positions
+const KNOWN_POOLS: { address: string; ticker: string; type: 'dlmm' | 'damm' }[] = [
+  { address: '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2', ticker: 'ZC', type: 'dlmm' },
+  { address: '2FCqTyvFcE4uXgRL1yh56riZ9vdjVgoP6yknZW3f8afX', ticker: 'OOGWAY', type: 'damm' },
+  { address: 'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1', ticker: 'SURF', type: 'damm' },
+  { address: 'PS3rPSb49GnAkmh3tec1RQizgNSb1hUwPsYHGGuAy5r', ticker: 'SURFTEST', type: 'damm' },
+  { address: 'EC7MUufEpZcRZyXTFt16MMNLjJVnj9Vkku4UwdZ713Hx', ticker: 'TESTSURF', type: 'dlmm' },
+];
 
 async function listOwnerPositions() {
   const RPC_URL = process.env.RPC_URL;
@@ -43,71 +51,122 @@ async function listOwnerPositions() {
   console.log(`Owner: ${OWNER_ADDRESS}`);
   console.log('');
 
+  let dlmmCount = 0;
+  let dammCount = 0;
+
   try {
-    // Query DLMM positions
+    // Check DLMM pools
     console.log('--- DLMM Positions ---');
-    const dlmmPositions = await connection.getProgramAccounts(
-      new PublicKey('LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo'), // DLMM program
-      {
-        filters: [
-          { memcmp: { offset: 40, bytes: owner.toBase58() } }, // owner at offset 40
-        ],
-      }
-    );
+    const dlmmPools = KNOWN_POOLS.filter(p => p.type === 'dlmm');
 
-    if (dlmmPositions.length === 0) {
-      console.log('No DLMM positions found\n');
-    } else {
-      console.log(`Found ${dlmmPositions.length} DLMM position(s):\n`);
-      for (const pos of dlmmPositions) {
-        const data = pos.account.data;
-        const lbPair = new PublicKey(data.slice(8, 40));
-        const poolInfo = KNOWN_POOLS[lbPair.toBase58()];
+    for (const pool of dlmmPools) {
+      try {
+        const dlmm = await DLMM.create(connection, new PublicKey(pool.address));
+        const { userPositions } = await dlmm.getPositionsByUserAndLbPair(owner);
 
-        console.log(`Position: ${pos.pubkey.toBase58()}`);
-        console.log(`  Pool: ${lbPair.toBase58()}`);
-        if (poolInfo) {
-          console.log(`  Ticker: ${poolInfo.ticker} (${poolInfo.type})`);
+        if (userPositions.length > 0) {
+          // Get token decimals
+          const lbPair = dlmm.lbPair;
+          const tokenXMintInfo = await getMint(connection, lbPair.tokenXMint);
+          const tokenYMintInfo = await getMint(connection, lbPair.tokenYMint);
+
+          for (const pos of userPositions) {
+            const positionData = pos.positionData;
+            const rawX = positionData.totalXAmount || new BN(0);
+            const rawY = positionData.totalYAmount || new BN(0);
+            const humanX = Number(rawX.toString()) / Math.pow(10, tokenXMintInfo.decimals);
+            const humanY = Number(rawY.toString()) / Math.pow(10, tokenYMintInfo.decimals);
+
+            console.log(`Position: ${pos.publicKey.toBase58()}`);
+            console.log(`  Pool: ${pool.address}`);
+            console.log(`  Ticker: ${pool.ticker}`);
+            console.log(`  Token X: ${humanX.toLocaleString()} (${rawX.toString()} raw)`);
+            console.log(`  Token Y: ${humanY.toLocaleString()} (${rawY.toString()} raw)`);
+            console.log(`  Bin Range: ${positionData.lowerBinId} - ${positionData.upperBinId}`);
+            console.log('');
+            dlmmCount++;
+          }
         }
-        console.log('');
+      } catch (error) {
+        // Pool might not exist or have issues
+        console.log(`Could not query ${pool.ticker}: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
     }
 
-    // Query DAMM positions
+    if (dlmmCount === 0) {
+      console.log('No DLMM positions found\n');
+    }
+
+    // Check DAMM pools
     console.log('--- DAMM Positions ---');
-    const dammPositions = await connection.getProgramAccounts(
-      new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'), // CP-AMM program
-      {
-        filters: [
-          { memcmp: { offset: 40, bytes: owner.toBase58() } }, // owner at offset 40
-        ],
-      }
-    );
+    const dammPools = KNOWN_POOLS.filter(p => p.type === 'damm');
+    const cpAmm = new CpAmm(connection);
 
-    if (dammPositions.length === 0) {
-      console.log('No DAMM positions found\n');
-    } else {
-      console.log(`Found ${dammPositions.length} DAMM position(s):\n`);
-      for (const pos of dammPositions) {
-        const data = pos.account.data;
-        const pool = new PublicKey(data.slice(8, 40));
-        const poolInfo = KNOWN_POOLS[pool.toBase58()];
+    for (const pool of dammPools) {
+      try {
+        const poolAddress = new PublicKey(pool.address);
+        const positions = await cpAmm.getUserPositionByPool(poolAddress, owner);
 
-        console.log(`Position: ${pos.pubkey.toBase58()}`);
-        console.log(`  Pool: ${pool.toBase58()}`);
-        if (poolInfo) {
-          console.log(`  Ticker: ${poolInfo.ticker} (${poolInfo.type})`);
+        if (positions.length > 0) {
+          // Fetch pool state for token info
+          const poolState = await cpAmm.fetchPoolState(poolAddress);
+          const tokenAMintInfo = await getMint(connection, poolState.tokenAMint);
+          const tokenBMintInfo = await getMint(connection, poolState.tokenBMint);
+          const currentEpoch = (await connection.getEpochInfo()).epoch;
+
+          for (const pos of positions) {
+            // DAMM SDK returns { position, positionNftAccount, positionState } objects
+            const { position, positionState } = pos;
+            const totalLiquidity = positionState.unlockedLiquidity
+              .add(positionState.vestedLiquidity)
+              .add(positionState.permanentLockedLiquidity);
+
+            // Calculate actual token amounts using withdraw quote
+            let tokenAAmount = 0;
+            let tokenBAmount = 0;
+            if (!totalLiquidity.isZero()) {
+              try {
+                const withdrawQuote = cpAmm.getWithdrawQuote({
+                  liquidityDelta: totalLiquidity,
+                  minSqrtPrice: poolState.sqrtMinPrice,
+                  maxSqrtPrice: poolState.sqrtMaxPrice,
+                  sqrtPrice: poolState.sqrtPrice,
+                  tokenATokenInfo: { mint: tokenAMintInfo, currentEpoch },
+                  tokenBTokenInfo: { mint: tokenBMintInfo, currentEpoch }
+                });
+                tokenAAmount = Number(withdrawQuote.outAmountA.toString()) / Math.pow(10, tokenAMintInfo.decimals);
+                tokenBAmount = Number(withdrawQuote.outAmountB.toString()) / Math.pow(10, tokenBMintInfo.decimals);
+              } catch {
+                // Quote calculation failed
+              }
+            }
+
+            console.log(`Position: ${position.toBase58()}`);
+            console.log(`  Pool: ${pool.address}`);
+            console.log(`  Ticker: ${pool.ticker}`);
+            console.log(`  Token A: ${tokenAAmount.toLocaleString()}`);
+            console.log(`  Token B: ${tokenBAmount.toLocaleString()}`);
+            console.log(`  Liquidity: ${totalLiquidity.toString()} (unlocked: ${positionState.unlockedLiquidity.toString()})`);
+            console.log('');
+            dammCount++;
+          }
         }
-        console.log('');
+      } catch (error) {
+        // Pool might not exist or have issues
+        console.log(`Could not query ${pool.ticker}: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
+    }
+
+    if (dammCount === 0) {
+      console.log('No DAMM positions found\n');
     }
 
     // Summary
-    const totalPositions = dlmmPositions.length + dammPositions.length;
+    const totalPositions = dlmmCount + dammCount;
     console.log('--- Summary ---');
     console.log(`Total: ${totalPositions} position(s)`);
-    console.log(`  DLMM: ${dlmmPositions.length}`);
-    console.log(`  DAMM: ${dammPositions.length}`);
+    console.log(`  DLMM: ${dlmmCount}`);
+    console.log(`  DAMM: ${dammCount}`);
 
   } catch (error) {
     console.error('Error fetching positions:', error);
