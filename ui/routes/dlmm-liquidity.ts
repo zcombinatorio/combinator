@@ -1190,8 +1190,8 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
       try {
         if (isTokenYNativeSOL) {
           const solBalance = await connection.getBalance(lpOwner.publicKey);
-          // Reserve some SOL for transaction fees (0.01 SOL)
-          const reserveForFees = 10_000_000; // 0.01 SOL in lamports
+          // Reserve SOL for transaction fees + rent for new accounts (0.1 SOL)
+          const reserveForFees = 100_000_000; // 0.1 SOL in lamports
           tokenYAmountBN = new BN(Math.max(0, solBalance - reserveForFees));
 
           // Also check wSOL ATA if it exists
@@ -1829,8 +1829,8 @@ router.post('/cleanup/swap/build', dlmmLiquidityLimiter, async (req: Request, re
       if (isTokenYNativeSOL) {
         // For native SOL, check the account balance
         const solBalance = await connection.getBalance(lpOwner.publicKey);
-        // Reserve some SOL for transaction fees (0.01 SOL)
-        const reserveForFees = 10_000_000; // 0.01 SOL in lamports
+        // Reserve SOL for transaction fees + rent for new accounts (0.1 SOL)
+        const reserveForFees = 100_000_000; // 0.1 SOL in lamports
         tokenYBalance = new BN(Math.max(0, solBalance - reserveForFees));
       } else {
         const tokenYAccount = await connection.getTokenAccountBalance(lpOwnerTokenYAta);
