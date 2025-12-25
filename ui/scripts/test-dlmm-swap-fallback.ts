@@ -4,7 +4,7 @@
  */
 import 'dotenv/config';
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddress, getMint } from '@solana/spl-token';
+import { getMint } from '@solana/spl-token';
 import BN from 'bn.js';
 import DLMM from '@meteora-ag/dlmm';
 
