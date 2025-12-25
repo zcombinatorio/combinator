@@ -1190,12 +1190,11 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
       pool: poolAddress,
       positionNftAccount,
       liquidityDelta,
-      // Match Meteora UI: add 0.09% (9 bps) buffer to max amounts
+      // Match Meteora UI: thresholds = deposit amounts + 0.09% buffer
       maxAmountTokenA: depositTokenAAmount.muln(10009).divn(10000),
       maxAmountTokenB: depositTokenBAmount.muln(10009).divn(10000),
-      // Match Meteora UI: no threshold check (thresholds = 0)
-      tokenAAmountThreshold: new BN(0),
-      tokenBAmountThreshold: new BN(0),
+      tokenAAmountThreshold: depositTokenAAmount.muln(10009).divn(10000),
+      tokenBAmountThreshold: depositTokenBAmount.muln(10009).divn(10000),
       tokenAMint: poolState.tokenAMint,
       tokenBMint: poolState.tokenBMint,
       tokenAVault: poolState.tokenAVault,
