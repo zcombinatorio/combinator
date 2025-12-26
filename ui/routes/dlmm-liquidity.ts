@@ -19,7 +19,7 @@
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
 import nacl from 'tweetnacl';
-import { Connection, Keypair, Transaction, PublicKey, SystemProgram } from '@solana/web3.js';
+import { Connection, Keypair, Transaction, TransactionInstruction, PublicKey, SystemProgram } from '@solana/web3.js';
 import {
   createTransferInstruction,
   getAssociatedTokenAddress,
@@ -81,8 +81,8 @@ interface DlmmWithdrawData {
 }
 
 interface DlmmDepositData {
-  unsignedTransaction: string;
-  unsignedTransactionHash: string;
+  unsignedTransactions: string[];  // Array for chunked deposits (wide bin ranges)
+  unsignedTransactionHashes: string[];
   poolAddress: string;
   tokenXMint: string;
   tokenYMint: string;
@@ -564,23 +564,20 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
     console.log(`  Redeposit to DLMM: ${redepositTokenXAmount.toString()} tokenX, ${redepositTokenYAmount.toString()} tokenY`);
 
     // =========================================================================
-    // Build redeposit transaction (if needed)
+    // Build redeposit transactions (if needed) - uses chunking for wide bin ranges
     // =========================================================================
-    let redepositTx: Transaction | null = null;
+    const redepositTxs: Transaction[] = [];
     const hasRedeposit = !redepositTokenXAmount.isZero() || !redepositTokenYAmount.isZero();
 
     if (hasRedeposit) {
-      console.log('  Building redeposit transaction...');
+      console.log('  Building redeposit transactions...');
 
-      redepositTx = new Transaction();
+      // Build setup instructions for wSOL ATAs
+      // These need to run before add liquidity since withdrawal closes wSOL ATAs
+      const setupInstructions: TransactionInstruction[] = [];
 
-      // If redepositing native SOL, we need to wrap it first
-      // After withdrawal with skipUnwrapSOL: false, SOL is in native balance
-      // addLiquidityByStrategy expects wSOL in ATA
-      // Ensure wSOL ATAs exist - addLiquidityByStrategy requires both token accounts
-      // to be initialized even if depositing 0 of one token
       if (isTokenXNativeSOL) {
-        redepositTx.add(
+        setupInstructions.push(
           createAssociatedTokenAccountIdempotentInstruction(
             lpOwner.publicKey,
             lpOwnerTokenXAta,
@@ -590,7 +587,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
         );
         // Transfer native SOL to wSOL ATA and sync (only if amount > 0)
         if (!redepositTokenXAmount.isZero()) {
-          redepositTx.add(
+          setupInstructions.push(
             SystemProgram.transfer({
               fromPubkey: lpOwner.publicKey,
               toPubkey: lpOwnerTokenXAta,
@@ -602,7 +599,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
       }
 
       if (isTokenYNativeSOL) {
-        redepositTx.add(
+        setupInstructions.push(
           createAssociatedTokenAccountIdempotentInstruction(
             lpOwner.publicKey,
             lpOwnerTokenYAta,
@@ -612,7 +609,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
         );
         // Transfer native SOL to wSOL ATA and sync (only if amount > 0)
         if (!redepositTokenYAmount.isZero()) {
-          redepositTx.add(
+          setupInstructions.push(
             SystemProgram.transfer({
               fromPubkey: lpOwner.publicKey,
               toPubkey: lpOwnerTokenYAta,
@@ -623,8 +620,8 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
         }
       }
 
-      // Build add liquidity transaction for the excess tokens
-      const addLiquidityTx = await dlmmPool.addLiquidityByStrategy({
+      // Use chunkable version for wide bin ranges (600 bins would fail with regular version)
+      const addLiquidityTxs = await dlmmPool.addLiquidityByStrategyChunkable({
         positionPubKey: position.publicKey,
         totalXAmount: redepositTokenXAmount,
         totalYAmount: redepositTokenYAmount,
@@ -637,12 +634,28 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
         slippage: 500, // 5% slippage to handle price movement from cleanup swap
       });
 
-      if (Array.isArray(addLiquidityTx)) {
-        for (const tx of addLiquidityTx) {
-          redepositTx.add(...tx.instructions);
+      console.log(`  Redeposit chunked into ${addLiquidityTxs.length} transaction(s)`);
+
+      // Merge setup instructions with first chunk, keep rest as-is
+      if (addLiquidityTxs.length > 0) {
+        const firstTx = new Transaction();
+        if (setupInstructions.length > 0) {
+          firstTx.add(...setupInstructions);
         }
-      } else {
-        redepositTx.add(...addLiquidityTx.instructions);
+        firstTx.add(...addLiquidityTxs[0].instructions);
+        redepositTxs.push(firstTx);
+
+        // Add remaining chunks
+        for (let i = 1; i < addLiquidityTxs.length; i++) {
+          const chunkTx = new Transaction();
+          chunkTx.add(...addLiquidityTxs[i].instructions);
+          redepositTxs.push(chunkTx);
+        }
+      } else if (setupInstructions.length > 0) {
+        // No add liquidity chunks but we have setup - shouldn't happen but handle it
+        const setupTx = new Transaction();
+        setupTx.add(...setupInstructions);
+        redepositTxs.push(setupTx);
       }
     }
 
@@ -732,11 +745,11 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
       allTransactions.push(removeTx);
     }
 
-    // Add redeposit transaction if needed
-    if (redepositTx) {
-      redepositTx.recentBlockhash = blockhash;
-      redepositTx.feePayer = managerWallet;
-      allTransactions.push(redepositTx);
+    // Add redeposit transactions if needed (may be multiple for wide bin ranges)
+    for (const tx of redepositTxs) {
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = managerWallet;
+      allTransactions.push(tx);
     }
 
     // Add the transfer transaction as the final tx
@@ -1303,8 +1316,8 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
     console.log(`  Leftover X: ${leftoverTokenXAmount.toString()} (${leftoverXDecimal})`);
     console.log(`  Leftover Y: ${leftoverTokenYAmount.toString()} (${leftoverYDecimal})`);
 
-    // Build combined transaction
-    const combinedTx = new Transaction();
+    // Build setup instructions (ATA creation, token transfers)
+    const setupInstructions: TransactionInstruction[] = [];
 
     // Get manager ATAs
     const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, manager);
@@ -1312,7 +1325,7 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
 
     // Create LP owner ATAs if needed (always create both, even for native SOL which needs wrapped SOL ATA)
     // Manager pays for ATA creation as fee payer
-    combinedTx.add(
+    setupInstructions.push(
       createAssociatedTokenAccountIdempotentInstruction(
         manager,
         lpOwnerTokenXAta,
@@ -1320,7 +1333,7 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
         tokenXMint
       )
     );
-    combinedTx.add(
+    setupInstructions.push(
       createAssociatedTokenAccountIdempotentInstruction(
         manager,
         lpOwnerTokenYAta,
@@ -1335,7 +1348,7 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
       if (!tokenXAmountBN.isZero()) {
         if (isTokenXNativeSOL) {
           // Transfer native SOL to wrapped SOL ATA and sync
-          combinedTx.add(
+          setupInstructions.push(
             SystemProgram.transfer({
               fromPubkey: manager,
               toPubkey: lpOwnerTokenXAta,
@@ -1344,7 +1357,7 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
             createSyncNativeInstruction(lpOwnerTokenXAta)
           );
         } else {
-          combinedTx.add(
+          setupInstructions.push(
             createTransferInstruction(
               managerTokenXAta,
               lpOwnerTokenXAta,
@@ -1358,31 +1371,31 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
       if (!tokenYAmountBN.isZero()) {
         if (isTokenYNativeSOL) {
           // Transfer native SOL to wrapped SOL ATA and sync
-          combinedTx.add(
+          setupInstructions.push(
             SystemProgram.transfer({
               fromPubkey: manager,
               toPubkey: lpOwnerTokenYAta,
-            lamports: Number(tokenYAmountBN.toString())
-          }),
-          createSyncNativeInstruction(lpOwnerTokenYAta)
-        );
-      } else {
-        combinedTx.add(
-          createTransferInstruction(
-            managerTokenYAta,
-            lpOwnerTokenYAta,
-            manager,
-            BigInt(tokenYAmountBN.toString())
-          )
-        );
-      }
+              lamports: Number(tokenYAmountBN.toString())
+            }),
+            createSyncNativeInstruction(lpOwnerTokenYAta)
+          );
+        } else {
+          setupInstructions.push(
+            createTransferInstruction(
+              managerTokenYAta,
+              lpOwnerTokenYAta,
+              manager,
+              BigInt(tokenYAmountBN.toString())
+            )
+          );
+        }
       }
     } // end if (!useCleanupMode)
 
-    // Add liquidity to position using strategy
+    // Add liquidity to position using chunkable strategy (handles wide bin ranges)
     // Using spot distribution around active bin
     // Only deposit the BALANCED amounts, leaving excess in LP owner wallet
-    const addLiquidityTx = await dlmmPool.addLiquidityByStrategy({
+    const addLiquidityTxs = await dlmmPool.addLiquidityByStrategyChunkable({
       positionPubKey: position.publicKey,
       totalXAmount: depositTokenXAmount,
       totalYAmount: depositTokenYAmount,
@@ -1395,46 +1408,68 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
       slippage: 500, // 5% slippage to handle price movement from cleanup swap
     });
 
-    // Add liquidity instructions - handle both single transaction and array of transactions
-    if (Array.isArray(addLiquidityTx)) {
-      for (const tx of addLiquidityTx) {
-        combinedTx.add(...tx.instructions);
+    console.log(`  Deposit chunked into ${addLiquidityTxs.length} transaction(s)`);
+
+    // Build all transactions: merge setup with first chunk, keep rest as-is
+    const { blockhash } = await connection.getLatestBlockhash();
+    const allTransactions: Transaction[] = [];
+
+    if (addLiquidityTxs.length > 0) {
+      // First transaction: setup + first add liquidity chunk
+      const firstTx = new Transaction();
+      if (setupInstructions.length > 0) {
+        firstTx.add(...setupInstructions);
       }
-    } else {
-      combinedTx.add(...addLiquidityTx.instructions);
+      firstTx.add(...addLiquidityTxs[0].instructions);
+      firstTx.recentBlockhash = blockhash;
+      firstTx.feePayer = manager;
+      allTransactions.push(firstTx);
+
+      // Remaining chunks
+      for (let i = 1; i < addLiquidityTxs.length; i++) {
+        const chunkTx = new Transaction();
+        chunkTx.add(...addLiquidityTxs[i].instructions);
+        chunkTx.recentBlockhash = blockhash;
+        chunkTx.feePayer = manager;
+        allTransactions.push(chunkTx);
+      }
+    } else if (setupInstructions.length > 0) {
+      // No add liquidity chunks but we have setup - shouldn't happen but handle it
+      const setupTx = new Transaction();
+      setupTx.add(...setupInstructions);
+      setupTx.recentBlockhash = blockhash;
+      setupTx.feePayer = manager;
+      allTransactions.push(setupTx);
     }
 
-    // Set transaction properties (manager wallet is fee payer for security)
-    const { blockhash } = await connection.getLatestBlockhash();
-    combinedTx.recentBlockhash = blockhash;
-    combinedTx.feePayer = manager;
+    // Serialize all unsigned transactions
+    const unsignedTransactions = allTransactions.map(tx =>
+      bs58.encode(tx.serialize({ requireAllSignatures: false }))
+    );
 
-    // Serialize unsigned transaction (base58 like DAMM)
-    const unsignedTransaction = bs58.encode(combinedTx.serialize({ requireAllSignatures: false }));
-
-    // Create hash of serialized message for tamper detection
-    const unsignedTransactionHash = crypto
-      .createHash('sha256')
-      .update(combinedTx.serializeMessage())
-      .digest('hex');
+    // Create hashes of serialized messages for tamper detection
+    const unsignedTransactionHashes = allTransactions.map(tx =>
+      crypto.createHash('sha256').update(tx.serializeMessage()).digest('hex')
+    );
 
     // Generate request ID
     const requestId = crypto.randomBytes(16).toString('hex');
 
-    console.log('✓ Deposit transaction built successfully');
+    console.log('✓ Deposit transactions built successfully');
     console.log(`  Pool: ${poolAddress.toBase58()}`);
     console.log(`  Transferred: ${tokenXAmountBN.toString()} X, ${tokenYAmountBN.toString()} Y`);
     console.log(`  Deposited: ${depositTokenXAmount.toString()} X, ${depositTokenYAmount.toString()} Y`);
     console.log(`  Leftover: ${leftoverTokenXAmount.toString()} X, ${leftoverTokenYAmount.toString()} Y`);
     console.log(`  Active Bin Price: ${activeBinPrice}`);
+    console.log(`  Transaction count: ${allTransactions.length}`);
     console.log(`  Request ID: ${requestId}`);
 
     const hasLeftover = !leftoverTokenXAmount.isZero() || !leftoverTokenYAmount.isZero();
 
     // Store request data
     depositRequests.set(requestId, {
-      unsignedTransaction,
-      unsignedTransactionHash,
+      unsignedTransactions,
+      unsignedTransactionHashes,
       poolAddress: poolAddress.toBase58(),
       tokenXMint: tokenXMint.toBase58(),
       tokenYMint: tokenYMint.toBase58(),
@@ -1455,7 +1490,8 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
 
     return res.json({
       success: true,
-      transaction: unsignedTransaction,
+      transactions: unsignedTransactions,
+      transactionCount: unsignedTransactions.length,
       requestId,
       poolAddress: poolAddress.toBase58(),
       tokenXMint: tokenXMint.toBase58(),
@@ -1464,7 +1500,6 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
       tokenYDecimals: tokenYMintInfo.decimals,
       lpOwnerAddress: lpOwner.publicKey.toBase58(),
       managerAddress: manager.toBase58(),
-      instructionsCount: combinedTx.instructions.length,
       cleanupMode: useCleanupMode,
       activeBinPrice,
       hasLeftover,
@@ -1481,8 +1516,8 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
         tokenY: leftoverTokenYAmount.toString(),
       },
       message: hasLeftover
-        ? 'Sign this transaction with the manager wallet and submit to /dlmm/deposit/confirm. Note: leftover tokens will remain in LP owner wallet for cleanup.'
-        : 'Sign this transaction with the manager wallet and submit to /dlmm/deposit/confirm'
+        ? 'Sign all transactions with the manager wallet and submit to /dlmm/deposit/confirm. Note: leftover tokens will remain in LP owner wallet for cleanup.'
+        : 'Sign all transactions with the manager wallet and submit to /dlmm/deposit/confirm'
     });
 
   } catch (error) {
@@ -1495,11 +1530,11 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
 });
 
 // ============================================================================
-// POST /dlmm/deposit/confirm - Confirm and submit deposit
+// POST /dlmm/deposit/confirm - Confirm and submit deposit (supports multiple transactions)
 // ============================================================================
 /**
- * Security measures (matching DAMM):
- * 1. Manager wallet signature - Transaction must be signed by manager wallet
+ * Security measures (matching DLMM withdraw):
+ * 1. Manager wallet signature - All transactions must be signed by manager wallet
  * 2. Lock system - Prevents concurrent operations for the same pool
  * 3. Request expiry - 10 minute timeout
  * 4. Blockhash validation - Prevents replay attacks
@@ -1511,14 +1546,14 @@ router.post('/deposit/confirm', dlmmLiquidityLimiter, async (req: Request, res: 
   let releaseLock: (() => void) | null = null;
 
   try {
-    const { signedTransaction, requestId } = req.body;
+    const { signedTransactions, requestId } = req.body;
 
     console.log('DLMM deposit confirm request received:', { requestId });
 
     // Validate required fields
-    if (!signedTransaction || !requestId) {
+    if (!signedTransactions || !Array.isArray(signedTransactions) || !requestId) {
       return res.status(400).json({
-        error: 'Missing required fields: signedTransaction and requestId'
+        error: 'Missing required fields: signedTransactions (array) and requestId'
       });
     }
 
@@ -1531,7 +1566,14 @@ router.post('/deposit/confirm', dlmmLiquidityLimiter, async (req: Request, res: 
     }
 
     console.log('  Pool:', requestData.poolAddress);
-    console.log('  Manager:', requestData.managerAddress);
+    console.log('  Transaction count:', signedTransactions.length);
+
+    // Validate transaction count matches
+    if (signedTransactions.length !== requestData.unsignedTransactions.length) {
+      return res.status(400).json({
+        error: `Transaction count mismatch: expected ${requestData.unsignedTransactions.length}, got ${signedTransactions.length}`
+      });
+    }
 
     // Acquire lock
     releaseLock = await acquireLiquidityLock(requestData.poolAddress);
@@ -1570,121 +1612,122 @@ router.post('/deposit/confirm', dlmmLiquidityLimiter, async (req: Request, res: 
     const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
     const managerWalletPubKey = new PublicKey(requestData.managerAddress);
 
-    // Deserialize transaction
-    let transaction: Transaction;
-    try {
-      const transactionBuffer = bs58.decode(signedTransaction);
-      transaction = Transaction.from(transactionBuffer);
-    } catch (error) {
-      return res.status(400).json({
-        error: `Failed to deserialize transaction: ${error instanceof Error ? error.message : 'Unknown error'}`
-      });
+    // Deserialize and validate all transactions
+    const transactions: Transaction[] = [];
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const signedTx = signedTransactions[i];
+      const expectedHash = requestData.unsignedTransactionHashes[i];
+
+      // Deserialize transaction
+      let transaction: Transaction;
+      try {
+        const transactionBuffer = bs58.decode(signedTx);
+        transaction = Transaction.from(transactionBuffer);
+      } catch (error) {
+        return res.status(400).json({
+          error: `Failed to deserialize transaction ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        });
+      }
+
+      // SECURITY: Validate blockhash
+      if (!transaction.recentBlockhash) {
+        return res.status(400).json({
+          error: `Invalid transaction ${i + 1}: missing blockhash`
+        });
+      }
+
+      // SECURITY: Verify fee payer is manager wallet
+      if (!transaction.feePayer || !transaction.feePayer.equals(managerWalletPubKey)) {
+        return res.status(400).json({
+          error: `Transaction ${i + 1} fee payer must be manager wallet`
+        });
+      }
+
+      // SECURITY: Verify manager wallet has signed
+      const managerSignature = transaction.signatures.find(sig =>
+        sig.publicKey.equals(managerWalletPubKey)
+      );
+
+      if (!managerSignature || !managerSignature.signature) {
+        return res.status(400).json({
+          error: `Transaction ${i + 1} verification failed: Manager wallet has not signed`
+        });
+      }
+
+      // Verify manager signature is valid
+      const messageData = transaction.serializeMessage();
+      const managerSigValid = nacl.sign.detached.verify(
+        messageData,
+        managerSignature.signature,
+        managerSignature.publicKey.toBytes()
+      );
+
+      if (!managerSigValid) {
+        return res.status(400).json({
+          error: `Transaction ${i + 1} verification failed: Invalid manager wallet signature`
+        });
+      }
+
+      // SECURITY: Verify transaction hasn't been tampered with
+      const receivedTransactionHash = crypto.createHash('sha256')
+        .update(transaction.serializeMessage())
+        .digest('hex');
+
+      if (receivedTransactionHash !== expectedHash) {
+        console.log(`  ⚠️  Transaction ${i + 1} hash mismatch detected`);
+        console.log(`    Expected: ${expectedHash.substring(0, 16)}...`);
+        console.log(`    Received: ${receivedTransactionHash.substring(0, 16)}...`);
+        return res.status(400).json({
+          error: `Transaction ${i + 1} verification failed: transaction has been modified`,
+          details: 'Transaction structure does not match the original unsigned transaction'
+        });
+      }
+
+      transactions.push(transaction);
     }
+    console.log(`  ✓ All ${transactions.length} transactions verified`);
 
-    // SECURITY: Validate blockhash
-    if (!transaction.recentBlockhash) {
-      return res.status(400).json({
-        error: 'Invalid transaction: missing blockhash'
-      });
-    }
-
-    const isBlockhashValid = await connection.isBlockhashValid(
-      transaction.recentBlockhash,
-      { commitment: 'confirmed' }
-    );
-
-    if (!isBlockhashValid) {
-      return res.status(400).json({
-        error: 'Invalid transaction: blockhash is expired. Please create a new transaction.'
-      });
-    }
-
-    // SECURITY: Verify fee payer is manager wallet
-    if (!transaction.feePayer) {
-      return res.status(400).json({
-        error: 'Transaction missing fee payer'
-      });
-    }
-
-    if (!transaction.feePayer.equals(managerWalletPubKey)) {
-      return res.status(400).json({
-        error: 'Transaction fee payer must be manager wallet'
-      });
-    }
-
-    // SECURITY: Verify manager wallet has signed
-    const managerSignature = transaction.signatures.find(sig =>
-      sig.publicKey.equals(managerWalletPubKey)
-    );
-
-    if (!managerSignature || !managerSignature.signature) {
-      return res.status(400).json({
-        error: 'Transaction verification failed: Manager wallet has not signed'
-      });
-    }
-
-    // Verify manager signature is valid
-    const messageData = transaction.serializeMessage();
-    const managerSigValid = nacl.sign.detached.verify(
-      messageData,
-      managerSignature.signature,
-      managerSignature.publicKey.toBytes()
-    );
-
-    if (!managerSigValid) {
-      return res.status(400).json({
-        error: 'Transaction verification failed: Invalid manager wallet signature'
-      });
-    }
-
-    // SECURITY: Verify transaction hasn't been tampered with
-    const receivedTransactionHash = crypto.createHash('sha256')
-      .update(transaction.serializeMessage())
-      .digest('hex');
-
-    if (receivedTransactionHash !== requestData.unsignedTransactionHash) {
-      console.log(`  ⚠️  Transaction hash mismatch detected`);
-      console.log(`    Expected: ${requestData.unsignedTransactionHash.substring(0, 16)}...`);
-      console.log(`    Received: ${receivedTransactionHash.substring(0, 16)}...`);
-      return res.status(400).json({
-        error: 'Transaction verification failed: transaction has been modified',
-        details: 'Transaction structure does not match the original unsigned transaction'
-      });
-    }
-    console.log(`  ✓ Transaction integrity verified (cryptographic hash match)`);
-
-    // Add LP owner signature
-    transaction.partialSign(lpOwnerKeypair);
-
-    // Send transaction
-    console.log('  Sending transaction...');
+    // Send transactions sequentially
+    const signatures: string[] = [];
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-    const signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed'
-    });
 
-    console.log('✓ DLMM deposit transaction sent');
-    console.log(`  Signature: ${signature}`);
+    for (let i = 0; i < transactions.length; i++) {
+      const transaction = transactions[i];
+
+      // Add LP owner signature
+      transaction.partialSign(lpOwnerKeypair);
+
+      console.log(`  Sending transaction ${i + 1}/${transactions.length}...`);
+      const signature = await connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed'
+      });
+
+      console.log(`  ✓ Transaction ${i + 1} sent: ${signature}`);
+      signatures.push(signature);
+
+      // Wait for confirmation before sending next (except for last)
+      try {
+        await connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight
+        });
+        console.log(`  ✓ Transaction ${i + 1} confirmed`);
+      } catch (error) {
+        console.error(`  ⚠ Transaction ${i + 1} confirmation timeout:`, error);
+        // Continue anyway - tx might still land
+      }
+    }
+
+    console.log('✓ All DLMM deposit transactions sent');
     console.log(`  Pool: ${requestData.poolAddress}`);
     console.log(`  Manager: ${requestData.managerAddress}`);
     console.log(`  LP Owner: ${requestData.lpOwnerAddress}`);
     console.log(`  Transferred: ${requestData.transferredTokenXAmount} X, ${requestData.transferredTokenYAmount} Y`);
     console.log(`  Deposited: ${requestData.depositedTokenXAmount} X, ${requestData.depositedTokenYAmount} Y`);
     console.log(`  Leftover: ${requestData.leftoverTokenXAmount} X, ${requestData.leftoverTokenYAmount} Y`);
-    console.log(`  Solscan: https://solscan.io/tx/${signature}`);
-
-    // Wait for confirmation
-    try {
-      await connection.confirmTransaction({
-        signature,
-        blockhash,
-        lastValidBlockHeight
-      });
-      console.log(`✓ Deposit confirmed: ${signature}`);
-    } catch (error) {
-      console.error(`⚠ Confirmation timeout for ${signature}:`, error);
-    }
+    console.log(`  Signatures: ${signatures.length}`);
 
     // Clean up
     depositRequests.delete(requestId);
@@ -1693,7 +1736,7 @@ router.post('/deposit/confirm', dlmmLiquidityLimiter, async (req: Request, res: 
 
     res.json({
       success: true,
-      signature,
+      signatures,
       poolAddress: requestData.poolAddress,
       tokenXMint: requestData.tokenXMint,
       tokenYMint: requestData.tokenYMint,
@@ -1714,8 +1757,8 @@ router.post('/deposit/confirm', dlmmLiquidityLimiter, async (req: Request, res: 
       },
       cleanupRequired: hasLeftover,
       message: hasLeftover
-        ? 'Deposit transaction submitted successfully. Leftover tokens in LP wallet require cleanup.'
-        : 'Deposit transaction submitted successfully'
+        ? 'Deposit transactions submitted successfully. Leftover tokens in LP wallet require cleanup.'
+        : 'Deposit transactions submitted successfully'
     });
 
   } catch (error) {
