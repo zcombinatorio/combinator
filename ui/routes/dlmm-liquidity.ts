@@ -629,7 +629,7 @@ router.post('/withdraw/build', dlmmLiquidityLimiter, async (req: Request, res: R
           strategyType: 0, // Spot strategy
         },
         user: lpOwner.publicKey,
-        slippage: 100, // 1% slippage
+        slippage: 500, // 5% slippage to handle price movement from cleanup swap
       });
 
       if (Array.isArray(addLiquidityTx)) {
@@ -1170,6 +1170,11 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
     if (useCleanupMode) {
       console.log('  Using cleanup mode - reading LP owner wallet balances');
 
+      // Wait for RPC to propagate pool state after cleanup swap
+      // This helps avoid stale data causing slippage errors
+      console.log('  Waiting 2s for RPC to propagate pool state...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       // SAFETY CHECK: Prevent deposit using LP balances for restricted LP owner address
       if (lpOwner.publicKey.toBase58() === RESTRICTED_LP_OWNER) {
         return res.status(403).json({
@@ -1382,7 +1387,7 @@ router.post('/deposit/build', dlmmLiquidityLimiter, async (req: Request, res: Re
         strategyType: 0, // Spot strategy
       },
       user: lpOwner.publicKey,
-      slippage: 100, // 1% slippage
+      slippage: 500, // 5% slippage to handle price movement from cleanup swap
     });
 
     // Add liquidity instructions - handle both single transaction and array of transactions
