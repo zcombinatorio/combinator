@@ -958,6 +958,11 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
     if (useCleanupMode) {
       console.log('  Using cleanup mode - reading LP owner wallet balances');
 
+      // Wait for RPC to propagate pool state after cleanup swap
+      // This helps avoid stale data causing slippage errors
+      console.log('  Waiting 2s for RPC to propagate pool state...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       // SAFETY CHECK: Prevent deposit using LP balances for restricted LP owner address
       if (lpOwner.publicKey.toBase58() === RESTRICTED_LP_OWNER) {
         return res.status(403).json({
@@ -1190,11 +1195,12 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
       pool: poolAddress,
       positionNftAccount,
       liquidityDelta,
-      // Match Meteora UI: thresholds = deposit amounts + 0.09% buffer
-      maxAmountTokenA: depositTokenAAmount.muln(10009).divn(10000),
-      maxAmountTokenB: depositTokenBAmount.muln(10009).divn(10000),
-      tokenAAmountThreshold: depositTokenAAmount.muln(10009).divn(10000),
-      tokenBAmountThreshold: depositTokenBAmount.muln(10009).divn(10000),
+      // Use 5% buffer to handle price movement from cleanup swap + RPC lag
+      // (cleanup swap can move price significantly on smaller pools)
+      maxAmountTokenA: depositTokenAAmount.muln(105).divn(100),
+      maxAmountTokenB: depositTokenBAmount.muln(105).divn(100),
+      tokenAAmountThreshold: depositTokenAAmount.muln(105).divn(100),
+      tokenBAmountThreshold: depositTokenBAmount.muln(105).divn(100),
       tokenAMint: poolState.tokenAMint,
       tokenBMint: poolState.tokenBMint,
       tokenAVault: poolState.tokenAVault,
