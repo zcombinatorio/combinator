@@ -55,7 +55,7 @@ interface FeeRecipient {
 const POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
   // ZC DLMM Pool
   '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2': [
-    { address: '7rajfxUQBHRXiSrQWQo9FZ2zBbLy4Xvh9yYfa7tkvj4U', percent: 100 },
+    { address: 'FEEnkcCNE2623LYCPtLf63LFzXpCFigBLTu4qZovRGZC', percent: 100 },
   ],
 };
 

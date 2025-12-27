@@ -55,13 +55,13 @@ const POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
   // SolPay
   'BTYhoRPEUXs8ESYFjKDXRYf5qjH4chzZoBokMEApKEfJ': [
     { address: '3KJab78N7AmVU8ZwRx5bVyVnSxHd9W1cKzvuwbx3sW1r', percent: 70 },
-    { address: '7rajfxUQBHRXiSrQWQo9FZ2zBbLy4Xvh9yYfa7tkvj4U', percent: 30 },
+    { address: 'FEEnkcCNE2623LYCPtLf63LFzXpCFigBLTu4qZovRGZC', percent: 30 },
   ],
   // SurfCash
   'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': [
     { address: 'BmfaxQCRqf4xZFmQa5GswShBZhRBf4bED7hadFkpgBC3', percent: 34.375 },
     { address: 'HU65idnreBAe9gsLzSGTV7w7tVTzaSzXBw518F1aQrGv', percent: 34.375 },
-    { address: '7rajfxUQBHRXiSrQWQo9FZ2zBbLy4Xvh9yYfa7tkvj4U', percent: 31.25 },
+    { address: 'FEEnkcCNE2623LYCPtLf63LFzXpCFigBLTu4qZovRGZC', percent: 31.25 },
   ],
 };
 

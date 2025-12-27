@@ -24,6 +24,10 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
+import dotenv from 'dotenv';
+
+// Load environment variables from .env file
+dotenv.config();
 
 // ============================================================================
 // CONFIGURATION
@@ -34,7 +38,7 @@ const CONFIG = {
   RPC_URL: process.env.RPC_URL || 'https://api.mainnet-beta.solana.com',
 
   // Protocol fee wallet private key (base58 encoded)
-  // This is the wallet that receives the protocol's share of LP fees (7rajfxUQBHRXiSrQWQo9FZ2zBbLy4Xvh9yYfa7tkvj4U)
+  // This is the wallet that receives the protocol's share of LP fees (FEEnkcCNE2623LYCPtLf63LFzXpCFigBLTu4qZovRGZC)
   WALLET_PRIVATE_KEY: process.env.FEE_WALLET_PRIVATE_KEY || '',
 
   // Token addresses
@@ -264,7 +268,8 @@ async function claimFeesFromPool(
     transaction.partialSign(wallet);
 
     // Step 3: Serialize the signed transaction (base58 for API)
-    const signedTxBase58 = bs58.encode(transaction.serialize());
+    // Use requireAllSignatures: false because the LP owner signs on the server side
+    const signedTxBase58 = bs58.encode(transaction.serialize({ requireAllSignatures: false }));
 
     // Step 4: Submit to the confirm endpoint
     const confirmResponse = await confirmFeeClaim(
@@ -644,6 +649,9 @@ async function main() {
     log('Waiting for fee claims to settle...');
     await sleep(5000);
   }
+
+  // temporary to just fetch fees
+  process.exit(0);
 
   // ========================================================================
   // STEP 2: Get current balances
