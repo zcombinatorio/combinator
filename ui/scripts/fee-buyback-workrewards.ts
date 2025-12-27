@@ -1,12 +1,12 @@
 /**
- * Fee Claiming & ZC Buyback/Burn Script
+ * Fee Claiming & ZC Buyback -> Staking Vault Rewards Script
  *
  * This script runs daily via systemd to:
  * 1. Claim fees from LP positions
  * 2. Swap all SOL (minus 0.1 reserve) and USDC to ZC
- * 3. Burn all ZC tokens
+ * 3. Send all ZC tokens to the staking vault as rewards
  *
- * Usage: npx tsx fee-buyback-burn.ts
+ * Usage: npx tsx fee-buyback-workrewards.ts
  */
 
 import {
@@ -14,16 +14,14 @@ import {
   Keypair,
   PublicKey,
   Transaction,
-  TransactionMessage,
   VersionedTransaction,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import {
-  getAssociatedTokenAddress,
-  createBurnInstruction,
-  TOKEN_PROGRAM_ID,
-} from '@solana/spl-token';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
+import * as anchor from '@coral-xyz/anchor';
+import { Program, AnchorProvider, Wallet, BN } from '@coral-xyz/anchor';
 import bs58 from 'bs58';
+import stakingVaultIdl from './staking-vault-idl.json';
 
 // ============================================================================
 // CONFIGURATION
@@ -63,6 +61,9 @@ const CONFIG = {
 
   // Slippage tolerance (in basis points, 100 = 1%)
   SLIPPAGE_BPS: 100,
+
+  // Staking Vault Program ID
+  STAKING_VAULT_PROGRAM_ID: '47rZ1jgK7zU6XAgffAfXkDX1JkiiRi4HRPBytossWR12',
 };
 
 // ============================================================================
@@ -153,6 +154,26 @@ interface JupiterQuoteResponse {
 
 interface JupiterSwapResponse {
   swapTransaction: string; // base64 encoded transaction
+}
+
+// Staking vault types
+interface VaultState {
+  admin: PublicKey;
+  underlyingMint: PublicKey;
+  pdaBump: number;
+  operationsEnabled: boolean;
+  isFrozen: boolean;
+  totalShares: BN;
+  totalAssets: BN;
+  reservedAssets: BN;
+  unbondingPeriod: BN;
+  queuedRewards: BN;
+  lastUpdateTs: BN;
+  streamStartTs: BN;
+  streamEndTs: BN;
+  rewardRate: BN;
+  rewardRateRemainder: BN;
+  lastReblendTs: BN;
 }
 
 // ============================================================================
@@ -494,61 +515,68 @@ async function executeSwap(
 }
 
 // ============================================================================
-// BURN FUNCTIONS
+// STAKING VAULT REWARDS FUNCTION
 // ============================================================================
 
-async function burnZcTokens(
+async function sendRewardsToVault(
   connection: Connection,
   wallet: Keypair,
   amount: bigint
 ): Promise<string | null> {
-  log(`Burning ${amount.toString()} ZC tokens`);
+  log(`Sending ${amount.toString()} ZC tokens to staking vault as rewards`);
 
   try {
-    const zcMint = new PublicKey(CONFIG.ZC_MINT);
-    const tokenAccount = await getAssociatedTokenAddress(zcMint, wallet.publicKey);
+    // Create Anchor provider
+    const anchorWallet = new Wallet(wallet);
+    const provider = new AnchorProvider(connection, anchorWallet, {
+      commitment: 'confirmed',
+    });
 
-    // Create burn instruction
-    const burnIx = createBurnInstruction(
-      tokenAccount,
-      zcMint,
-      wallet.publicKey,
-      amount,
-      [],
-      TOKEN_PROGRAM_ID
+    // Initialize program
+    const programId = new PublicKey(CONFIG.STAKING_VAULT_PROGRAM_ID);
+    const program = new Program(stakingVaultIdl as anchor.Idl, provider);
+
+    // Derive vault_state PDA
+    const [vaultState] = PublicKey.findProgramAddressSync(
+      [Buffer.from('vault_state')],
+      programId
     );
 
-    // Build transaction
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    // Fetch vault state to get underlying mint
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vaultAccount = await (program.account as any).vaultState.fetch(vaultState) as VaultState;
+    const underlyingMint = vaultAccount.underlyingMint;
 
-    const messageV0 = new TransactionMessage({
-      payerKey: wallet.publicKey,
-      recentBlockhash: blockhash,
-      instructions: [burnIx],
-    }).compileToV0Message();
+    log(`Vault underlying mint: ${underlyingMint.toBase58()}`);
+    log(`Expected ZC mint: ${CONFIG.ZC_MINT}`);
 
-    const transaction = new VersionedTransaction(messageV0);
-    transaction.sign([wallet]);
+    // Verify the vault's underlying mint matches ZC
+    if (underlyingMint.toBase58() !== CONFIG.ZC_MINT) {
+      throw new Error(`Vault underlying mint (${underlyingMint.toBase58()}) does not match ZC mint (${CONFIG.ZC_MINT})`);
+    }
 
-    // Send and confirm
-    const signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-    });
+    // Get depositor's token account (the wallet's ZC ATA)
+    const depositorTokenAccount = await getAssociatedTokenAddress(
+      underlyingMint,
+      wallet.publicKey
+    );
 
-    log(`Burn transaction sent: ${signature}`);
+    log(`Depositor token account: ${depositorTokenAccount.toBase58()}`);
 
-    await connection.confirmTransaction({
-      signature,
-      blockhash,
-      lastValidBlockHeight,
-    });
+    // Call addRewards instruction
+    const tx = await program.methods
+      .addRewards(new BN(amount.toString()))
+      .accounts({
+        depositorTokenAccount,
+        signer: wallet.publicKey,
+      })
+      .rpc();
 
-    log(`Burn confirmed: ${signature}`);
+    log(`Rewards sent to vault. Signature: ${tx}`);
 
-    return signature;
+    return tx;
   } catch (error) {
-    logError('Error burning ZC tokens', error);
+    logError('Error sending rewards to vault', error);
     return null;
   }
 }
@@ -583,7 +611,7 @@ async function getTokenBalance(
 
 async function main() {
   log('='.repeat(60));
-  log('Starting Fee Buyback & Burn Script');
+  log('Starting Fee Buyback & Vault Rewards Script');
   log('='.repeat(60));
 
   // Validate configuration
@@ -721,9 +749,9 @@ async function main() {
   }
 
   // ========================================================================
-  // STEP 5: Burn all ZC tokens
+  // STEP 5: Send all ZC tokens to staking vault as rewards
   // ========================================================================
-  log('\n--- STEP 5: Burning ZC Tokens ---');
+  log('\n--- STEP 5: Sending ZC to Staking Vault ---');
 
   // Get updated ZC balance after swaps
   const finalZcBalance = await getTokenBalance(
@@ -732,23 +760,23 @@ async function main() {
     new PublicKey(CONFIG.ZC_MINT)
   );
 
-  log(`Final ZC balance to burn: ${finalZcBalance.toString()}`);
+  log(`Final ZC balance to send as rewards: ${finalZcBalance.toString()}`);
 
   if (finalZcBalance > BigInt(0)) {
-    const burnSignature = await burnZcTokens(connection, wallet, finalZcBalance);
+    const rewardSignature = await sendRewardsToVault(connection, wallet, finalZcBalance);
 
-    if (burnSignature) {
-      log(`Successfully burned ${finalZcBalance.toString()} ZC tokens`);
+    if (rewardSignature) {
+      log(`Successfully sent ${finalZcBalance.toString()} ZC tokens to staking vault as rewards`);
     }
   } else {
-    log('No ZC tokens to burn');
+    log('No ZC tokens to send as rewards');
   }
 
   // ========================================================================
   // SUMMARY
   // ========================================================================
   log('\n' + '='.repeat(60));
-  log('Fee Buyback & Burn Complete');
+  log('Fee Buyback & Vault Rewards Complete');
   log('='.repeat(60));
 
   const finalSolBalance = await getSolBalance(connection, wallet.publicKey);
