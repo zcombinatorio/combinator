@@ -33,6 +33,7 @@ import dlmmFeeClaimRouter from './routes/dlmm-fee-claim';
 import dammLiquidityRouter from './routes/damm-liquidity';
 import dlmmLiquidityRouter from './routes/dlmm-liquidity';
 import icoRouter from './routes/ico';
+import daoRouter from './routes/dao';
 
 dotenv.config();
 
@@ -114,6 +115,9 @@ app.use('/dlmm', dlmmLiquidityRouter);
 
 // Mount ICO routes
 app.use('/ico', icoRouter);
+
+// Mount DAO routes
+app.use('/dao', daoRouter);
 
 // Launch token endpoint - returns unsigned transaction
 app.post('/launch', async (req: Request, res: Response) => {

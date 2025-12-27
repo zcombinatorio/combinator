@@ -1,0 +1,463 @@
+/*
+ * Z Combinator - Solana Token Launchpad
+ * Copyright (C) 2025 Spice Finance Inc.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import { Pool } from 'pg';
+import type { Dao, DaoProposer, KeyRegistryEntry } from './types';
+
+/**
+ * DAO Management
+ *
+ * Functions for managing DAOs, proposers, and proposals.
+ * Handles the complete DAO lifecycle from creation through proposal management.
+ */
+
+// Starting key index (previous indices already used)
+const STARTING_KEY_INDEX = 9;
+
+// ============================================================================
+// Key Registry Functions
+// ============================================================================
+
+export async function getNextKeyIndex(pool: Pool): Promise<number> {
+  const query = `
+    SELECT COALESCE(MAX(key_idx), $1 - 1) + 1 AS next_idx
+    FROM cmb_key_registry
+  `;
+
+  try {
+    const result = await pool.query(query, [STARTING_KEY_INDEX]);
+    const nextIdx = parseInt(result.rows[0].next_idx);
+    return Math.max(nextIdx, STARTING_KEY_INDEX);
+  } catch (error) {
+    console.error('Error getting next key index:', error);
+    throw error;
+  }
+}
+
+export async function registerKey(
+  pool: Pool,
+  entry: Omit<KeyRegistryEntry, 'id' | 'created_at'>
+): Promise<KeyRegistryEntry> {
+  const query = `
+    INSERT INTO cmb_key_registry (key_idx, public_key, purpose, dao_id)
+    VALUES ($1, $2, $3, $4)
+    RETURNING *
+  `;
+
+  const values = [
+    entry.key_idx,
+    entry.public_key,
+    entry.purpose,
+    entry.dao_id || null
+  ];
+
+  try {
+    const result = await pool.query(query, values);
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error registering key:', error);
+    throw error;
+  }
+}
+
+export async function getKeyByIndex(
+  pool: Pool,
+  keyIdx: number
+): Promise<KeyRegistryEntry | null> {
+  const query = `
+    SELECT * FROM cmb_key_registry
+    WHERE key_idx = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [keyIdx]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error fetching key by index:', error);
+    throw error;
+  }
+}
+
+export async function updateKeyDaoId(
+  pool: Pool,
+  keyIdx: number,
+  daoId: number
+): Promise<void> {
+  const query = `
+    UPDATE cmb_key_registry
+    SET dao_id = $2
+    WHERE key_idx = $1
+  `;
+
+  try {
+    await pool.query(query, [keyIdx, daoId]);
+  } catch (error) {
+    console.error('Error updating key dao_id:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// DAO CRUD Functions
+// ============================================================================
+
+export async function createDao(
+  pool: Pool,
+  dao: Omit<Dao, 'id' | 'created_at'>
+): Promise<Dao> {
+  const query = `
+    INSERT INTO cmb_daos (
+      dao_pda,
+      dao_name,
+      moderator_pda,
+      owner_wallet,
+      admin_key_idx,
+      admin_wallet,
+      token_mint,
+      pool_address,
+      pool_type,
+      quote_mint,
+      treasury_multisig,
+      mint_auth_multisig,
+      treasury_cosigner,
+      parent_dao_id,
+      dao_type
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    RETURNING *
+  `;
+
+  const values = [
+    dao.dao_pda,
+    dao.dao_name,
+    dao.moderator_pda || null,
+    dao.owner_wallet,
+    dao.admin_key_idx,
+    dao.admin_wallet,
+    dao.token_mint,
+    dao.pool_address,
+    dao.pool_type,
+    dao.quote_mint,
+    dao.treasury_multisig,
+    dao.mint_auth_multisig,
+    dao.treasury_cosigner,
+    dao.parent_dao_id || null,
+    dao.dao_type
+  ];
+
+  try {
+    const result = await pool.query(query, values);
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error creating DAO:', error);
+    throw error;
+  }
+}
+
+export async function getDaoByPda(
+  pool: Pool,
+  daoPda: string
+): Promise<Dao | null> {
+  const query = `
+    SELECT * FROM cmb_daos
+    WHERE dao_pda = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [daoPda]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error fetching DAO by PDA:', error);
+    throw error;
+  }
+}
+
+export async function getDaoById(
+  pool: Pool,
+  id: number
+): Promise<Dao | null> {
+  const query = `
+    SELECT * FROM cmb_daos
+    WHERE id = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [id]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error fetching DAO by ID:', error);
+    throw error;
+  }
+}
+
+export async function getDaoByName(
+  pool: Pool,
+  daoName: string
+): Promise<Dao | null> {
+  const query = `
+    SELECT * FROM cmb_daos
+    WHERE dao_name = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [daoName]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error fetching DAO by name:', error);
+    throw error;
+  }
+}
+
+export async function getAllDaos(
+  pool: Pool,
+  options?: { limit?: number; offset?: number; daoType?: 'parent' | 'child' }
+): Promise<Dao[]> {
+  let query = `SELECT * FROM cmb_daos`;
+  const values: (string | number)[] = [];
+  let paramCount = 0;
+
+  if (options?.daoType) {
+    paramCount++;
+    query += ` WHERE dao_type = $${paramCount}`;
+    values.push(options.daoType);
+  }
+
+  query += ` ORDER BY created_at DESC`;
+
+  if (options?.limit) {
+    paramCount++;
+    query += ` LIMIT $${paramCount}`;
+    values.push(options.limit);
+  }
+
+  if (options?.offset) {
+    paramCount++;
+    query += ` OFFSET $${paramCount}`;
+    values.push(options.offset);
+  }
+
+  try {
+    const result = await pool.query(query, values);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching all DAOs:', error);
+    throw error;
+  }
+}
+
+export async function getDaosByOwner(
+  pool: Pool,
+  ownerWallet: string
+): Promise<Dao[]> {
+  const query = `
+    SELECT * FROM cmb_daos
+    WHERE owner_wallet = $1
+    ORDER BY created_at DESC
+  `;
+
+  try {
+    const result = await pool.query(query, [ownerWallet]);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching DAOs by owner:', error);
+    throw error;
+  }
+}
+
+export async function getChildDaos(
+  pool: Pool,
+  parentDaoId: number
+): Promise<Dao[]> {
+  const query = `
+    SELECT * FROM cmb_daos
+    WHERE parent_dao_id = $1
+    ORDER BY created_at DESC
+  `;
+
+  try {
+    const result = await pool.query(query, [parentDaoId]);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching child DAOs:', error);
+    throw error;
+  }
+}
+
+export async function updateDaoModeratorPda(
+  pool: Pool,
+  daoId: number,
+  moderatorPda: string
+): Promise<void> {
+  const query = `
+    UPDATE cmb_daos
+    SET moderator_pda = $2
+    WHERE id = $1
+  `;
+
+  try {
+    await pool.query(query, [daoId, moderatorPda]);
+  } catch (error) {
+    console.error('Error updating DAO moderator PDA:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// DAO Proposer Functions
+// ============================================================================
+
+export async function addProposer(
+  pool: Pool,
+  proposer: Omit<DaoProposer, 'id' | 'created_at'>
+): Promise<DaoProposer> {
+  const query = `
+    INSERT INTO cmb_dao_proposers (dao_id, proposer_wallet, added_by)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (dao_id, proposer_wallet) DO NOTHING
+    RETURNING *
+  `;
+
+  const values = [
+    proposer.dao_id,
+    proposer.proposer_wallet,
+    proposer.added_by
+  ];
+
+  try {
+    const result = await pool.query(query, values);
+    // If conflict, fetch existing
+    if (result.rows.length === 0) {
+      const existing = await getProposer(pool, proposer.dao_id, proposer.proposer_wallet);
+      if (existing) return existing;
+      throw new Error('Failed to add proposer');
+    }
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error adding proposer:', error);
+    throw error;
+  }
+}
+
+export async function removeProposer(
+  pool: Pool,
+  daoId: number,
+  proposerWallet: string
+): Promise<boolean> {
+  const query = `
+    DELETE FROM cmb_dao_proposers
+    WHERE dao_id = $1 AND proposer_wallet = $2
+    RETURNING id
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId, proposerWallet]);
+    return result.rows.length > 0;
+  } catch (error) {
+    console.error('Error removing proposer:', error);
+    throw error;
+  }
+}
+
+export async function getProposer(
+  pool: Pool,
+  daoId: number,
+  proposerWallet: string
+): Promise<DaoProposer | null> {
+  const query = `
+    SELECT * FROM cmb_dao_proposers
+    WHERE dao_id = $1 AND proposer_wallet = $2
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId, proposerWallet]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error fetching proposer:', error);
+    throw error;
+  }
+}
+
+export async function isProposer(
+  pool: Pool,
+  daoId: number,
+  walletAddress: string
+): Promise<boolean> {
+  // Check if wallet is either the DAO owner or an authorized proposer
+  const query = `
+    SELECT 1 FROM cmb_daos WHERE id = $1 AND owner_wallet = $2
+    UNION
+    SELECT 1 FROM cmb_dao_proposers WHERE dao_id = $1 AND proposer_wallet = $2
+    LIMIT 1
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId, walletAddress]);
+    return result.rows.length > 0;
+  } catch (error) {
+    console.error('Error checking proposer status:', error);
+    throw error;
+  }
+}
+
+export async function getProposersByDao(
+  pool: Pool,
+  daoId: number
+): Promise<DaoProposer[]> {
+  const query = `
+    SELECT * FROM cmb_dao_proposers
+    WHERE dao_id = $1
+    ORDER BY created_at DESC
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId]);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching proposers by DAO:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// Aggregation / Stats Functions
+// ============================================================================
+
+export async function getDaoStats(
+  pool: Pool,
+  daoId: number
+): Promise<{
+  proposerCount: number;
+  childDaoCount: number;
+}> {
+  const query = `
+    SELECT
+      (SELECT COUNT(*) FROM cmb_dao_proposers WHERE dao_id = $1) AS proposer_count,
+      (SELECT COUNT(*) FROM cmb_daos WHERE parent_dao_id = $1) AS child_dao_count
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId]);
+    const row = result.rows[0];
+    return {
+      proposerCount: parseInt(row.proposer_count),
+      childDaoCount: parseInt(row.child_dao_count)
+    };
+  } catch (error) {
+    console.error('Error fetching DAO stats:', error);
+    throw error;
+  }
+}

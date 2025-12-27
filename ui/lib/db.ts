@@ -21,7 +21,6 @@ import type {
   TokenLaunch,
   VerificationChallenge,
   MintTransaction,
-  ClaimRecord,
   TokenHolder,
   DesignatedClaim,
   EmissionSplit,
@@ -55,6 +54,9 @@ export type {
   IcoSale,
   IcoPurchase,
   IcoClaim,
+  KeyRegistryEntry,
+  Dao,
+  DaoProposer,
 } from './db/types';
 
 // Mock database support

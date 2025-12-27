@@ -220,3 +220,50 @@ export interface IcoClaim {
   created_at?: Date;
   updated_at?: Date;
 }
+
+// ============================================================================
+// DAO Types
+// ============================================================================
+
+export interface KeyRegistryEntry {
+  id?: number;
+  key_idx: number;
+  public_key: string;
+  purpose: 'dao_parent' | 'dao_child';
+  dao_id?: number;
+  created_at?: Date;
+}
+
+export interface Dao {
+  id?: number;
+  // On-chain identifiers
+  dao_pda: string;
+  dao_name: string;
+  moderator_pda?: string;
+  // Ownership
+  owner_wallet: string;
+  admin_key_idx: number;
+  admin_wallet: string;
+  // Token/Pool config
+  token_mint: string;
+  pool_address: string;
+  pool_type: 'damm' | 'dlmm';
+  quote_mint: string;
+  // Multisigs
+  treasury_multisig: string;
+  mint_auth_multisig: string;
+  treasury_cosigner: string;
+  // Hierarchy
+  parent_dao_id?: number;
+  dao_type: 'parent' | 'child';
+  // Metadata
+  created_at?: Date;
+}
+
+export interface DaoProposer {
+  id?: number;
+  dao_id: number;
+  proposer_wallet: string;
+  added_by: string;
+  created_at?: Date;
+}

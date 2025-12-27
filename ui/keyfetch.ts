@@ -2,13 +2,25 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const KEY_SERVICE_URL = process.env.KEY_SERVICE_URL;
+const KEY_IDX = process.env.KEY_IDX || '2';
+
 (async () => {
+  if (!KEY_SERVICE_URL) {
+    console.error('KEY_SERVICE_URL environment variable is not set');
+    process.exit(1);
+  }
+  if (!process.env.SIV_KEY) {
+    console.error('SIV_KEY environment variable is not set');
+    process.exit(1);
+  }
+
   const response = await fetch(
-    'https://web.hm.sivalik.com/personal/fapi/zc-key?idx=2',
+    `${KEY_SERVICE_URL}?idx=${KEY_IDX}`,
     {
       method: 'GET',
       headers: {
-        'Authorization': `Basic ${btoa(process.env.SIV_KEY!)}`,
+        'Authorization': `Basic ${btoa(process.env.SIV_KEY)}`,
       },
     }
   );
@@ -16,10 +28,3 @@ dotenv.config();
   const data = await response.json();
   console.log(data);
 })();
-
-// logs:
-// {
-  // idx: 2,
-  // keypair: '',
-  // account: 'HHroB8P1q3kijtyML9WPvfTXG8JicfmUoGZjVzam64PX'
-// }
