@@ -166,6 +166,122 @@ function mockCreateProposal(daoPda: string, title: string) {
 // Known USDC mint address on mainnet
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
+// ============================================================================
+// Proposer Authorization Configuration (os-percent style)
+// ============================================================================
+// Two authorization methods per token:
+// 1. Pure whitelist: Explicit wallet addresses that can always propose
+// 2. Token-gated: Minimum token balance required to propose
+//
+// Check order: whitelist first (fast, no RPC), then token balance
+// ============================================================================
+
+// Pure whitelist: wallets that can always propose for DAOs with these tokens
+// Key: token mint address, Value: array of authorized wallet addresses
+const PROPOSER_WHITELIST: Record<string, string[]> = {
+  // SURF token whitelisted proposers
+  'SurfwRjQQFV6P7JdhxSptf4CjWU8sb88rUiaLCystar': [
+    // Add whitelisted wallets here as needed
+    // Example: 'WalletPubkeyHere...',
+  ],
+};
+
+// Token-gated proposer requirements
+// Key: token mint address, Value: minimum balance and decimals
+const TOKEN_GATED_PROPOSERS: Record<string, { minBalance: bigint; decimals: number }> = {
+  // SURF token: 5M tokens required to propose
+  'SurfwRjQQFV6P7JdhxSptf4CjWU8sb88rUiaLCystar': { minBalance: BigInt(5_000_000), decimals: 6 },
+};
+
+// Authorization result type (matching os-percent pattern)
+interface ProposerAuthorizationResult {
+  isAuthorized: boolean;
+  authMethod: 'whitelist' | 'token_balance' | null;
+  reason?: string;
+}
+
+/**
+ * Check if a wallet is whitelisted for proposing (fast, no RPC call)
+ */
+function isWalletWhitelistedProposer(wallet: string, tokenMint: string): boolean {
+  const whitelist = PROPOSER_WHITELIST[tokenMint];
+  if (!whitelist) return false;
+  return whitelist.includes(wallet);
+}
+
+/**
+ * Check if a wallet has minimum token balance for proposing
+ * Internal helper - use checkProposerAuthorization for full authorization check
+ */
+async function hasMinimumProposerTokenBalance(
+  connection: Connection,
+  wallet: string,
+  tokenMint: string
+): Promise<boolean> {
+  const requirement = TOKEN_GATED_PROPOSERS[tokenMint];
+  if (!requirement) {
+    return false; // No token requirement = can't authorize via token balance
+  }
+
+  const walletPubkey = new PublicKey(wallet);
+  const mintPubkey = new PublicKey(tokenMint);
+
+  try {
+    const ata = await getAssociatedTokenAddress(mintPubkey, walletPubkey);
+    const account = await getAccount(connection, ata);
+    const balance = account.amount;
+    const minBalanceRaw = requirement.minBalance * BigInt(10 ** requirement.decimals);
+    return balance >= minBalanceRaw;
+  } catch {
+    // Token account doesn't exist = 0 balance
+    return false;
+  }
+}
+
+/**
+ * Check if a wallet is authorized to propose for a DAO (os-percent style)
+ * Order: whitelist first (fast), then token balance
+ *
+ * If no authorization config exists for token, returns authorized=true (open)
+ */
+async function checkProposerAuthorization(
+  connection: Connection,
+  wallet: string,
+  tokenMint: string
+): Promise<ProposerAuthorizationResult> {
+  // Check if this token has any authorization requirements
+  const hasWhitelist = PROPOSER_WHITELIST[tokenMint] !== undefined;
+  const hasTokenGating = TOKEN_GATED_PROPOSERS[tokenMint] !== undefined;
+
+  // If no restrictions configured for this token, anyone can propose
+  if (!hasWhitelist && !hasTokenGating) {
+    return { isAuthorized: true, authMethod: null };
+  }
+
+  // 1. Check whitelist first (fast, no RPC call)
+  if (isWalletWhitelistedProposer(wallet, tokenMint)) {
+    return { isAuthorized: true, authMethod: 'whitelist' };
+  }
+
+  // 2. Check token balance (requires RPC call)
+  if (hasTokenGating) {
+    const hasBalance = await hasMinimumProposerTokenBalance(connection, wallet, tokenMint);
+    if (hasBalance) {
+      return { isAuthorized: true, authMethod: 'token_balance' };
+    }
+  }
+
+  // Not authorized - provide helpful reason
+  const requirement = TOKEN_GATED_PROPOSERS[tokenMint];
+  const minBalanceHuman = requirement ? Number(requirement.minBalance).toLocaleString() : 'N/A';
+
+  return {
+    isAuthorized: false,
+    authMethod: null,
+    reason: `Wallet is not whitelisted and does not hold the required ${minBalanceHuman} tokens to propose`,
+  };
+}
+
 interface DaoReadinessError {
   ready: false;
   reason: string;
@@ -1053,6 +1169,9 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     // Verify caller is an authorized proposer
+    // TODO: Implement proposer whitelist management endpoints:
+    //   - POST /dao/:daoPda/proposers - Add proposer (owner only)
+    //   - DELETE /dao/:daoPda/proposers/:wallet - Remove proposer (owner only)
     const canPropose = await isProposer(pool, dao.id!, wallet);
     if (!canPropose) {
       return res.status(403).json({ error: 'Not authorized to create proposals for this DAO' });
@@ -1067,7 +1186,21 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // ========== PROPOSAL VALIDATION CHECKS ==========
     // These checks ensure the DAO is ready to create proposals
 
-    // 1. Check treasury has funds (SOL, USDC, or governance token)
+    // 0. Check proposer authorization (whitelist OR token balance)
+    const proposerAuthResult = await checkProposerAuthorization(connection, wallet, dao.token_mint);
+    if (!proposerAuthResult.isAuthorized) {
+      return res.status(403).json({
+        error: 'Not authorized to propose',
+        reason: proposerAuthResult.reason,
+        check: 'proposer_authorization',
+      });
+    }
+    // Log authorization method for debugging
+    if (proposerAuthResult.authMethod) {
+      console.log(`Proposer authorized via: ${proposerAuthResult.authMethod}`);
+    }
+
+    // 1. Check treasury has funds (SOL, USDC, or DAO token)
     const treasuryCheck = await checkTreasuryHasFunds(connection, dao.treasury_multisig, dao.token_mint);
     if (!treasuryCheck.ready) {
       return res.status(400).json({
