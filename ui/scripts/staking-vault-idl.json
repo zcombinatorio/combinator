@@ -1,0 +1,1981 @@
+{
+  "address": "47rZ1jgK7zU6XAgffAfXkDX1JkiiRi4HRPBytossWR12",
+  "metadata": {
+    "name": "staking_vault",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "PDA-based staking vault with unbonding and slashing"
+  },
+  "instructions": [
+    {
+      "name": "add_rewards",
+      "docs": [
+        "Permissionless: anyone can add tokens to the reward pool.",
+        "If a stream is active, it recomputes the rate to fit in the remaining time.",
+        "If no stream is active, it only increases queued_rewards."
+      ],
+      "discriminator": [
+        88,
+        186,
+        25,
+        227,
+        38,
+        137,
+        81,
+        23
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "depositor_token_account",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "admin_withdraw_post_exit_donations",
+      "docs": [
+        "Admin-only: withdraw post-exit donations sitting in queued_rewards.",
+        "This ensures tokens sent directly to the vault while shares are frozen can be recovered."
+      ],
+      "discriminator": [
+        157,
+        242,
+        200,
+        246,
+        36,
+        154,
+        70,
+        112
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_pda",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  112,
+                  100,
+                  97
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin_token_account",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "max_amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "cancel_unstake",
+      "docs": [
+        "Cancel exit request (only allowed in Funding mode, since it effectively re-stakes)."
+      ],
+      "discriminator": [
+        64,
+        65,
+        53,
+        227,
+        125,
+        153,
+        3,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_stake",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state"
+              },
+              {
+                "kind": "account",
+                "path": "signer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "complete_unstake",
+      "discriminator": [
+        79,
+        98,
+        40,
+        241,
+        100,
+        30,
+        25,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_stake",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state"
+              },
+              {
+                "kind": "account",
+                "path": "signer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_pda",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  112,
+                  100,
+                  97
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_token_account",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "crank_sync_rewards",
+      "docs": [
+        "Anyone can call this to advance the reward schedule and absorb donations.",
+        "This ensures the on-chain share price stays current without waiting for a user action."
+      ],
+      "discriminator": [
+        200,
+        231,
+        129,
+        67,
+        95,
+        32,
+        161,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_pda",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  112,
+                  100,
+                  97
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "underlying_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "underlying_mint"
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "unbonding_period",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "preview_stake",
+      "discriminator": [
+        224,
+        123,
+        211,
+        246,
+        112,
+        17,
+        216,
+        124
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "assets",
+          "type": "u64"
+        }
+      ],
+      "returns": "u64"
+    },
+    {
+      "name": "preview_unstake",
+      "discriminator": [
+        68,
+        71,
+        23,
+        118,
+        65,
+        143,
+        232,
+        85
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "shares",
+          "type": "u64"
+        }
+      ],
+      "returns": "u64"
+    },
+    {
+      "name": "request_unstake",
+      "docs": [
+        "User can ONLY request exit once admin enables Exit Mode (withdraw mode).",
+        "When they request exit, we LOCK their value and remove them from yield-bearing supply."
+      ],
+      "discriminator": [
+        44,
+        154,
+        110,
+        253,
+        160,
+        202,
+        54,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_stake",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state"
+              },
+              {
+                "kind": "account",
+                "path": "signer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "shares",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_emergency_pause",
+      "docs": [
+        "Emergency pause: stops stake/unstake/actions gated by operations_enabled."
+      ],
+      "discriminator": [
+        216,
+        204,
+        65,
+        234,
+        19,
+        243,
+        233,
+        25
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_exit_mode",
+      "docs": [
+        "Exit mode toggle. When enabling exit mode, we finalize all queued rewards",
+        "into total_assets and then stop rewards (share price becomes fixed)."
+      ],
+      "discriminator": [
+        121,
+        168,
+        199,
+        67,
+        195,
+        183,
+        6,
+        223
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "exit_mode_active",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_reward_schedule",
+      "docs": [
+        "Admin only: set or reset the reward schedule."
+      ],
+      "discriminator": [
+        230,
+        240,
+        197,
+        93,
+        74,
+        170,
+        232,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "duration",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "set_unbonding_period",
+      "discriminator": [
+        70,
+        4,
+        201,
+        140,
+        139,
+        84,
+        36,
+        230
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "new_period",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "slash",
+      "docs": [
+        "Admin: slash shares (active first, then unbonding)."
+      ],
+      "discriminator": [
+        204,
+        141,
+        18,
+        161,
+        8,
+        177,
+        92,
+        142
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_stake",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state"
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user"
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "shares_to_slash",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "stake",
+      "discriminator": [
+        206,
+        176,
+        202,
+        18,
+        200,
+        209,
+        179,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_stake",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state"
+              },
+              {
+                "kind": "account",
+                "path": "signer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_pda",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  112,
+                  100,
+                  97
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_state.underlying_mint",
+                "account": "VaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_token_account",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "assets",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "total_assets",
+      "discriminator": [
+        21,
+        211,
+        56,
+        201,
+        244,
+        191,
+        106,
+        230
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [],
+      "returns": "u64"
+    },
+    {
+      "name": "total_supply",
+      "discriminator": [
+        49,
+        116,
+        18,
+        66,
+        67,
+        62,
+        214,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [],
+      "returns": "u64"
+    },
+    {
+      "name": "transfer_admin",
+      "discriminator": [
+        42,
+        242,
+        66,
+        106,
+        228,
+        10,
+        111,
+        156
+      ],
+      "accounts": [
+        {
+          "name": "vault_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "UserStake",
+      "discriminator": [
+        102,
+        53,
+        163,
+        107,
+        9,
+        138,
+        87,
+        153
+      ]
+    },
+    {
+      "name": "VaultState",
+      "discriminator": [
+        228,
+        196,
+        82,
+        165,
+        98,
+        210,
+        235,
+        152
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AdminActionEvt",
+      "discriminator": [
+        48,
+        75,
+        152,
+        83,
+        60,
+        116,
+        189,
+        108
+      ]
+    },
+    {
+      "name": "RewardsCrankedEvt",
+      "discriminator": [
+        237,
+        122,
+        192,
+        75,
+        214,
+        86,
+        106,
+        28
+      ]
+    },
+    {
+      "name": "SlashEvt",
+      "discriminator": [
+        64,
+        228,
+        255,
+        109,
+        192,
+        122,
+        81,
+        129
+      ]
+    },
+    {
+      "name": "StakeEvt",
+      "discriminator": [
+        53,
+        123,
+        172,
+        217,
+        133,
+        170,
+        68,
+        67
+      ]
+    },
+    {
+      "name": "UnstakeCancelledEvt",
+      "discriminator": [
+        42,
+        178,
+        215,
+        94,
+        175,
+        246,
+        186,
+        232
+      ]
+    },
+    {
+      "name": "UnstakeCompletedEvt",
+      "discriminator": [
+        67,
+        184,
+        225,
+        61,
+        86,
+        234,
+        210,
+        216
+      ]
+    },
+    {
+      "name": "UnstakeRequestedEvt",
+      "discriminator": [
+        47,
+        154,
+        228,
+        95,
+        52,
+        19,
+        195,
+        12
+      ]
+    },
+    {
+      "name": "VaultInitializedEvt",
+      "discriminator": [
+        34,
+        159,
+        81,
+        155,
+        145,
+        48,
+        158,
+        133
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ZeroAmount",
+      "msg": "amount must be > 0"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidVaultState",
+      "msg": "invalid vault state"
+    },
+    {
+      "code": 6002,
+      "name": "ZeroSharesCalculated",
+      "msg": "deposit would result in zero shares"
+    },
+    {
+      "code": 6003,
+      "name": "WithdrawalsDisabled",
+      "msg": "withdrawals are currently disabled"
+    },
+    {
+      "code": 6004,
+      "name": "Unauthorized",
+      "msg": "unauthorized"
+    },
+    {
+      "code": 6005,
+      "name": "InsufficientShares",
+      "msg": "insufficient shares"
+    },
+    {
+      "code": 6006,
+      "name": "UnbondingInProgress",
+      "msg": "unbonding already in progress"
+    },
+    {
+      "code": 6007,
+      "name": "NoUnbondingShares",
+      "msg": "no shares currently unbonding"
+    },
+    {
+      "code": 6008,
+      "name": "UnbondingNotComplete",
+      "msg": "unbonding period not complete"
+    },
+    {
+      "code": 6009,
+      "name": "MathOverflow",
+      "msg": "math overflow"
+    },
+    {
+      "code": 6010,
+      "name": "InvalidUnbondingPeriod",
+      "msg": "invalid unbonding period"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidDuration",
+      "msg": "invalid duration"
+    },
+    {
+      "code": 6012,
+      "name": "AmountTooSmall",
+      "msg": "amount below minimum (1 token)"
+    },
+    {
+      "code": 6013,
+      "name": "VaultPaused",
+      "msg": "Vault is paused (Emergency)."
+    },
+    {
+      "code": 6014,
+      "name": "VaultFrozen",
+      "msg": "Vault is in Exit Mode. No further deposits allowed."
+    },
+    {
+      "code": 6015,
+      "name": "VaultNotFrozen",
+      "msg": "Vault is in Funding Mode. Withdrawals are not yet enabled."
+    },
+    {
+      "code": 6016,
+      "name": "InsufficientVaultBalance",
+      "msg": "insufficient vault balance for payout"
+    }
+  ],
+  "types": [
+    {
+      "name": "AdminActionEvt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "action",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RewardsCrankedEvt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "caller",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_total_assets",
+            "type": "u64"
+          },
+          {
+            "name": "new_queued_rewards",
+            "type": "u64"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SlashEvt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "active_shares_slashed",
+            "type": "u64"
+          },
+          {
+            "name": "unbonding_shares_slashed",
+            "type": "u64"
+          },
+          {
+            "name": "remaining_slash_unfulfilled",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StakeEvt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "assets",
+            "type": "u64"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "total_user_shares",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnstakeCancelledEvt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares_recovered",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnstakeCompletedEvt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares_redeemed",
+            "type": "u64"
+          },
+          {
+            "name": "assets_received",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnstakeRequestedEvt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "unlock_time",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "unbonding_shares",
+            "type": "u64"
+          },
+          {
+            "name": "unbonding_assets",
+            "type": "u64"
+          },
+          {
+            "name": "unbonding_start",
+            "type": "i64"
+          },
+          {
+            "name": "expected_unlock_time",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultInitializedEvt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "underlying_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "unbonding_period",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "underlying_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "pda_bump",
+            "type": "u8"
+          },
+          {
+            "name": "operations_enabled",
+            "type": "bool"
+          },
+          {
+            "name": "is_frozen",
+            "type": "bool"
+          },
+          {
+            "name": "total_shares",
+            "type": "u64"
+          },
+          {
+            "name": "total_assets",
+            "type": "u64"
+          },
+          {
+            "name": "reserved_assets",
+            "type": "u64"
+          },
+          {
+            "name": "unbonding_period",
+            "type": "i64"
+          },
+          {
+            "name": "queued_rewards",
+            "type": "u64"
+          },
+          {
+            "name": "last_update_ts",
+            "type": "i64"
+          },
+          {
+            "name": "stream_start_ts",
+            "type": "i64"
+          },
+          {
+            "name": "stream_end_ts",
+            "type": "i64"
+          },
+          {
+            "name": "reward_rate",
+            "type": "u64"
+          },
+          {
+            "name": "reward_rate_remainder",
+            "type": "u64"
+          },
+          {
+            "name": "last_reblend_ts",
+            "type": "i64"
+          },
+          {
+            "name": "_reserved",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
