@@ -3,7 +3,7 @@
  *
  * This script tests depositing liquidity into a Meteora DLMM
  * (Dynamic Liquidity Market Maker) pool position. It mirrors the production flow:
- * 1. Manager wallet transfers tokens to LP owner
+ * 1. Manager wallet transfers tokens to LP owner (if different wallets)
  * 2. LP owner deposits into the DLMM pool
  *
  * Required ENV variables:
@@ -28,11 +28,11 @@ import BN from 'bn.js';
 dotenv.config();
 
 // Set to true to simulate transactions without executing them
-const SIMULATE_ONLY = false;
+const SIMULATE_ONLY = true;
 
-// Deposit amounts (in UI units - will be converted to raw amounts)
-const DEPOSIT_TOKEN_X_AMOUNT = '43289.778283'; // Default 1000 Token X
-const DEPOSIT_TOKEN_Y_AMOUNT = '0.121121875'; // Default 0.01 Token Y (SOL)
+// Deposit amounts (in UI units - will be converted to raw amounts. NO COMMAS)
+const DEPOSIT_TOKEN_X_AMOUNT = '72589.941374'; // Default 1000 Token X
+const DEPOSIT_TOKEN_Y_AMOUNT = '0.33694114'; // Default 0.01 Token Y (SOL)
 
 async function testDlmmDeposit() {
   try {
@@ -43,9 +43,9 @@ async function testDlmmDeposit() {
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
     const DLMM_POOL_ADDRESS = process.env.DLMM_POOL_ADDRESS;
-    const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
-    const MANAGER_PRIVATE_KEY = process.env.MANAGER_PRIVATE_KEY;
-    const FEE_PAYER_PRIVATE_KEY = process.env.PAYER_PRIVATE_KEY || LP_OWNER_PRIVATE_KEY;
+    const LP_OWNER_PRIVATE_KEY = process.env.NEW_LP_OWNER_PRIVATE_KEY;
+    const MANAGER_PRIVATE_KEY = process.env.NEW_LP_OWNER_PRIVATE_KEY;
+    const FEE_PAYER_PRIVATE_KEY = LP_OWNER_PRIVATE_KEY;
 
     if (!RPC_URL) {
       throw new Error('RPC_URL not set in environment');
@@ -69,11 +69,15 @@ async function testDlmmDeposit() {
       : lpOwner;
     const poolAddress = new PublicKey(DLMM_POOL_ADDRESS);
 
+    // Check if LP owner and manager are the same wallet
+    const isSameWallet = lpOwner.publicKey.equals(manager.publicKey);
+
     console.log('Configuration:');
     console.log(`  Pool:             ${poolAddress.toBase58()}`);
     console.log(`  LP Owner:         ${lpOwner.publicKey.toBase58()}`);
     console.log(`  Manager Wallet:   ${manager.publicKey.toBase58()}`);
     console.log(`  Fee Payer:        ${feePayer.publicKey.toBase58()}`);
+    console.log(`  Same Wallet:      ${isSameWallet ? 'Yes (skipping transfers)' : 'No'}`);
     console.log(`  Deposit X:        ${DEPOSIT_TOKEN_X_AMOUNT}`);
     console.log(`  Deposit Y:        ${DEPOSIT_TOKEN_Y_AMOUNT}`);
     console.log('');
@@ -140,11 +144,11 @@ async function testDlmmDeposit() {
     }
     console.log('');
 
-    // Step 4: Build deposit transaction
-    console.log('🔨 Step 4: Building deposit transaction...');
+    // Step 4: Build transactions (keep SDK transactions separate)
+    console.log('🔨 Step 4: Building deposit transactions...');
 
-    const combinedTx = new Transaction();
-    combinedTx.feePayer = feePayer.publicKey;
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+    const allTransactions: Transaction[] = [];
 
     // Get ATAs
     const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey);
@@ -152,76 +156,84 @@ async function testDlmmDeposit() {
     const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, manager.publicKey);
     const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, manager.publicKey);
 
-    // Create LP owner ATAs if needed
-    combinedTx.add(
-      createAssociatedTokenAccountIdempotentInstruction(
-        feePayer.publicKey,
-        lpOwnerTokenXAta,
-        lpOwner.publicKey,
-        tokenXMint
-      )
-    );
-    combinedTx.add(
-      createAssociatedTokenAccountIdempotentInstruction(
-        feePayer.publicKey,
-        lpOwnerTokenYAta,
-        lpOwner.publicKey,
-        tokenYMint
-      )
-    );
+    // Build transfer transaction (only if manager and LP owner are different)
+    if (!isSameWallet) {
+      const transferTx = new Transaction();
+      transferTx.recentBlockhash = blockhash;
+      transferTx.feePayer = feePayer.publicKey;
 
-    // Transfer Token X from manager to LP owner
-    if (!depositXRaw.isZero()) {
-      if (isTokenXNativeSOL) {
-        // Transfer native SOL from manager, then wrap at LP owner
-        console.log(`  Transferring ${DEPOSIT_TOKEN_X_AMOUNT} SOL from manager to LP owner (Token X)...`);
-        combinedTx.add(
-          SystemProgram.transfer({
-            fromPubkey: manager.publicKey,
-            toPubkey: lpOwnerTokenXAta,
-            lamports: depositXRaw.toNumber()
-          }),
-          createSyncNativeInstruction(lpOwnerTokenXAta)
-        );
-      } else {
-        // Transfer SPL token from manager to LP owner
-        console.log(`  Transferring ${DEPOSIT_TOKEN_X_AMOUNT} Token X from manager to LP owner...`);
-        combinedTx.add(
-          createTransferInstruction(
-            managerTokenXAta,
-            lpOwnerTokenXAta,
-            manager.publicKey,
-            BigInt(depositXRaw.toString())
-          )
-        );
-      }
-    }
+      // Create LP owner ATAs if needed
+      transferTx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          feePayer.publicKey,
+          lpOwnerTokenXAta,
+          lpOwner.publicKey,
+          tokenXMint
+        )
+      );
+      transferTx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          feePayer.publicKey,
+          lpOwnerTokenYAta,
+          lpOwner.publicKey,
+          tokenYMint
+        )
+      );
 
-    // Transfer Token Y from manager to LP owner
-    if (!depositYRaw.isZero()) {
-      if (isTokenYNativeSOL) {
-        // Transfer native SOL from manager, then wrap at LP owner
-        console.log(`  Transferring ${DEPOSIT_TOKEN_Y_AMOUNT} SOL from manager to LP owner (Token Y)...`);
-        combinedTx.add(
-          SystemProgram.transfer({
-            fromPubkey: manager.publicKey,
-            toPubkey: lpOwnerTokenYAta,
-            lamports: depositYRaw.toNumber()
-          }),
-          createSyncNativeInstruction(lpOwnerTokenYAta)
-        );
-      } else {
-        // Transfer SPL token from manager to LP owner
-        console.log(`  Transferring ${DEPOSIT_TOKEN_Y_AMOUNT} Token Y from manager to LP owner...`);
-        combinedTx.add(
-          createTransferInstruction(
-            managerTokenYAta,
-            lpOwnerTokenYAta,
-            manager.publicKey,
-            BigInt(depositYRaw.toString())
-          )
-        );
+      // Transfer Token X from manager to LP owner
+      if (!depositXRaw.isZero()) {
+        if (isTokenXNativeSOL) {
+          console.log(`  Transferring ${DEPOSIT_TOKEN_X_AMOUNT} SOL from manager to LP owner (Token X)...`);
+          transferTx.add(
+            SystemProgram.transfer({
+              fromPubkey: manager.publicKey,
+              toPubkey: lpOwnerTokenXAta,
+              lamports: depositXRaw.toNumber()
+            }),
+            createSyncNativeInstruction(lpOwnerTokenXAta)
+          );
+        } else {
+          console.log(`  Transferring ${DEPOSIT_TOKEN_X_AMOUNT} Token X from manager to LP owner...`);
+          transferTx.add(
+            createTransferInstruction(
+              managerTokenXAta,
+              lpOwnerTokenXAta,
+              manager.publicKey,
+              BigInt(depositXRaw.toString())
+            )
+          );
+        }
       }
+
+      // Transfer Token Y from manager to LP owner
+      if (!depositYRaw.isZero()) {
+        if (isTokenYNativeSOL) {
+          console.log(`  Transferring ${DEPOSIT_TOKEN_Y_AMOUNT} SOL from manager to LP owner (Token Y)...`);
+          transferTx.add(
+            SystemProgram.transfer({
+              fromPubkey: manager.publicKey,
+              toPubkey: lpOwnerTokenYAta,
+              lamports: depositYRaw.toNumber()
+            }),
+            createSyncNativeInstruction(lpOwnerTokenYAta)
+          );
+        } else {
+          console.log(`  Transferring ${DEPOSIT_TOKEN_Y_AMOUNT} Token Y from manager to LP owner...`);
+          transferTx.add(
+            createTransferInstruction(
+              managerTokenYAta,
+              lpOwnerTokenYAta,
+              manager.publicKey,
+              BigInt(depositYRaw.toString())
+            )
+          );
+        }
+      }
+
+      allTransactions.push(transferTx);
+      console.log('  Built transfer transaction');
+    } else {
+      console.log('  Skipping transfer (same wallet)');
     }
 
     // Define position range (bins around active bin)
@@ -229,14 +241,18 @@ async function testDlmmDeposit() {
     const minBinId = activeId - binRange;
     const maxBinId = activeId + binRange;
 
-    console.log(`  Position range: Bin ${minBinId} to ${maxBinId} (${binRange * 2 + 1} bins)`);
+    // Track new position keypair if creating new position
+    let newPositionKeypair: Keypair | null = null;
 
     // Create position and add liquidity
     if (existingPosition) {
       // Add to existing position
       console.log('  Adding liquidity to existing position...');
+      const binCount = existingPosition.positionData.upperBinId - existingPosition.positionData.lowerBinId + 1;
+      console.log(`  Position bin range: ${existingPosition.positionData.lowerBinId} to ${existingPosition.positionData.upperBinId} (${binCount} bins)`);
 
-      const addLiquidityTx = await dlmmPool.addLiquidityByStrategy({
+      // Use addLiquidityByStrategyChunkable for wide bin ranges to avoid OOM errors
+      const addLiquidityTxs = await dlmmPool.addLiquidityByStrategyChunkable({
         positionPubKey: existingPosition.publicKey,
         user: lpOwner.publicKey,
         totalXAmount: depositXRaw,
@@ -249,22 +265,24 @@ async function testDlmmDeposit() {
         slippage: 100, // 1% slippage
       });
 
-      // Handle both single transaction and array of transactions
-      if (Array.isArray(addLiquidityTx)) {
-        for (const tx of addLiquidityTx) {
-          combinedTx.add(...tx.instructions);
-        }
-      } else {
-        combinedTx.add(...addLiquidityTx.instructions);
+      // Keep each SDK transaction separate (don't combine!)
+      for (const tx of addLiquidityTxs) {
+        const depositTx = new Transaction();
+        depositTx.add(...tx.instructions);
+        depositTx.recentBlockhash = blockhash;
+        depositTx.feePayer = feePayer.publicKey;
+        allTransactions.push(depositTx);
       }
+      console.log(`  Built ${addLiquidityTxs.length} liquidity transaction(s)`);
     } else {
       // Create new position
       console.log('  Creating new position with liquidity...');
+      console.log(`  Position range: Bin ${minBinId} to ${maxBinId} (${binRange * 2 + 1} bins)`);
 
-      const newPositionKeypair = Keypair.generate();
+      newPositionKeypair = Keypair.generate();
       console.log(`  New position address: ${newPositionKeypair.publicKey.toBase58()}`);
 
-      const createPositionTx = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
+      const createPositionTxs = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
         positionPubKey: newPositionKeypair.publicKey,
         user: lpOwner.publicKey,
         totalXAmount: depositXRaw,
@@ -277,61 +295,74 @@ async function testDlmmDeposit() {
         slippage: 100, // 1% slippage
       });
 
-      // Handle both single transaction and array of transactions
-      if (Array.isArray(createPositionTx)) {
-        for (const tx of createPositionTx) {
-          combinedTx.add(...tx.instructions);
-        }
-      } else {
-        combinedTx.add(...createPositionTx.instructions);
+      // Keep each SDK transaction separate (don't combine!)
+      const txArray = Array.isArray(createPositionTxs) ? createPositionTxs : [createPositionTxs];
+      for (const tx of txArray) {
+        const depositTx = new Transaction();
+        depositTx.add(...tx.instructions);
+        depositTx.recentBlockhash = blockhash;
+        depositTx.feePayer = feePayer.publicKey;
+        allTransactions.push(depositTx);
       }
-
-      // Need to sign with new position keypair
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-      combinedTx.recentBlockhash = blockhash;
-
-      // Sign with position keypair first
-      combinedTx.partialSign(newPositionKeypair);
+      console.log(`  Built ${txArray.length} position creation transaction(s)`);
     }
 
-    console.log(`  Combined transaction has ${combinedTx.instructions.length} instruction(s)`);
+    console.log(`  Total transactions: ${allTransactions.length}${!isSameWallet ? ` (1 transfer + ${allTransactions.length - 1} liquidity)` : ''}`);
     console.log('');
 
-    // Step 5: Simulate/Execute transaction
-    const stepLabel = SIMULATE_ONLY ? '🔍 Step 5: Simulating deposit transaction...' : '📤 Step 5: Sending deposit transaction...';
+    // Step 5: Sign all transactions
+    console.log('🔏 Step 5: Signing transactions...');
+
+    for (let i = 0; i < allTransactions.length; i++) {
+      const tx = allTransactions[i];
+      const isTransferTx = !isSameWallet && i === 0;
+
+      if (isTransferTx) {
+        // Transfer tx needs manager signature
+        tx.partialSign(manager);
+        if (!feePayer.publicKey.equals(manager.publicKey)) {
+          tx.partialSign(feePayer);
+        }
+      } else {
+        // Liquidity txs need LP owner signature
+        tx.partialSign(lpOwner);
+        if (!feePayer.publicKey.equals(lpOwner.publicKey)) {
+          tx.partialSign(feePayer);
+        }
+        // New position needs position keypair signature
+        if (newPositionKeypair) {
+          tx.partialSign(newPositionKeypair);
+        }
+      }
+    }
+    console.log(`  Signed ${allTransactions.length} transaction(s)`);
+    console.log('');
+
+    // Step 6: Simulate/Execute transactions
+    const stepLabel = SIMULATE_ONLY ? '🔍 Step 6: Simulating deposit transactions...' : '📤 Step 6: Sending deposit transactions...';
     console.log(stepLabel);
 
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-    if (!combinedTx.recentBlockhash) {
-      combinedTx.recentBlockhash = blockhash;
-    }
-
-    // Sign transaction (LP owner, manager, and fee payer if different)
-    combinedTx.partialSign(lpOwner);
-    combinedTx.partialSign(manager);
-    if (!feePayer.publicKey.equals(lpOwner.publicKey) && !feePayer.publicKey.equals(manager.publicKey)) {
-      combinedTx.partialSign(feePayer);
-    }
-
     if (SIMULATE_ONLY) {
-      // Simulate transaction
-      const simulation = await connection.simulateTransaction(combinedTx);
+      // Simulate all transactions
+      for (let i = 0; i < allTransactions.length; i++) {
+        const simulation = await connection.simulateTransaction(allTransactions[i]);
 
-      console.log(`  Deposit Transaction Simulation:`);
-      if (simulation.value.err) {
-        console.log(`    ❌ Error: ${JSON.stringify(simulation.value.err)}`);
-        if (simulation.value.logs) {
-          console.log(`    Logs:`);
-          simulation.value.logs.forEach(log => console.log(`      ${log}`));
+        console.log(`  Transaction ${i + 1}/${allTransactions.length} Simulation:`);
+        if (simulation.value.err) {
+          console.log(`    ❌ Error: ${JSON.stringify(simulation.value.err)}`);
+          if (simulation.value.logs) {
+            console.log(`    Logs:`);
+            simulation.value.logs.forEach(log => console.log(`      ${log}`));
+          }
+          console.log('');
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          console.log('❌ Simulation failed!');
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          process.exit(1);
+        } else {
+          console.log(`    ✅ Success`);
+          console.log(`    Compute Units: ${simulation.value.unitsConsumed || 'N/A'}`);
         }
-        console.log('');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('❌ Simulation failed!');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-        process.exit(1);
-      } else {
-        console.log(`    ✅ Success`);
-        console.log(`    Compute Units: ${simulation.value.unitsConsumed || 'N/A'}`);
       }
 
       console.log('');
@@ -342,38 +373,49 @@ async function testDlmmDeposit() {
       console.log(`  Pool Type: DLMM (Bin Step: ${binStep} bps)`);
       console.log(`  Token X Mint: ${tokenXMint.toBase58()}`);
       console.log(`  Token Y Mint: ${tokenYMint.toBase58()}`);
-      console.log(`\n  💧 Tokens to Deposit (from manager ${manager.publicKey.toBase58()}):`);
+      console.log(`  Transactions: ${allTransactions.length}`);
+      console.log(`\n  💧 Tokens to Deposit${!isSameWallet ? ` (from manager ${manager.publicKey.toBase58()})` : ''}:`);
       console.log(`    Token X: ${DEPOSIT_TOKEN_X_AMOUNT} (${depositXRaw.toString()} raw)`);
       console.log(`    Token Y: ${DEPOSIT_TOKEN_Y_AMOUNT} ${isTokenYNativeSOL ? 'SOL' : ''} (${depositYRaw.toString()} raw)`);
       if (existingPosition) {
         console.log(`\n  📍 Adding to existing position: ${existingPosition.publicKey.toBase58()}`);
       } else {
-        console.log(`\n  📍 Creating new position with range: Bin ${minBinId} to ${maxBinId}`);
+        console.log(`\n  📍 Creating new position: ${newPositionKeypair?.publicKey.toBase58()}`);
+        console.log(`     Range: Bin ${minBinId} to ${maxBinId}`);
       }
       console.log('\n⚠️  To execute for real, set SIMULATE_ONLY=false');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     } else {
-      // Send transaction
-      const signature = await connection.sendRawTransaction(combinedTx.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed'
-      });
-      console.log(`  Deposit TX: ${signature}`);
-      console.log(`  Solscan: https://solscan.io/tx/${signature}`);
+      // Send all transactions sequentially
+      const signatures: string[] = [];
 
-      // Wait for confirmation
-      console.log('  Waiting for confirmation...');
-      await connection.confirmTransaction({
-        signature,
-        blockhash,
-        lastValidBlockHeight
-      });
-      console.log('  ✅ Transaction confirmed');
+      for (let i = 0; i < allTransactions.length; i++) {
+        console.log(`  Sending transaction ${i + 1}/${allTransactions.length}...`);
+        const signature = await connection.sendRawTransaction(allTransactions[i].serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed'
+        });
+        signatures.push(signature);
+        console.log(`    TX: ${signature}`);
+        console.log(`    Solscan: https://solscan.io/tx/${signature}`);
+
+        // Wait for confirmation before sending next
+        console.log('    Waiting for confirmation...');
+        await connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight
+        });
+        console.log('    ✅ Confirmed');
+      }
+
       console.log('');
-
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('✅ Deposit completed successfully!');
-      console.log(`\nTransaction: https://solscan.io/tx/${signature}`);
+      console.log('\nTransactions:');
+      signatures.forEach((sig, i) => {
+        console.log(`  ${i + 1}. https://solscan.io/tx/${sig}`);
+      });
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     }
 

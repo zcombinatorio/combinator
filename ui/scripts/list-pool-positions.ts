@@ -22,10 +22,10 @@ import BN from 'bn.js';
 // Pool address to query (update this to test different pools)
 // DAMM pools: OOGWAY, SURF, SURFTEST
 // DLMM pools: ZC, TESTSURF
-const POOL_ADDRESS = 'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1'; // SURF
+const POOL_ADDRESS = 'EC7MUufEpZcRZyXTFt16MMNLjJVnj9Vkku4UwdZ713Hx'; // TESTSURF
 
 // Pool type: 'dlmm' or 'damm'
-const POOL_TYPE: 'dlmm' | 'damm' = 'damm';
+const POOL_TYPE: 'dlmm' | 'damm' = 'dlmm';
 
 // ============================================================================
 

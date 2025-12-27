@@ -21,11 +21,11 @@ import 'dotenv/config';
 const POOL_ADDRESS = '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2';
 
 // Set to true to simulate the transaction instead of submitting to /confirm
-const SIMULATE_ONLY = false;
+const SIMULATE_ONLY = true;
 
 async function testDlmmFeeClaim() {
   // Configuration
-  const API_URL = process.env.API_URL || 'http://localhost:6770';
+  const API_URL = process.env.API_URL || 'https://api.zcombinator.io/' || 'http://localhost:6770';
   const PAYER_PRIVATE_KEY = process.env.PAYER_PRIVATE_KEY;
   const RPC_URL = process.env.RPC_URL;
 

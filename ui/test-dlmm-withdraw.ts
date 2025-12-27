@@ -25,7 +25,7 @@ dotenv.config();
 const SIMULATE_ONLY = false;
 
 // Withdrawal percentage (in %)
-const WITHDRAWAL_PERCENTAGE = 12.5;
+const WITHDRAWAL_PERCENTAGE = 100;
 
 async function testDlmmWithdraw() {
   try {
@@ -38,7 +38,7 @@ async function testDlmmWithdraw() {
     const DLMM_POOL_ADDRESS = process.env.DLMM_POOL_ADDRESS;
     const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
     const MANAGER_WALLET = process.env.MANAGER_WALLET;
-    const FEE_PAYER_PRIVATE_KEY = process.env.PAYER_PRIVATE_KEY || LP_OWNER_PRIVATE_KEY;
+    const FEE_PAYER_PRIVATE_KEY = LP_OWNER_PRIVATE_KEY;
 
     if (!RPC_URL) {
       throw new Error('RPC_URL not set in environment');

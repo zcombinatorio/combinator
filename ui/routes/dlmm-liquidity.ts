@@ -1014,7 +1014,7 @@ router.post('/withdraw/confirm', dlmmLiquidityLimiter, async (req: Request, res:
       { commitment: 'confirmed' }
     );
 
-    if (!isBlockhashValid) {
+    if (!isBlockhashValid.value) {
       return res.status(400).json({
         error: 'Invalid transaction: blockhash is expired. Please create new transactions.'
       });
@@ -1686,6 +1686,18 @@ router.post('/deposit/confirm', dlmmLiquidityLimiter, async (req: Request, res: 
       transactions.push(transaction);
     }
     console.log(`  ✓ All ${transactions.length} transactions verified`);
+
+    // Check blockhash validity (use first transaction's blockhash as they should all be the same)
+    const isBlockhashValid = await connection.isBlockhashValid(
+      transactions[0].recentBlockhash!,
+      { commitment: 'confirmed' }
+    );
+
+    if (!isBlockhashValid.value) {
+      return res.status(400).json({
+        error: 'Invalid transaction: blockhash is expired. Please create new transactions.'
+      });
+    }
 
     // Send transactions sequentially
     const signatures: string[] = [];

@@ -607,7 +607,7 @@ router.post('/confirm', async (
       { commitment: 'confirmed' }
     );
 
-    if (!isBlockhashValid) {
+    if (!isBlockhashValid.value) {
       const errorResponse = { error: 'Invalid transaction: blockhash is expired. Please create a new transaction.' };
       console.log("claim/confirm error response:", errorResponse);
       return res.status(400).json(errorResponse);

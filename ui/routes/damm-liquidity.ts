@@ -735,7 +735,7 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
       { commitment: 'confirmed' }
     );
 
-    if (!isBlockhashValid) {
+    if (!isBlockhashValid.value) {
       return res.status(400).json({
         error: 'Invalid transaction: blockhash is expired. Please create a new transaction.'
       });
@@ -1398,7 +1398,7 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
       { commitment: 'confirmed' }
     );
 
-    if (!isBlockhashValid) {
+    if (!isBlockhashValid.value) {
       return res.status(400).json({
         error: 'Invalid transaction: blockhash is expired. Please create a new transaction.'
       });

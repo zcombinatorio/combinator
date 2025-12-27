@@ -14,6 +14,9 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
     "@jup-ag/api": "^6.0.44",
+    "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
+    "@metaplex-foundation/umi": "^1.4.1",
+    "@metaplex-foundation/umi-bundle-defaults": "^1.4.1",
     "@meteora-ag/cp-amm-sdk": "^1.1.5",
     "@meteora-ag/dlmm": "^1.8.0",
     "@meteora-ag/dynamic-bonding-curve-sdk": "^1.4.1",

@@ -584,7 +584,7 @@ router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => 
       { commitment: 'confirmed' }
     );
 
-    if (!isBlockhashValid) {
+    if (!isBlockhashValid.value) {
       return res.status(400).json({
         error: 'Invalid transaction: blockhash is expired. Please create a new transaction.'
       });
