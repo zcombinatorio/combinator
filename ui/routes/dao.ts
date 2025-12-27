@@ -572,11 +572,12 @@ router.get('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Enrich with stats
+    // Enrich with stats and strip internal fields
     const enrichedDaos = await Promise.all(
       daos.map(async (dao) => {
         const stats = await getDaoStats(pool, dao.id!);
-        return { ...dao, stats };
+        const { admin_key_idx, ...publicDao } = dao;
+        return { ...publicDao, stats };
       })
     );
 
@@ -604,14 +605,18 @@ router.get('/:daoPda', async (req: Request, res: Response) => {
     const stats = await getDaoStats(pool, dao.id!);
     const proposers = await getProposersByDao(pool, dao.id!);
 
-    // If parent, also fetch child DAOs
+    // If parent, also fetch child DAOs (strip internal fields)
     let children: any[] = [];
     if (dao.dao_type === 'parent') {
-      children = await getChildDaos(pool, dao.id!);
+      const childDaos = await getChildDaos(pool, dao.id!);
+      children = childDaos.map(({ admin_key_idx, ...child }) => child);
     }
 
+    // Strip internal fields from response
+    const { admin_key_idx, ...publicDao } = dao;
+
     res.json({
-      ...dao,
+      ...publicDao,
       stats,
       proposers,
       children,

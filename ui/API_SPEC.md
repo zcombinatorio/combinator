@@ -114,8 +114,6 @@ Lists all DAOs registered with this API. Used by clients to index supported DAOs
       "created_at": "2025-01-01T00:00:00.000Z",
       "stats": {
         "proposerCount": 2,
-        "proposalCount": 5,
-        "activeProposalCount": 1,
         "childDaoCount": 3
       }
     }
@@ -150,7 +148,6 @@ Gets detailed information about a specific DAO.
   "created_at": "2025-01-01T00:00:00.000Z",
   "stats": { ... },
   "proposers": [ ... ],
-  "proposals": [ ... ],
   "children": [ ... ]
 }
 ```
@@ -246,7 +243,7 @@ curl -X POST https://api.zcombinator.io/dao/parent \
 
 ### 5. POST /dao/child
 
-Creates a child DAO under an existing parent. Child DAOs share the parent's liquidity pool but have their own treasury.
+Creates a child DAO under an existing parent. Child DAOs share the parent's liquidity pool but have their own token and treasury.
 
 **Request Body:**
 
@@ -255,6 +252,7 @@ Creates a child DAO under an existing parent. Child DAOs share the parent's liqu
 | `wallet` | `string` | Yes | Signer wallet (must be the parent DAO creator) |
 | `name` | `string` | Yes | Child DAO name (max 32 chars, used for PDA derivation) |
 | `parent_pda` | `string` | Yes | The parent DAO's on-chain address |
+| `token_mint` | `string` | Yes | The SPL token mint for this child DAO (different from parent) |
 | `treasury_cosigner` | `string` | Yes | Client wallet that co-signs treasury transactions |
 | `signed_hash` | `string` | Yes | Base58-encoded signature of SHA-256 hash of body |
 
@@ -273,6 +271,7 @@ Creates a child DAO under an existing parent. Child DAOs share the parent's liqu
 
 - Parent must be a valid parent DAO (not a child)
 - `wallet` must be the same wallet that created the parent DAO
+- Child has its own `token_mint` (must transfer mint authority to `mint_multisig`)
 - Child inherits parent's pool for liquidity
 
 ---
@@ -299,13 +298,37 @@ Creates a decision market for a DAO. This withdraws liquidity from the DAO's poo
 |-------|------|-------------|
 | `proposal_pda` | `string` | The proposal's on-chain address |
 | `proposal_id` | `number` | The proposal ID within the moderator |
+| `metadata_cid` | `string` | IPFS CID for proposal metadata |
+| `dao_pda` | `string` | The DAO's on-chain address |
 | `status` | `string` | Initial proposal status (`"pending"`) |
+
+**Pre-flight Validation:**
+
+Before creating a proposal, the server validates that the DAO is ready:
+
+| Check | Requirement | Error |
+|-------|-------------|-------|
+| Treasury funds | Treasury multisig must hold SOL, USDC, or DAO token | `treasury_funds` |
+| Mint authority | `mint_auth_multisig` must be the token's mint authority | `mint_authority` |
+| Token/pool match | Token must be the pool's base token (parent DAOs only) | `token_pool_match` |
+| LP holdings | Admin wallet must hold LP positions (parent's admin for child DAOs) | `admin_lp_holdings` |
+| Active proposal | No active proposal for this moderator | `active_proposal` |
+
+**Error Response (validation failed):**
+
+```json
+{
+  "error": "DAO not ready for proposals",
+  "reason": "Treasury multisig has no funds (SOL, USDC, or DAO token)",
+  "check": "treasury_funds"
+}
+```
 
 **Constraints:**
 
-- `wallet` must be the DAO owner (proposer whitelist management coming soon)
-- Only one active decision market per parent DAO at a time (includes markets from child DAOs)
-- For child DAOs: liquidity is withdrawn from the parent's pool
+- `wallet` must be the DAO owner or an authorized proposer
+- Only one active decision market per moderator at a time
+- For child DAOs: liquidity is withdrawn from the parent's pool, LP check uses parent's admin wallet
 
 ---
 
@@ -314,46 +337,46 @@ Creates a decision market for a DAO. This withdraws liquidity from the DAO's poo
 ### Parent DAO Creation
 
 ```
-1. Client builds request body with name, token_mint, pool_address, treasury_cosigner
-2. Client signs SHA-256 hash of body
-3. Client calls POST /dao/parent
-4. Backend authenticates via signature
-5. Backend derives pool_type and quote_mint from pool_address
-6. Backend generates admin wallet internally and funds it
-7. Backend creates DAO account, moderator, and multisigs on-chain
-8. Client receives dao_pda, moderator_pda, admin_wallet, treasury_multisig, mint_multisig, pool_type, quote_mint
-9. Client transfers LP tokens to admin_wallet for conditional market creation
-10. Client transfers treasury funds to treasury_multisig
-11. Client transfers mint authority to mint_multisig
+1. Call POST /dao/parent with name, token_mint, pool_address, treasury_cosigner
+2. Receive dao_pda, admin_wallet, treasury_multisig, mint_multisig, pool_type, quote_mint
 ```
 
-**Note:** The wallet that creates the DAO is automatically authorized to create decision markets.
+**Post-Creation Setup (required before proposals):**
+
+```
+6. Transfer LP tokens/positions to admin_wallet
+7. Transfer funds (SOL/USDC/token) to treasury_multisig
+8. Transfer mint authority to mint_multisig:
+   spl-token authorize <token_mint> mint <mint_multisig>
+```
+
+**Note:** The wallet that creates the DAO is automatically authorized to create proposals.
 
 ### Child DAO Creation
 
 ```
-1. Client builds request body with name and parent_pda
-2. Client signs SHA-256 hash of body
-3. Client calls POST /dao/child
-4. Backend validates parent exists and caller is authorized
-5. Backend generates admin wallet internally and funds it
-6. Backend creates child DAO on-chain, linked to parent
-7. Child DAO can now create proposals using parent's liquidity
+1. Call POST /dao/child with name, parent_pda, token_mint, treasury_cosigner
+2. Receive dao_pda, admin_wallet, treasury_multisig, mint_multisig
 ```
 
-### Decision Market Flow
+**Post-Creation Setup (required before proposals):**
 
 ```
-1. DAO owner builds request body with market details
-2. Owner signs SHA-256 hash of body
-3. Owner calls POST /dao/proposal
-4. Backend checks authorization and one-active-market constraint
-5. Backend withdraws liquidity from pool (parent's pool if child DAO)
-6. Backend creates conditional token vaults and AMM pools for each option
-7. Market is live for length_secs duration
-8. After duration: final TWAP crank, winning option determined by highest TWAP
-9. Liquidity returned to pool
-10. Resolved tokens can be claimed on the Combinator UI
+6. Transfer funds (SOL/USDC/token) to treasury_multisig
+7. Transfer mint authority for child's token_mint to mint_multisig:
+   spl-token authorize <child_token_mint> mint <mint_multisig>
+```
+
+**Note:** Child DAOs use the parent's LP for proposals. The parent's admin_wallet must hold LP positions.
+
+### Creating a Proposal
+
+```
+1. Call POST /dao/proposal with dao_pda, title, description, length_secs, options
+2. Receive proposal_pda, proposal_id, metadata_cid
+3. Market is live for length_secs duration
+4. After duration: winning option determined by highest TWAP
+5. Resolved tokens can be claimed on the Combinator UI
 ```
 
 ---
@@ -569,8 +592,6 @@ interface DaoWithStats {
   created_at: string;
   stats: {
     proposerCount: number;
-    proposalCount: number;
-    activeProposalCount: number;
     childDaoCount: number;
   };
 }
