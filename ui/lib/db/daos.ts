@@ -136,8 +136,9 @@ export async function createDao(
       mint_auth_multisig,
       treasury_cosigner,
       parent_dao_id,
-      dao_type
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      dao_type,
+      withdrawal_percentage
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     RETURNING *
   `;
 
@@ -156,7 +157,8 @@ export async function createDao(
     dao.mint_auth_multisig,
     dao.treasury_cosigner,
     dao.parent_dao_id || null,
-    dao.dao_type
+    dao.dao_type,
+    dao.withdrawal_percentage ?? 12  // Default to 12% if not specified
   ];
 
   try {
@@ -218,6 +220,25 @@ export async function getDaoByName(
     return result.rows.length > 0 ? result.rows[0] : null;
   } catch (error) {
     console.error('Error fetching DAO by name:', error);
+    throw error;
+  }
+}
+
+export async function getDaoByModeratorPda(
+  pool: Pool,
+  moderatorPda: string
+): Promise<Dao | null> {
+  // Only return parent DAOs - child DAOs share parent's moderator but don't manage liquidity
+  const query = `
+    SELECT * FROM cmb_daos
+    WHERE moderator_pda = $1 AND dao_type = 'parent'
+  `;
+
+  try {
+    const result = await pool.query(query, [moderatorPda]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error fetching DAO by moderator PDA:', error);
     throw error;
   }
 }
@@ -458,6 +479,111 @@ export async function getDaoStats(
     };
   } catch (error) {
     console.error('Error fetching DAO stats:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// Proposer Threshold Functions
+// ============================================================================
+
+/**
+ * Update the proposer token threshold for a DAO.
+ * Each DAO (parent or child) maintains its own independent threshold.
+ * Set to null to disable token holding requirement (only wallet whitelist applies).
+ */
+export async function updateProposerThreshold(
+  pool: Pool,
+  daoId: number,
+  threshold: string | null
+): Promise<void> {
+  const query = `
+    UPDATE cmb_daos
+    SET proposer_token_threshold = $2
+    WHERE id = $1
+  `;
+
+  try {
+    await pool.query(query, [daoId, threshold]);
+  } catch (error) {
+    console.error('Error updating proposer threshold:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get the proposer token threshold for a DAO.
+ * Returns null if no threshold is set.
+ */
+export async function getProposerThreshold(
+  pool: Pool,
+  daoId: number
+): Promise<string | null> {
+  const query = `
+    SELECT proposer_token_threshold FROM cmb_daos
+    WHERE id = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId]);
+    return result.rows.length > 0 ? result.rows[0].proposer_token_threshold : null;
+  } catch (error) {
+    console.error('Error fetching proposer threshold:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// Withdrawal Percentage Functions
+// ============================================================================
+
+/**
+ * Update the withdrawal percentage for a DAO.
+ * Each DAO (parent or child) maintains its own independent withdrawal percentage.
+ * Valid range: 1-50 (enforced by database constraint).
+ */
+export async function updateWithdrawalPercentage(
+  pool: Pool,
+  daoId: number,
+  percentage: number
+): Promise<void> {
+  // Validate range before attempting update
+  if (percentage < 5 || percentage > 50) {
+    throw new Error('Withdrawal percentage must be between 5 and 50');
+  }
+
+  const query = `
+    UPDATE cmb_daos
+    SET withdrawal_percentage = $2
+    WHERE id = $1
+  `;
+
+  try {
+    await pool.query(query, [daoId, percentage]);
+  } catch (error) {
+    console.error('Error updating withdrawal percentage:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get the withdrawal percentage for a DAO.
+ * Returns the percentage (1-50) or 12 as default if not found.
+ */
+export async function getWithdrawalPercentage(
+  pool: Pool,
+  daoId: number
+): Promise<number> {
+  const query = `
+    SELECT withdrawal_percentage FROM cmb_daos
+    WHERE id = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId]);
+    return result.rows.length > 0 ? result.rows[0].withdrawal_percentage : 12;
+  } catch (error) {
+    console.error('Error fetching withdrawal percentage:', error);
     throw error;
   }
 }

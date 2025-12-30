@@ -19,8 +19,6 @@
 import { Keypair, Connection, LAMPORTS_PER_SOL, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-const KEY_SERVICE_URL = process.env.KEY_SERVICE_URL;
-
 // Minimum SOL balance for a managed wallet to operate
 const MIN_WALLET_BALANCE_SOL = 0.05;
 const FUNDING_AMOUNT_SOL = 0.1;
@@ -35,7 +33,8 @@ interface KeyServiceResponse {
  * Fetch a keypair from the key management service by index
  */
 export async function fetchKeypair(idx: number): Promise<Keypair> {
-  if (!KEY_SERVICE_URL) {
+  const keyServiceUrl = process.env.KEY_SERVICE_URL;
+  if (!keyServiceUrl) {
     throw new Error('KEY_SERVICE_URL environment variable is not set');
   }
   const sivKey = process.env.SIV_KEY;
@@ -43,7 +42,7 @@ export async function fetchKeypair(idx: number): Promise<Keypair> {
     throw new Error('SIV_KEY environment variable is not set');
   }
 
-  const response = await fetch(`${KEY_SERVICE_URL}?idx=${idx}`, {
+  const response = await fetch(`${keyServiceUrl}?idx=${idx}`, {
     method: 'GET',
     headers: {
       'Authorization': `Basic ${Buffer.from(sivKey).toString('base64')}`,

@@ -256,6 +256,10 @@ export interface Dao {
   // Hierarchy
   parent_dao_id?: number;
   dao_type: 'parent' | 'child';
+  // Proposer config (each DAO has independent settings)
+  proposer_token_threshold?: string; // Min token balance to propose (null = no requirement)
+  // Liquidity withdrawal config
+  withdrawal_percentage: number; // Percentage of LP to withdraw for proposals (1-50, default 12)
   // Metadata
   created_at?: Date;
 }

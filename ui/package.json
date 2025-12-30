@@ -31,7 +31,7 @@
     "@solana/web3.js": "^1.98.4",
     "@types/pg": "^8.15.5",
     "@wallet-standard/app": "^1.1.0",
-    "@zcomb/programs-sdk": "^1.0.0",
+    "@zcomb/programs-sdk": "^1.1.0",
     "axios": "^1.12.2",
     "bn.js": "^5.2.2",
     "bs58": "^6.0.0",

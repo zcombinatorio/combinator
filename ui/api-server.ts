@@ -16,9 +16,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import 'dotenv/config'; // Must be first to load env vars before other imports
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { Connection, Keypair, Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
@@ -34,8 +34,6 @@ import dammLiquidityRouter from './routes/damm-liquidity';
 import dlmmLiquidityRouter from './routes/dlmm-liquidity';
 import icoRouter from './routes/ico';
 import daoRouter from './routes/dao';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.API_PORT || 3001;
@@ -392,6 +390,11 @@ async function startServer() {
       console.log(`  POST /ico/:tokenAddress/claim/prepare       - Prepare ICO claim transaction`);
       console.log(`  POST /ico/:tokenAddress/claim/confirm       - Confirm ICO claim`);
       console.log(`  GET  /verify-token/:address                 - Verify token exists on-chain`);
+      console.log(`  POST /dao/parent                            - Create parent DAO`);
+      console.log(`  POST /dao/child                             - Create child DAO`);
+      console.log(`  POST /dao/proposal                          - Create proposal for DAO`);
+      console.log(`  POST /dao/redeem-liquidity                  - Redeem liquidity from resolved proposal`);
+      console.log(`  POST /dao/deposit-back                      - Return liquidity to Meteora pool`);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
     });
   } catch (error) {
