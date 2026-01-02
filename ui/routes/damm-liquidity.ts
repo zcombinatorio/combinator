@@ -1014,8 +1014,8 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
       try {
         if (isTokenBNativeSOL) {
           const solBalance = await connection.getBalance(lpOwner.publicKey);
-          // Reserve SOL for transaction fees + rent for new accounts (0.125 SOL)
-          const reserveForFees = 125_000_000;
+          // Reserve SOL for transaction fees + rent for new accounts (0.333 SOL)
+          const reserveForFees = 333_000_000;
           tokenBAmountRaw = new BN(Math.max(0, solBalance - reserveForFees));
         } else {
           const tokenBAccount = await connection.getTokenAccountBalance(lpOwnerTokenBAta);
@@ -1664,8 +1664,8 @@ router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, re
       if (isTokenBNativeSOL) {
         // For native SOL, check the account balance
         const solBalance = await connection.getBalance(lpOwner.publicKey);
-        // Reserve SOL for transaction fees + rent for new accounts (0.125 SOL)
-        const reserveForFees = 125_000_000; // 0.125 SOL in lamports
+        // Reserve SOL for transaction fees + rent for new accounts (0.333 SOL)
+        const reserveForFees = 333_000_000; // 0.333 SOL in lamports
         tokenBBalance = new BN(Math.max(0, solBalance - reserveForFees));
       } else {
         const tokenBAccount = await connection.getTokenAccountBalance(lpOwnerTokenBAta);

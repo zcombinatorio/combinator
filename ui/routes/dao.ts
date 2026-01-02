@@ -1528,17 +1528,21 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     // 3. Check admin holds LP - for child DAOs, check parent's admin wallet
+    // Also store liquidityDao for later use in withdrawal/deposit operations
     let lpCheckWallet = dao.admin_wallet;
     let lpCheckPool = dao.pool_address;
     let lpCheckPoolType = dao.pool_type;
+    let liquidityDao = dao;  // The DAO that owns the LP (parent for child DAOs)
 
     if (dao.dao_type === 'child' && dao.parent_dao_id) {
-      // Get parent DAO to check LP holdings
+      // Get parent DAO - child DAOs use parent's LP
       const parentDao = await getDaoById(pool, dao.parent_dao_id);
       if (parentDao) {
         lpCheckWallet = parentDao.admin_wallet;
         lpCheckPool = parentDao.pool_address;
         lpCheckPoolType = parentDao.pool_type;
+        liquidityDao = parentDao;
+        console.log(`Child DAO detected, using parent DAO for liquidity: ${parentDao.dao_name}`);
       }
     }
 
@@ -1568,13 +1572,13 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // ========================================================================
     // Before creating a proposal, we:
     // 1. Call withdraw/build to get unsigned transaction and amounts
-    // 2. Sign with admin keypair
+    // 2. Sign with admin keypair (from liquidityDao - parent for child DAOs)
     // 3. Call withdraw/confirm to execute the withdrawal
     // 4. Pass withdrawn amounts to SDK's createProposal
     // ========================================================================
 
-    // Get admin keypair for this DAO (needed for signing withdrawal)
-    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
+    // Get admin keypair for liquidity operations (from parent if child DAO)
+    const adminKeypair = await fetchKeypair(liquidityDao.admin_key_idx);
     const adminPubkey = adminKeypair.publicKey;
 
     // Determine pool type and withdrawal percentage (from DAO settings)
@@ -1583,6 +1587,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     const withdrawalPercentage = dao.withdrawal_percentage;
 
     console.log(`Withdrawing ${withdrawalPercentage}% liquidity from ${poolType} pool ${poolAddress}`);
+    console.log(`  LP Owner (admin): ${adminPubkey.toBase58()}`);
 
     // Step 1: Call withdraw/build
     // Pass adminWallet to disambiguate when multiple DAOs share the same pool
@@ -1593,7 +1598,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       body: JSON.stringify({
         withdrawalPercentage,
         poolAddress,
-        adminWallet: dao.admin_wallet
+        adminWallet: liquidityDao.admin_wallet  // Use LP owner's wallet
       })
     });
 
@@ -2151,12 +2156,23 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
       });
     }
 
-    if (dao.admin_key_idx === undefined || dao.admin_key_idx === null) {
+    // For child DAOs, liquidity is managed by the parent DAO
+    // We need to use parent's admin so tokens go to the LP owner
+    let liquidityDao = dao;
+    if (dao.dao_type === 'child' && dao.parent_dao_id) {
+      const parentDao = await getDaoById(pool, dao.parent_dao_id);
+      if (parentDao) {
+        console.log(`Child DAO detected, using parent DAO for redemption: ${parentDao.dao_name}`);
+        liquidityDao = parentDao;
+      }
+    }
+
+    if (liquidityDao.admin_key_idx === undefined || liquidityDao.admin_key_idx === null) {
       return res.status(500).json({ error: 'DAO has no admin key index' });
     }
 
-    // Get admin keypair
-    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
+    // Get admin keypair (from parent if child DAO)
+    const adminKeypair = await fetchKeypair(liquidityDao.admin_key_idx);
 
     // Create provider and client with admin keypair
     const provider = createProvider(adminKeypair);
@@ -2165,6 +2181,9 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
     console.log(`Redeeming liquidity for proposal ${proposal_pda}`);
     console.log(`  Winning index: ${winningIdx}`);
     console.log(`  DAO: ${dao.dao_name} (${dao.dao_pda})`);
+    if (liquidityDao !== dao) {
+      console.log(`  Parent DAO (LP owner): ${liquidityDao.dao_name} (${liquidityDao.dao_pda})`);
+    }
 
     // Call SDK redeemLiquidity
     const { builder } = await client.redeemLiquidity(
@@ -2320,7 +2339,6 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
 
     const mintData = mintInfo.value.data.parsed;
     const totalSupply = BigInt(mintData.info.supply);
-    const decimals = mintData.info.decimals;
 
     // Get admin's token balance
     const adminAta = await getAssociatedTokenAddress(tokenMint, adminPubkey);

@@ -13,7 +13,7 @@ export const BALANCE_REFRESH_DELAY = 10000; // 10 seconds
 export const CONFIRMATION_TIMEOUT_ATTEMPTS = 30;
 export const CONFIRMATION_DELAY_MS = 1000;
 export const TRANSACTION_SPLIT_DELAY = 2000; // 2 seconds
-export const SOL_RENT_BUFFER = 0.125; // SOL - covers transaction fees + rent for new accounts
+export const SOL_RENT_BUFFER = 0.333; // SOL - covers transaction fees + rent for new accounts
 
 // Token Configuration
 // To add a new token: add an entry here with all token properties
