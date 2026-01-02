@@ -59,8 +59,8 @@ const CONFIG = {
   // API endpoint for fee claiming (zcombinator api-server)
   FEE_CLAIM_API_BASE: process.env.FEE_CLAIM_API_BASE || 'https://api.zcombinator.io',
 
-  // Reserve SOL for gas (0.1 SOL)
-  SOL_RESERVE_LAMPORTS: BigInt(100_000_000),
+  // Reserve SOL for gas (0.125 SOL)
+  SOL_RESERVE_LAMPORTS: BigInt(125_000_000),
 
   // Jupiter API
   JUPITER_API_URL: 'https://api.jup.ag/swap/v1',
@@ -694,7 +694,7 @@ async function main() {
     );
 
     if (solSwapResult) {
-      log(`SOL swap successful. Received ${solSwapResult.outputAmount.toString()} ZC`);
+      log(`SOL swap successful. Received ${solSwapResult!.outputAmount.toString()} ZC`);
     }
 
     await sleep(2000);
@@ -720,7 +720,7 @@ async function main() {
     );
 
     if (usdcSwapResult) {
-      log(`USDC swap successful. Received ${usdcSwapResult.outputAmount.toString()} ZC`);
+      log(`USDC swap successful. Received ${usdcSwapResult!.outputAmount.toString()} ZC`);
     }
 
     await sleep(2000);

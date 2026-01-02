@@ -243,6 +243,32 @@ export async function getDaoByModeratorPda(
   }
 }
 
+/**
+ * Get a DAO by its pool address (DAMM or DLMM pool)
+ * Used by liquidity routes to check if a pool is DAO-managed
+ * Only returns parent DAOs since they own the liquidity
+ */
+export async function getDaoByPoolAddress(
+  pool: Pool,
+  poolAddress: string,
+  adminWallet?: string
+): Promise<Dao | null> {
+  // If adminWallet provided, filter by it; otherwise return most recently created
+  const query = adminWallet
+    ? `SELECT * FROM cmb_daos WHERE pool_address = $1 AND dao_type = 'parent' AND admin_wallet = $2`
+    : `SELECT * FROM cmb_daos WHERE pool_address = $1 AND dao_type = 'parent' ORDER BY created_at DESC LIMIT 1`;
+
+  const params = adminWallet ? [poolAddress, adminWallet] : [poolAddress];
+
+  try {
+    const result = await pool.query(query, params);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error fetching DAO by pool address:', error);
+    throw error;
+  }
+}
+
 export async function getAllDaos(
   pool: Pool,
   options?: { limit?: number; offset?: number; daoType?: 'parent' | 'child' }

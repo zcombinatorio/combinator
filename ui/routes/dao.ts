@@ -27,6 +27,28 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { futarchy } from '@zcomb/programs-sdk';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import DLMM from '@meteora-ag/dlmm';
+import * as multisig from '@sqds/multisig';
+
+// Squads v4 program ID (same as used by @zcomb/programs-sdk)
+const SQUADS_PROGRAM_ID = new PublicKey('SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf');
+
+/**
+ * Derive the Squads vault PDA from a multisig PDA.
+ * The vault is where assets should be transferred to, NOT the multisig itself.
+ * Sending to the multisig address instead of the vault leads to permanently lost funds!
+ *
+ * @param multisigPda - The Squads multisig PDA
+ * @param index - Vault index (0 for default vault)
+ * @returns The vault PDA
+ */
+function deriveSquadsVaultPda(multisigPda: PublicKey, index: number = 0): PublicKey {
+  const [vaultPda] = multisig.getVaultPda({
+    multisigPda,
+    index,
+    programId: SQUADS_PROGRAM_ID,
+  });
+  return vaultPda;
+}
 import { getPool } from '../lib/db';
 import { getDaoById } from '../lib/db/daos';
 import {
@@ -132,25 +154,27 @@ function mockTxSignature(): string {
 
 /**
  * Mock response for initializeParentDAO
+ * Note: Returns vault PDAs, not multisig PDAs (vaults are where assets should go)
  */
 function mockInitializeParentDAO(name: string) {
   return {
     daoPda: mockPublicKey(`dao:parent:${name}`),
     moderatorPda: mockPublicKey(`moderator:${name}`),
-    treasuryMultisig: mockPublicKey(`treasury:${name}`),
-    mintMultisig: mockPublicKey(`mint:${name}`),
+    treasuryVault: mockPublicKey(`treasury-vault:${name}`),
+    mintVault: mockPublicKey(`mint-vault:${name}`),
     tx: mockTxSignature(),
   };
 }
 
 /**
  * Mock response for initializeChildDAO
+ * Note: Returns vault PDAs, not multisig PDAs (vaults are where assets should go)
  */
 function mockInitializeChildDAO(parentName: string, childName: string) {
   return {
     daoPda: mockPublicKey(`dao:child:${parentName}:${childName}`),
-    treasuryMultisig: mockPublicKey(`treasury:child:${childName}`),
-    mintMultisig: mockPublicKey(`mint:child:${childName}`),
+    treasuryVault: mockPublicKey(`treasury-vault:child:${childName}`),
+    mintVault: mockPublicKey(`mint-vault:child:${childName}`),
     tx: mockTxSignature(),
   };
 }
@@ -825,8 +849,8 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
     let adminWallet: string;
     let daoPda: string;
     let moderatorPda: string;
-    let treasuryMultisig: string;
-    let mintMultisig: string;
+    let treasuryVault: string;  // Vault PDA (NOT multisig) - where treasury funds go
+    let mintVault: string;      // Vault PDA (NOT multisig) - mint authority target
     let tx: string;
 
     // Allocate and fund admin wallet from key service
@@ -849,8 +873,8 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
       const mockResult = mockInitializeParentDAO(name);
       daoPda = mockResult.daoPda;
       moderatorPda = mockResult.moderatorPda;
-      treasuryMultisig = mockResult.treasuryMultisig;
-      mintMultisig = mockResult.mintMultisig;
+      treasuryVault = mockResult.treasuryVault;
+      mintVault = mockResult.mintVault;
       tx = mockResult.tx;
     } else {
       // ========== REAL MODE ==========
@@ -883,11 +907,26 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
       // Extract PDAs from result
       daoPda = result.daoPda.toBase58();
       moderatorPda = result.moderatorPda.toBase58();
-      treasuryMultisig = result.treasuryMultisig.toBase58();
-      mintMultisig = result.mintMultisig.toBase58();
+
+      // CRITICAL: Derive vault PDAs from multisig PDAs
+      // The SDK returns multisig PDAs, but we need vault PDAs for:
+      // - Mint authority transfer (mint vault)
+      // - Treasury funds (treasury vault)
+      // Sending to multisig address instead of vault = permanently lost funds!
+      const treasuryMultisigPda = result.treasuryMultisig;
+      const mintMultisigPda = result.mintMultisig;
+      treasuryVault = deriveSquadsVaultPda(treasuryMultisigPda).toBase58();
+      mintVault = deriveSquadsVaultPda(mintMultisigPda).toBase58();
+
+      console.log(`[DAO] Created parent DAO ${name}`);
+      console.log(`  Treasury Multisig: ${treasuryMultisigPda.toBase58()}`);
+      console.log(`  Treasury Vault:    ${treasuryVault}`);
+      console.log(`  Mint Multisig:     ${mintMultisigPda.toBase58()}`);
+      console.log(`  Mint Vault:        ${mintVault}`);
     }
 
     // Store in database
+    // Note: DB columns still named *_multisig for backward compat, but store vault PDAs
     const dao = await createDao(pool, {
       dao_pda: daoPda,
       dao_name: name,
@@ -899,8 +938,8 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
       pool_address,
       pool_type,
       quote_mint,
-      treasury_multisig: treasuryMultisig,
-      mint_auth_multisig: mintMultisig,
+      treasury_multisig: treasuryVault,      // Actually vault PDA
+      mint_auth_multisig: mintVault,         // Actually vault PDA
       treasury_cosigner,
       dao_type: 'parent',
       withdrawal_percentage: 12,
@@ -921,8 +960,8 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
       res.json({
         dao_pda: daoPda,
         moderator_pda: moderatorPda,
-        treasury_multisig: treasuryMultisig,
-        mint_multisig: mintMultisig,
+        treasury_vault: treasuryVault,  // Vault PDA (where funds should go)
+        mint_vault: mintVault,          // Vault PDA (mint authority target)
         admin_wallet: adminWallet,
         pool_type,
         quote_mint,
@@ -1012,8 +1051,8 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
     });
 
     let daoPda: string;
-    let treasuryMultisig: string;
-    let mintMultisig: string;
+    let treasuryVault: string;  // Vault PDA (NOT multisig) - where treasury funds go
+    let mintVault: string;      // Vault PDA (NOT multisig) - mint authority target
     let tx: string;
 
     if (MOCK_MODE) {
@@ -1024,8 +1063,8 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
       // Generate mock PDAs
       const mockResult = mockInitializeChildDAO(parentDao.dao_name, name);
       daoPda = mockResult.daoPda;
-      treasuryMultisig = mockResult.treasuryMultisig;
-      mintMultisig = mockResult.mintMultisig;
+      treasuryVault = mockResult.treasuryVault;
+      mintVault = mockResult.mintVault;
       tx = mockResult.tx;
     } else {
       // ========== REAL MODE ==========
@@ -1056,11 +1095,26 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
 
       // Extract PDAs from result
       daoPda = result.daoPda.toBase58();
-      treasuryMultisig = result.treasuryMultisig.toBase58();
-      mintMultisig = result.mintMultisig.toBase58();
+
+      // CRITICAL: Derive vault PDAs from multisig PDAs
+      // The SDK returns multisig PDAs, but we need vault PDAs for:
+      // - Mint authority transfer (mint vault)
+      // - Treasury funds (treasury vault)
+      // Sending to multisig address instead of vault = permanently lost funds!
+      const treasuryMultisigPda = result.treasuryMultisig;
+      const mintMultisigPda = result.mintMultisig;
+      treasuryVault = deriveSquadsVaultPda(treasuryMultisigPda).toBase58();
+      mintVault = deriveSquadsVaultPda(mintMultisigPda).toBase58();
+
+      console.log(`[DAO] Created child DAO ${name}`);
+      console.log(`  Treasury Multisig: ${treasuryMultisigPda.toBase58()}`);
+      console.log(`  Treasury Vault:    ${treasuryVault}`);
+      console.log(`  Mint Multisig:     ${mintMultisigPda.toBase58()}`);
+      console.log(`  Mint Vault:        ${mintVault}`);
     }
 
     // Store in database
+    // Note: DB columns still named *_multisig for backward compat, but store vault PDAs
     const dao = await createDao(pool, {
       dao_pda: daoPda,
       dao_name: name,
@@ -1072,8 +1126,8 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
       pool_address: parentDao.pool_address, // Reference to parent's pool (for LP checks)
       pool_type: parentDao.pool_type,
       quote_mint: parentDao.quote_mint,
-      treasury_multisig: treasuryMultisig,
-      mint_auth_multisig: mintMultisig,
+      treasury_multisig: treasuryVault,      // Actually vault PDA
+      mint_auth_multisig: mintVault,         // Actually vault PDA
       treasury_cosigner,
       parent_dao_id: parentDao.id,
       dao_type: 'child',
@@ -1095,8 +1149,8 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
       res.json({
         dao_pda: daoPda,
         parent_dao_pda: parent_pda,
-        treasury_multisig: treasuryMultisig,
-        mint_multisig: mintMultisig,
+        treasury_vault: treasuryVault,  // Vault PDA (where funds should go)
+        mint_vault: mintVault,          // Vault PDA (mint authority target)
         admin_wallet: childAdminWallet,
         transaction: tx,
       });
@@ -1372,7 +1426,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       return res.status(400).json({ error: 'Options must be an array with 2-6 items' });
     }
 
-    // Validate length_secs
+    // Validate length_secs is a positive number (range validation after DAO lookup)
     if (typeof length_secs !== 'number' || length_secs <= 0) {
       return res.status(400).json({ error: 'length_secs must be a positive number' });
     }
@@ -1387,6 +1441,38 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
     if (!dao.moderator_pda) {
       return res.status(500).json({ error: 'DAO has no moderator PDA' });
+    }
+
+    // Validate proposal duration based on proposer role
+    // DAO owner: 1 minute to 7 days
+    // Others (whitelist/token threshold): 24 hours to 4 days
+    const isOwner = wallet === dao.owner_wallet;
+    const ONE_MINUTE = 60;
+    const ONE_HOUR = 3600;
+    const ONE_DAY = 24 * ONE_HOUR;
+
+    if (isOwner) {
+      // Owner: 1 minute to 7 days
+      const minDuration = ONE_MINUTE;
+      const maxDuration = 7 * ONE_DAY;
+      if (length_secs < minDuration || length_secs > maxDuration) {
+        return res.status(400).json({
+          error: 'Invalid proposal duration',
+          reason: `DAO owner can create proposals from 1 minute to 7 days (${minDuration}-${maxDuration} seconds)`,
+          provided: length_secs,
+        });
+      }
+    } else {
+      // Non-owner proposers: 24 hours to 4 days
+      const minDuration = ONE_DAY;
+      const maxDuration = 4 * ONE_DAY;
+      if (length_secs < minDuration || length_secs > maxDuration) {
+        return res.status(400).json({
+          error: 'Invalid proposal duration',
+          reason: `Proposers can create proposals from 24 hours to 4 days (${minDuration}-${maxDuration} seconds)`,
+          provided: length_secs,
+        });
+      }
     }
 
     const connection = getConnection();
@@ -1499,13 +1585,15 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     console.log(`Withdrawing ${withdrawalPercentage}% liquidity from ${poolType} pool ${poolAddress}`);
 
     // Step 1: Call withdraw/build
+    // Pass adminWallet to disambiguate when multiple DAOs share the same pool
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const withdrawBuildResponse = await fetch(`${baseUrl}/${poolType}/withdraw/build`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         withdrawalPercentage,
-        poolAddress
+        poolAddress,
+        adminWallet: dao.admin_wallet
       })
     });
 
@@ -1522,16 +1610,21 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       requestId: string;
       transaction?: string;  // DAMM single tx
       transactions?: string[];  // DLMM multi tx
-      withdrawn: { tokenA: string; tokenB: string };
-      transferred: { tokenA: string; tokenB: string };
-      redeposited: { tokenA: string; tokenB: string };
+      // DAMM uses estimatedAmounts
+      estimatedAmounts?: { tokenA: string; tokenB: string; liquidityDelta: string };
+      // DLMM uses withdrawn/transferred
+      withdrawn?: { tokenA: string; tokenB: string };
+      transferred?: { tokenA: string; tokenB: string };
+      redeposited?: { tokenA: string; tokenB: string };
       marketPrice?: string;
     };
 
+    // Normalize response format (DAMM uses estimatedAmounts, DLMM uses withdrawn/transferred)
+    const buildAmounts = withdrawBuildData.estimatedAmounts || withdrawBuildData.withdrawn || { tokenA: '0', tokenB: '0' };
+
     console.log('Withdrawal build response:', {
       requestId: withdrawBuildData.requestId,
-      withdrawn: withdrawBuildData.withdrawn,
-      transferred: withdrawBuildData.transferred,
+      amounts: buildAmounts,
     });
 
     // Step 2: Sign the transaction(s) with admin keypair
@@ -1584,17 +1677,23 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     const withdrawConfirmData = await withdrawConfirmResponse.json() as {
       signature?: string;
       signatures?: string[];
-      transferred: { tokenA: string; tokenB: string };
+      // DAMM uses estimatedAmounts
+      estimatedAmounts?: { tokenA: string; tokenB: string; liquidityDelta: string };
+      // DLMM uses transferred
+      transferred?: { tokenA: string; tokenB: string };
     };
+
+    // Normalize response format (DAMM uses estimatedAmounts, DLMM uses transferred)
+    const confirmAmounts = withdrawConfirmData.estimatedAmounts || withdrawConfirmData.transferred || buildAmounts;
 
     console.log('Withdrawal confirmed:', {
       signature: withdrawConfirmData.signature || withdrawConfirmData.signatures,
-      transferred: withdrawConfirmData.transferred,
+      amounts: confirmAmounts,
     });
 
-    // Use transferred amounts (what admin received after market-price swap) for AMM initial liquidity
-    const baseAmount = new BN(withdrawConfirmData.transferred.tokenA);
-    const quoteAmount = new BN(withdrawConfirmData.transferred.tokenB);
+    // Use withdrawn amounts for AMM initial liquidity
+    const baseAmount = new BN(confirmAmounts.tokenA);
+    const quoteAmount = new BN(confirmAmounts.tokenB);
 
     console.log(`Initial AMM liquidity: base=${baseAmount.toString()}, quote=${quoteAmount.toString()}`);
 
@@ -1661,37 +1760,144 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
       const moderatorPda = new PublicKey(dao.moderator_pda);
 
-      // Create proposal with the SDK using withdrawn liquidity amounts
-      // The SDK's createProposal handles: ALT creation -> initializeProposal -> addOption -> launchProposal
-      const result = await client.createProposal(
+      // Create proposal step by step, executing each transaction before building the next
+      // (SDK's createProposal tries to fetch accounts during build phase before they exist)
+      // warmupDuration must be <= length_secs (program constraint)
+      // Use min(300, length_secs / 2) to ensure it fits within proposal duration
+      const warmupDuration = Math.min(300, Math.floor(length_secs / 2));
+
+      const proposalParams = {
+        length: length_secs,
+        startingObservation,        // Calculated from liquidity ratio
+        maxObservationDelta,        // 5% of starting observation
+        warmupDuration,             // min(5 minutes, half of proposal length)
+        marketBias: 0,              // 0% (Pass Fail Gap)
+        fee: 50,                    // 0.5% fee
+      };
+
+      console.log(`Proposal params: length=${length_secs}s, warmup=${warmupDuration}s, obs=${startingObservation}, delta=${maxObservationDelta}`);
+
+      // Step 1: Initialize proposal
+      console.log('Step 1: Initializing proposal...');
+      const initResult = await client.initializeProposal(
         adminKeypair.publicKey,
         moderatorPda,
-        {
-          length: length_secs,
-          startingObservation,        // Calculated from liquidity ratio
-          maxObservationDelta,        // 5% of starting observation
-          warmupDuration: 300,        // 5 minutes
-          marketBias: 0,              // 0% (Pass Fail Gap)
-          fee: 50,                    // 0.5% fee
-        },
-        baseAmount,  // From liquidity withdrawal
-        quoteAmount, // From liquidity withdrawal
-        options.length,
+        proposalParams,
         metadataCid,
       );
 
-      // Execute the transactions in order: initialize -> addOptions -> launch
-      // The SDK returns separate builders that must be executed sequentially
-      await result.initializeBuilder.rpc();
+      console.log(`  Proposal PDA: ${initResult.proposalPda.toBase58()}`);
+      console.log(`  Proposal ID: ${initResult.proposalId}`);
+      console.log(`  Vault PDA: ${initResult.vaultPda.toBase58()}`);
 
-      for (const addOptionBuilder of result.addOptionBuilders) {
-        await addOptionBuilder.rpc();
+      // Check if proposal already exists (from a previous failed run)
+      const existingProposal = await provider.connection.getAccountInfo(initResult.proposalPda);
+      if (existingProposal) {
+        // Check the proposal state to see if it can still be launched
+        try {
+          const proposal = await client.fetchProposal(initResult.proposalPda);
+          const { state } = futarchy.parseProposalState(proposal.state);
+
+          if (state === futarchy.ProposalState.Pending || state === futarchy.ProposalState.Resolved) {
+            // Proposal already launched or resolved - can't reuse
+            throw new Error(
+              `Proposal ${initResult.proposalPda.toBase58()} already exists in '${state}' state. ` +
+              `This is a duplicate proposal attempt. The moderator counter may need to increment for a new proposal.`
+            );
+          }
+
+          // Proposal exists but is in Setup state - can proceed to launch
+          console.log(`  ⚠ Proposal already exists in Setup state, skipping initialization`);
+        } catch (fetchError: any) {
+          // If we can't fetch the proposal state, fail with the original error
+          if (fetchError.message?.includes('already exists')) {
+            throw fetchError;
+          }
+          console.log(`  ⚠ Proposal exists but could not fetch state, skipping initialization`);
+        }
+      } else {
+        try {
+          const initSig = await initResult.builder.rpc();
+          console.log(`  ✓ Initialize tx: ${initSig}`);
+        } catch (e) {
+          console.error('  ✗ Initialize failed:', e);
+          throw e;
+        }
       }
 
-      await result.launchBuilder.rpc();
+      // Step 2: Add additional options (beyond initial 2) if needed
+      for (let i = 2; i < options.length; i++) {
+        console.log(`Step 2.${i-1}: Adding option ${i}...`);
+        try {
+          const addResult = await client.addOption(adminKeypair.publicKey, initResult.proposalPda);
+          const optSig = await addResult.builder.rpc();
+          console.log(`  ✓ AddOption ${i} tx: ${optSig}`);
+        } catch (e) {
+          console.error(`  ✗ AddOption ${i} failed:`, e);
+          throw e;
+        }
+      }
 
-      proposalPda = result.proposalPda.toBase58();
-      proposalId = result.proposalId;
+      // Step 2.5: Wrap SOL to WSOL if quote mint is native SOL
+      // DAMM withdrawal sends native SOL, but launchProposal expects WSOL in ATA
+      const NATIVE_SOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
+      if (new PublicKey(dao.quote_mint).equals(NATIVE_SOL_MINT)) {
+        console.log('Step 2.5: Wrapping SOL to WSOL...');
+        const { createSyncNativeInstruction, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');
+        const { SystemProgram, Transaction, sendAndConfirmTransaction } = await import('@solana/web3.js');
+
+        const wsolAta = getAssociatedTokenAddressSync(NATIVE_SOL_MINT, adminKeypair.publicKey);
+        const wrapTx = new Transaction();
+
+        // Create WSOL ATA if needed
+        wrapTx.add(
+          createAssociatedTokenAccountIdempotentInstruction(
+            adminKeypair.publicKey,
+            wsolAta,
+            adminKeypair.publicKey,
+            NATIVE_SOL_MINT
+          )
+        );
+
+        // Transfer SOL to WSOL ATA (add buffer for rent)
+        const wrapAmount = quoteAmount.toNumber() + 10000; // Small buffer
+        wrapTx.add(
+          SystemProgram.transfer({
+            fromPubkey: adminKeypair.publicKey,
+            toPubkey: wsolAta,
+            lamports: wrapAmount,
+          })
+        );
+
+        // Sync native balance
+        wrapTx.add(createSyncNativeInstruction(wsolAta));
+
+        const { blockhash } = await provider.connection.getLatestBlockhash();
+        wrapTx.recentBlockhash = blockhash;
+        wrapTx.feePayer = adminKeypair.publicKey;
+
+        const wrapSig = await sendAndConfirmTransaction(provider.connection, wrapTx, [adminKeypair]);
+        console.log(`  ✓ Wrapped ${quoteAmount.toString()} lamports to WSOL: ${wrapSig}`);
+      }
+
+      // Step 3: Launch proposal (now vault exists so SDK can fetch it)
+      console.log('Step 3: Launching proposal...');
+      try {
+        const launchResult = await client.launchProposal(
+          adminKeypair.publicKey,
+          initResult.proposalPda,
+          baseAmount,
+          quoteAmount,
+        );
+        const launchSig = await launchResult.builder.rpc();
+        console.log(`  ✓ Launch tx: ${launchSig}`);
+      } catch (e) {
+        console.error('  ✗ Launch failed:', e);
+        throw e;
+      }
+
+      proposalPda = initResult.proposalPda.toBase58();
+      proposalId = initResult.proposalId;
     }
 
     console.log(`Created proposal ${proposalPda} for DAO ${dao_pda}`);
@@ -1741,6 +1947,133 @@ async function acquireProposalLock(proposalPda: string): Promise<() => void> {
     releaseLock!();
   };
 }
+
+// POST /dao/finalize-proposal - Finalize a proposal after it has ended
+// ============================================================================
+// This endpoint finalizes a proposal by reading the final TWAP values and
+// determining the winning outcome. Can only be called after the proposal has ended.
+// ============================================================================
+
+router.post('/finalize-proposal', async (req: Request, res: Response) => {
+  try {
+    const { proposal_pda } = req.body;
+
+    if (!proposal_pda) {
+      return res.status(400).json({ error: 'Missing required field: proposal_pda' });
+    }
+
+    if (!isValidTokenMintAddress(proposal_pda)) {
+      return res.status(400).json({ error: 'Invalid proposal_pda' });
+    }
+
+    const pool = getPool();
+    const connection = getConnection();
+
+    // Create a read-only provider first
+    const readProvider = new AnchorProvider(
+      connection,
+      { publicKey: PublicKey.default, signTransaction: async (tx: Transaction) => tx, signAllTransactions: async (txs: Transaction[]) => txs } as any,
+      { commitment: 'confirmed' }
+    );
+    const readClient = new futarchy.FutarchyClient(readProvider);
+
+    // Fetch proposal from on-chain
+    const proposalPubkey = new PublicKey(proposal_pda);
+    let proposal;
+    try {
+      proposal = await readClient.fetchProposal(proposalPubkey);
+    } catch (err) {
+      return res.status(404).json({
+        error: 'Proposal not found on-chain',
+        details: String(err)
+      });
+    }
+
+    // Check current state
+    const { state, winningIdx } = futarchy.parseProposalState(proposal.state);
+
+    if (state === futarchy.ProposalState.Resolved) {
+      return res.json({
+        message: 'Proposal already resolved',
+        proposal_pda,
+        winning_option: winningIdx,
+        state: 'resolved'
+      });
+    }
+
+    if (state !== futarchy.ProposalState.Pending) {
+      return res.status(400).json({
+        error: 'Proposal cannot be finalized',
+        state,
+        message: 'Proposal must be in Pending state to finalize'
+      });
+    }
+
+    // Check if proposal has ended
+    const now = Math.floor(Date.now() / 1000);
+    const createdAt = Number(proposal.createdAt?.toString() || 0);
+    const length = Number(proposal.config?.length || 0);
+    const endTime = createdAt + length;
+
+    if (now < endTime) {
+      const remaining = endTime - now;
+      return res.status(400).json({
+        error: 'Proposal has not ended yet',
+        ends_in_seconds: remaining,
+        end_time: endTime
+      });
+    }
+
+    // Get moderator PDA from proposal and lookup DAO
+    const moderatorPda = proposal.moderator.toBase58();
+    const dao = await getDaoByModeratorPda(pool, moderatorPda);
+    if (!dao) {
+      return res.status(404).json({
+        error: 'DAO not found for this proposal',
+        moderator_pda: moderatorPda
+      });
+    }
+
+    if (dao.admin_key_idx === undefined || dao.admin_key_idx === null) {
+      return res.status(500).json({ error: 'DAO has no admin key index' });
+    }
+
+    // Get admin keypair
+    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
+
+    // Create provider and client with admin keypair
+    const provider = createProvider(adminKeypair);
+    const client = new futarchy.FutarchyClient(provider);
+
+    console.log(`Finalizing proposal ${proposal_pda}`);
+    console.log(`  DAO: ${dao.dao_name} (${dao.dao_pda})`);
+
+    // Finalize the proposal
+    const { builder } = await client.finalizeProposal(
+      adminKeypair.publicKey,
+      proposalPubkey
+    );
+
+    const tx = await builder.rpc();
+    console.log(`Proposal finalized: ${tx}`);
+
+    // Fetch result
+    const finalProposal = await readClient.fetchProposal(proposalPubkey);
+    const finalState = futarchy.parseProposalState(finalProposal.state);
+
+    res.json({
+      message: 'Proposal finalized successfully',
+      proposal_pda,
+      signature: tx,
+      winning_option: finalState.winningIdx,
+      state: finalState.state
+    });
+
+  } catch (error) {
+    console.error('Error finalizing proposal:', error);
+    res.status(500).json({ error: 'Failed to finalize proposal', details: String(error) });
+  }
+});
 
 // POST /dao/redeem-liquidity - Redeem liquidity from resolved proposal
 // ============================================================================
@@ -1943,29 +2276,43 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
       });
     }
 
-    if (dao.admin_key_idx === undefined || dao.admin_key_idx === null) {
+    // For child DAOs, liquidity is managed by the parent DAO
+    // We need to use parent's pool, admin, and token for deposit-back
+    let liquidityDao = dao;
+    if (dao.dao_type === 'child' && dao.parent_dao_id) {
+      const parentDao = await getDaoById(pool, dao.parent_dao_id);
+      if (parentDao) {
+        console.log(`Child DAO detected, using parent DAO for liquidity: ${parentDao.dao_name}`);
+        liquidityDao = parentDao;
+      }
+    }
+
+    if (liquidityDao.admin_key_idx === undefined || liquidityDao.admin_key_idx === null) {
       return res.status(500).json({ error: 'DAO has no admin key index' });
     }
 
-    if (!dao.pool_address) {
+    if (!liquidityDao.pool_address) {
       return res.status(500).json({ error: 'DAO has no pool address' });
     }
 
-    if (!dao.token_mint) {
+    if (!liquidityDao.token_mint) {
       return res.status(500).json({ error: 'DAO has no token mint' });
     }
 
-    // Get admin keypair
-    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
+    // Get admin keypair (from parent if child DAO)
+    const adminKeypair = await fetchKeypair(liquidityDao.admin_key_idx);
     const adminPubkey = adminKeypair.publicKey;
 
     console.log(`Deposit-back for proposal ${proposal_pda}`);
     console.log(`  DAO: ${dao.dao_name} (${dao.dao_pda})`);
-    console.log(`  Pool: ${dao.pool_address} (${dao.pool_type})`);
+    if (liquidityDao !== dao) {
+      console.log(`  Parent DAO: ${liquidityDao.dao_name} (${liquidityDao.dao_pda})`);
+    }
+    console.log(`  Pool: ${liquidityDao.pool_address} (${liquidityDao.pool_type})`);
     console.log(`  Admin wallet: ${adminPubkey.toBase58()}`);
 
     // Check if admin wallet has meaningful token balance (>0.5% of supply)
-    const tokenMint = new PublicKey(dao.token_mint);
+    const tokenMint = new PublicKey(liquidityDao.token_mint);
     const mintInfo = await connection.getParsedAccountInfo(tokenMint);
     if (!mintInfo.value || !('parsed' in mintInfo.value.data)) {
       return res.status(500).json({ error: 'Failed to fetch token mint info' });
@@ -2005,131 +2352,31 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
       });
     }
 
-    // Get pool config to find LP owner address
-    const poolConfigUrl = `${req.protocol}://${req.get('host')}/${dao.pool_type}/pool/${dao.pool_address}/config`;
-    const poolConfigResponse = await fetch(poolConfigUrl);
-    if (!poolConfigResponse.ok) {
-      return res.status(500).json({
-        error: 'Failed to fetch pool config',
-        details: await poolConfigResponse.text()
-      });
-    }
-    const poolConfig = await poolConfigResponse.json() as { lpOwnerAddress: string; managerAddress: string };
-    const lpOwnerPubkey = new PublicKey(poolConfig.lpOwnerAddress);
+    // For DAOs, the LP owner is the admin wallet
+    // We use adminPubkey directly instead of fetching from pool config endpoint
+    // This ensures we use the correct LP owner when multiple DAOs share the same pool
+    const lpOwnerPubkey = adminPubkey;
 
-    console.log(`  LP Owner: ${lpOwnerPubkey.toBase58()}`);
+    console.log(`  LP Owner (admin): ${lpOwnerPubkey.toBase58()}`);
 
-    // Step 1: Transfer tokens from admin to LP owner
-    // Get quote mint from pool (SOL or other)
-    const quoteMint = new PublicKey(dao.quote_mint);
-    const isQuoteNativeSOL = quoteMint.equals(NATIVE_MINT);
-
-    // Reserve SOL for transaction fees + rent (0.1 SOL)
-    const SOL_RESERVE = BigInt(100_000_000);
-
-    // Get admin's quote balance (native SOL or SPL token)
-    let adminQuoteBalance = BigInt(0);
-    if (isQuoteNativeSOL) {
-      // For native SOL, get lamport balance minus reserve
-      const solBalance = await connection.getBalance(adminPubkey);
-      adminQuoteBalance = BigInt(solBalance) > SOL_RESERVE
-        ? BigInt(solBalance) - SOL_RESERVE
-        : BigInt(0);
-      console.log(`  Admin native SOL balance: ${solBalance} lamports (transferring ${adminQuoteBalance})`);
-    } else {
-      // For SPL tokens, get token account balance
-      const adminQuoteAta = await getAssociatedTokenAddress(quoteMint, adminPubkey);
-      try {
-        const quoteAccountInfo = await connection.getTokenAccountBalance(adminQuoteAta);
-        adminQuoteBalance = BigInt(quoteAccountInfo.value.amount);
-      } catch {
-        // Account doesn't exist
-      }
-    }
-
-    // Build transfer transactions
-    const { Transaction: SolanaTransaction } = await import('@solana/web3.js');
-    const { createTransferInstruction, createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');
-
-    const transferTx = new SolanaTransaction();
-    const { blockhash } = await connection.getLatestBlockhash();
-    transferTx.recentBlockhash = blockhash;
-    transferTx.feePayer = adminPubkey;
-
-    // Transfer base token (always SPL token)
-    if (adminBalance > BigInt(0)) {
-      const lpOwnerAta = await getAssociatedTokenAddress(tokenMint, lpOwnerPubkey);
-      transferTx.add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          adminPubkey,
-          lpOwnerAta,
-          lpOwnerPubkey,
-          tokenMint
-        )
-      );
-      transferTx.add(
-        createTransferInstruction(
-          adminAta,
-          lpOwnerAta,
-          adminPubkey,
-          adminBalance
-        )
-      );
-    }
-
-    // Transfer quote token (native SOL or SPL token)
-    if (adminQuoteBalance > BigInt(0)) {
-      if (isQuoteNativeSOL) {
-        // Native SOL - use SystemProgram.transfer
-        transferTx.add(
-          SystemProgram.transfer({
-            fromPubkey: adminPubkey,
-            toPubkey: lpOwnerPubkey,
-            lamports: adminQuoteBalance,
-          })
-        );
-        console.log(`  Adding native SOL transfer: ${adminQuoteBalance} lamports`);
-      } else {
-        // SPL token - use token transfer
-        const adminQuoteAta = await getAssociatedTokenAddress(quoteMint, adminPubkey);
-        const lpOwnerQuoteAta = await getAssociatedTokenAddress(quoteMint, lpOwnerPubkey);
-        transferTx.add(
-          createAssociatedTokenAccountIdempotentInstruction(
-            adminPubkey,
-            lpOwnerQuoteAta,
-            lpOwnerPubkey,
-            quoteMint
-          )
-        );
-        transferTx.add(
-          createTransferInstruction(
-            adminQuoteAta,
-            lpOwnerQuoteAta,
-            adminPubkey,
-            adminQuoteBalance
-          )
-        );
-      }
-    }
-
+    // For DAOs, LP owner = admin, so tokens are already in the right wallet after redemption
+    // No transfer step needed - skip directly to cleanup swap + deposit
     let transferSignature = '';
-    if (transferTx.instructions.length > 0) {
-      transferTx.sign(adminKeypair);
-      transferSignature = await connection.sendRawTransaction(transferTx.serialize());
-      await connection.confirmTransaction(transferSignature, 'confirmed');
-      console.log(`  Transfer to LP owner: ${transferSignature}`);
-    }
+    console.log(`  Skipping transfer step (LP owner = admin, tokens already in place)`);
 
     // Step 2: Call cleanup swap + deposit via internal endpoints
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const poolType = dao.pool_type;
+    const poolType = liquidityDao.pool_type;
 
     // Build cleanup swap
     let swapSignature = '';
     const swapBuildResponse = await fetch(`${baseUrl}/${poolType}/cleanup/swap/build`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ poolAddress: dao.pool_address })
+      body: JSON.stringify({
+        poolAddress: liquidityDao.pool_address,
+        adminWallet: liquidityDao.admin_wallet
+      })
     });
 
     if (swapBuildResponse.ok) {
@@ -2166,14 +2413,16 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
     }
 
     // Build deposit (0, 0 = cleanup mode - uses LP owner balances)
+    // Pass adminWallet to disambiguate when multiple DAOs share the same pool
     let depositSignature = '';
     const depositBuildResponse = await fetch(`${baseUrl}/${poolType}/deposit/build`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        poolAddress: dao.pool_address,
+        poolAddress: liquidityDao.pool_address,
         tokenAAmount: 0,
-        tokenBAmount: 0
+        tokenBAmount: 0,
+        adminWallet: liquidityDao.admin_wallet
       })
     });
 

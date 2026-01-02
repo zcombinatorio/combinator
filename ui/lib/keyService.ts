@@ -21,7 +21,10 @@ import bs58 from 'bs58';
 
 // Minimum SOL balance for a managed wallet to operate
 const MIN_WALLET_BALANCE_SOL = 0.05;
-const FUNDING_AMOUNT_SOL = 0.1;
+const FUNDING_AMOUNT_SOL = 0.125;
+
+// Minimum key index allowed for DAO operations (indices 0-8 are reserved)
+const MIN_KEY_INDEX = 9;
 
 interface KeyServiceResponse {
   idx: number;
@@ -33,6 +36,10 @@ interface KeyServiceResponse {
  * Fetch a keypair from the key management service by index
  */
 export async function fetchKeypair(idx: number): Promise<Keypair> {
+  if (idx < MIN_KEY_INDEX) {
+    throw new Error(`Key index ${idx} is reserved. Minimum allowed index is ${MIN_KEY_INDEX}.`);
+  }
+
   const keyServiceUrl = process.env.KEY_SERVICE_URL;
   if (!keyServiceUrl) {
     throw new Error('KEY_SERVICE_URL environment variable is not set');

@@ -31,6 +31,9 @@ import bs58 from 'bs58';
 import BN from 'bn.js';
 import { CpAmm, getTokenProgram } from '@meteora-ag/cp-amm-sdk';
 import rateLimit from 'express-rate-limit';
+import { getPool } from '../lib/db';
+import { getDaoByPoolAddress } from '../lib/db/daos';
+import { fetchKeypair } from '../lib/keyService';
 
 /**
  * DAMM Liquidity Routes
@@ -66,6 +69,7 @@ interface DammWithdrawData {
   estimatedTokenBAmount: string;
   liquidityDelta: string;
   withdrawalPercentage: number;
+  adminWallet?: string;  // For DAO disambiguation when multiple DAOs share same pool
   timestamp: number;
 }
 
@@ -92,6 +96,7 @@ interface DammDepositData {
   poolPrice: number; // tokenB per tokenA
   liquidityDelta: string;
   positionAddress: string;
+  adminWallet?: string;  // For DAO disambiguation when multiple DAOs share same pool
   timestamp: number;
 }
 
@@ -111,6 +116,7 @@ interface DammCleanupSwapData {
   swapOutputMint: string;
   swapExpectedOutputAmount: string;
   swapDirection: 'AtoB' | 'BtoA';
+  adminWallet?: string;  // For DAO disambiguation when multiple DAOs share same pool
   timestamp: number;
 }
 
@@ -148,26 +154,78 @@ async function acquireLiquidityLock(poolAddress: string): Promise<() => void> {
   };
 }
 
-// Pool address to ticker mapping (shared config)
+// Pool address to ticker mapping for legacy/production pools
+// New DAO-managed pools are read from the database dynamically
 const poolToTicker: Record<string, string> = {
   '2FCqTyvFcE4uXgRL1yh56riZ9vdjVgoP6yknZW3f8afX': 'OOGWAY',
   'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': 'SURF',
   'PS3rPSb49GnAkmh3tec1RQizgNSb1hUwPsYHGGuAy5r': 'SURFTEST',
 };
 
-// Whitelisted DAMM pools
+// Whitelisted DAMM pools (legacy pools only)
 const WHITELISTED_DAMM_POOLS = new Set(Object.keys(poolToTicker));
 
 // Restricted LP owner address - never allow cleanup swap or deposit using LP balances for this address
 const RESTRICTED_LP_OWNER = 'Hq7Xh37tT4sesD6wA4DphYfxeMJRhhFWS3KVUSSGjqzc';
 
 /**
- * Get the manager wallet address for a specific pool
- * Requires pool-specific MANAGER_WALLET_<TICKER> environment variable
+ * Pool configuration result from either legacy config or DAO database
+ */
+interface PoolConfig {
+  lpOwnerKeypair: Keypair;
+  managerWallet: string;
+  source: 'legacy' | 'dao';
+  daoName?: string;
+}
+
+/**
+ * Check if a pool is authorized and get its configuration
+ * First checks legacy whitelist (env vars), then checks DAO database
  *
  * @param poolAddress - The DAMM pool address
- * @returns Manager wallet public key string
- * @throws Error if pool not in whitelist or env var not configured
+ * @returns Pool configuration if authorized
+ * @throws Error if pool not authorized
+ */
+async function getPoolConfig(poolAddress: string, adminWallet?: string): Promise<PoolConfig> {
+  // First, check legacy whitelist
+  const ticker = poolToTicker[poolAddress];
+  if (ticker) {
+    const poolSpecificLpOwner = process.env[`LP_OWNER_PRIVATE_KEY_${ticker}`];
+    const poolSpecificManager = process.env[`MANAGER_WALLET_${ticker}`];
+
+    if (poolSpecificLpOwner && poolSpecificManager) {
+      console.log(`[DAMM] Using legacy config for ${ticker}`);
+      const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(poolSpecificLpOwner));
+      return {
+        lpOwnerKeypair,
+        managerWallet: poolSpecificManager,
+        source: 'legacy',
+      };
+    }
+  }
+
+  // Next, check DAO database - pass adminWallet to disambiguate when multiple DAOs share a pool
+  const pool = getPool();
+  const dao = await getDaoByPoolAddress(pool, poolAddress, adminWallet);
+
+  if (dao && dao.pool_type === 'damm') {
+    console.log(`[DAMM] Using DAO config for ${dao.dao_name} (pool: ${poolAddress}, admin: ${dao.admin_wallet})`);
+    // Get admin keypair from key service - this is the LP owner
+    const lpOwnerKeypair = await fetchKeypair(dao.admin_key_idx);
+    return {
+      lpOwnerKeypair,
+      managerWallet: dao.admin_wallet,  // Admin wallet is also the manager
+      source: 'dao',
+      daoName: dao.dao_name,
+    };
+  }
+
+  throw new Error(`Pool ${poolAddress} not authorized for liquidity operations`);
+}
+
+/**
+ * Get the manager wallet address for a specific pool (legacy function for backward compat)
+ * @deprecated Use getPoolConfig() instead
  */
 function getManagerWalletForPool(poolAddress: string): string {
   const ticker = poolToTicker[poolAddress];
@@ -186,12 +244,8 @@ function getManagerWalletForPool(poolAddress: string): string {
 }
 
 /**
- * Get the LP owner private key for a specific pool
- * Requires pool-specific LP_OWNER_PRIVATE_KEY_<TICKER> environment variable
- *
- * @param poolAddress - The DAMM pool address
- * @returns LP owner private key (base58 encoded)
- * @throws Error if pool not in whitelist or env var not configured
+ * Get the LP owner private key for a specific pool (legacy function for backward compat)
+ * @deprecated Use getPoolConfig() instead
  */
 function getLpOwnerPrivateKeyForPool(poolAddress: string): string {
   const ticker = poolToTicker[poolAddress];
@@ -239,6 +293,7 @@ setInterval(() => {
 /**
  * Returns the LP owner and manager wallet addresses for a given pool
  * Used by os-percent to know where to transfer tokens before cleanup
+ * Supports both legacy whitelisted pools and DAO-managed pools
  */
 router.get('/pool/:poolAddress/config', async (req: Request, res: Response) => {
   try {
@@ -254,34 +309,23 @@ router.get('/pool/:poolAddress/config', async (req: Request, res: Response) => {
       });
     }
 
-    // Validate pool is whitelisted
-    if (!WHITELISTED_DAMM_POOLS.has(poolAddress.toBase58())) {
+    // Get pool config (checks both legacy whitelist and DAO database)
+    let poolConfig: PoolConfig;
+    try {
+      poolConfig = await getPoolConfig(poolAddress.toBase58());
+    } catch (error) {
       return res.status(403).json({
         error: 'Pool not authorized for liquidity operations'
       });
     }
 
-    // Get LP owner and manager wallet for this pool
-    let lpOwnerPrivateKey: string;
-    let managerWallet: string;
-    try {
-      lpOwnerPrivateKey = getLpOwnerPrivateKeyForPool(poolAddress.toBase58());
-      managerWallet = getManagerWalletForPool(poolAddress.toBase58());
-    } catch (error) {
-      return res.status(500).json({
-        error: 'Server configuration incomplete',
-        details: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    // Derive LP owner public key from private key
-    const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(lpOwnerPrivateKey));
-
     return res.json({
       success: true,
       poolAddress: poolAddress.toBase58(),
-      lpOwnerAddress: lpOwnerKeypair.publicKey.toBase58(),
-      managerAddress: managerWallet
+      lpOwnerAddress: poolConfig.lpOwnerKeypair.publicKey.toBase58(),
+      managerAddress: poolConfig.managerWallet,
+      source: poolConfig.source,
+      daoName: poolConfig.daoName,
     });
 
   } catch (error) {
@@ -299,9 +343,9 @@ router.get('/pool/:poolAddress/config', async (req: Request, res: Response) => {
 
 router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: Response) => {
   try {
-    const { withdrawalPercentage, poolAddress: poolAddressInput } = req.body;
+    const { withdrawalPercentage, poolAddress: poolAddressInput, adminWallet } = req.body;
 
-    console.log('DAMM withdraw build request received:', { withdrawalPercentage, poolAddress: poolAddressInput });
+    console.log('DAMM withdraw build request received:', { withdrawalPercentage, poolAddress: poolAddressInput, adminWallet });
 
     // Validate required fields
     if (withdrawalPercentage === undefined || withdrawalPercentage === null) {
@@ -326,13 +370,6 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
       });
     }
 
-    // Validate pool is whitelisted
-    if (!WHITELISTED_DAMM_POOLS.has(poolAddress.toBase58())) {
-      return res.status(403).json({
-        error: 'Pool not authorized for liquidity operations'
-      });
-    }
-
     // Validate withdrawal percentage (maximum 50%)
     if (typeof withdrawalPercentage !== 'number' || withdrawalPercentage <= 0 || withdrawalPercentage > 50) {
       return res.status(400).json({
@@ -348,23 +385,21 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
       });
     }
 
-    // Get pool-specific LP owner and manager wallet
-    let LP_OWNER_PRIVATE_KEY: string;
-    let MANAGER_WALLET: string;
+    // Get pool config (checks both legacy whitelist and DAO database)
+    // Pass adminWallet to disambiguate when multiple DAOs share the same pool
+    let poolConfig: PoolConfig;
     try {
-      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(poolAddress.toBase58());
-      MANAGER_WALLET = getManagerWalletForPool(poolAddress.toBase58());
+      poolConfig = await getPoolConfig(poolAddress.toBase58(), adminWallet);
     } catch (error) {
-      return res.status(500).json({
-        error: 'Server configuration incomplete',
-        details: error instanceof Error ? error.message : String(error)
+      return res.status(403).json({
+        error: 'Pool not authorized for liquidity operations'
       });
     }
 
     // Initialize connection and keypairs
     const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwner = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const managerWallet = new PublicKey(MANAGER_WALLET);
+    const lpOwner = poolConfig.lpOwnerKeypair;
+    const managerWallet = new PublicKey(poolConfig.managerWallet);
     const isSameWallet = lpOwner.publicKey.equals(managerWallet);
 
     // Create CpAmm instance and get pool state
@@ -592,6 +627,7 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
     console.log(`  Request ID: ${requestId}`);
 
     // Store transaction data
+    // Include adminWallet to correctly identify the DAO in the confirm step
     withdrawRequests.set(requestId, {
       unsignedTransaction,
       unsignedTransactionHash,
@@ -605,6 +641,7 @@ router.post('/withdraw/build', dammLiquidityLimiter, async (req: Request, res: R
       estimatedTokenBAmount: withdrawQuote.outAmountB.toString(),
       liquidityDelta: liquidityDelta.toString(),
       withdrawalPercentage,
+      adminWallet,  // Store for confirm step to use correct DAO
       timestamp: Date.now()
     });
 
@@ -694,23 +731,21 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
       });
     }
 
-    // Get pool-specific LP owner and manager wallet
-    let LP_OWNER_PRIVATE_KEY: string;
-    let MANAGER_WALLET: string;
+    // Get pool config (checks both legacy whitelist and DAO database)
+    // Use stored adminWallet to get correct DAO when multiple DAOs share the same pool
+    let poolConfig: PoolConfig;
     try {
-      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(withdrawData.poolAddress);
-      MANAGER_WALLET = getManagerWalletForPool(withdrawData.poolAddress);
+      poolConfig = await getPoolConfig(withdrawData.poolAddress, withdrawData.adminWallet);
     } catch (error) {
-      return res.status(500).json({
-        error: 'Server configuration incomplete',
-        details: error instanceof Error ? error.message : String(error)
+      return res.status(403).json({
+        error: 'Pool not authorized for liquidity operations'
       });
     }
 
     // Initialize connection
     const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const managerWalletPubKey = new PublicKey(MANAGER_WALLET);
+    const lpOwnerKeypair = poolConfig.lpOwnerKeypair;
+    const managerWalletPubKey = new PublicKey(poolConfig.managerWallet);
 
     // Deserialize transaction
     let transaction: Transaction;
@@ -860,9 +895,9 @@ router.post('/withdraw/confirm', dammLiquidityLimiter, async (req: Request, res:
 
 router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Response) => {
   try {
-    const { tokenAAmount, tokenBAmount, poolAddress: poolAddressInput } = req.body;
+    const { tokenAAmount, tokenBAmount, poolAddress: poolAddressInput, adminWallet } = req.body;
 
-    console.log('DAMM deposit build request received:', { tokenAAmount, tokenBAmount, poolAddress: poolAddressInput });
+    console.log('DAMM deposit build request received:', { tokenAAmount, tokenBAmount, poolAddress: poolAddressInput, adminWallet });
 
     // Validate poolAddress is a valid Solana public key
     if (!poolAddressInput) {
@@ -877,13 +912,6 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
     } catch (error) {
       return res.status(400).json({
         error: 'Invalid poolAddress: must be a valid Solana public key'
-      });
-    }
-
-    // Validate pool is whitelisted
-    if (!WHITELISTED_DAMM_POOLS.has(poolAddress.toBase58())) {
-      return res.status(403).json({
-        error: 'Pool not authorized for liquidity operations'
       });
     }
 
@@ -921,23 +949,21 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
       });
     }
 
-    // Get pool-specific LP owner and manager wallet
-    let LP_OWNER_PRIVATE_KEY: string;
-    let MANAGER_WALLET: string;
+    // Get pool config (checks both legacy whitelist and DAO database)
+    // Pass adminWallet to disambiguate when multiple DAOs share the same pool
+    let poolConfig: PoolConfig;
     try {
-      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(poolAddress.toBase58());
-      MANAGER_WALLET = getManagerWalletForPool(poolAddress.toBase58());
+      poolConfig = await getPoolConfig(poolAddress.toBase58(), adminWallet);
     } catch (error) {
-      return res.status(500).json({
-        error: 'Server configuration incomplete',
-        details: error instanceof Error ? error.message : String(error)
+      return res.status(403).json({
+        error: 'Pool not authorized for liquidity operations'
       });
     }
 
     // Initialize connection and keypairs
     const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwner = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const managerWallet = new PublicKey(MANAGER_WALLET);
+    const lpOwner = poolConfig.lpOwnerKeypair;
+    const managerWallet = new PublicKey(poolConfig.managerWallet);
     const isSameWallet = lpOwner.publicKey.equals(managerWallet);
 
     // Create CpAmm instance and get pool state
@@ -988,8 +1014,8 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
       try {
         if (isTokenBNativeSOL) {
           const solBalance = await connection.getBalance(lpOwner.publicKey);
-          // Reserve SOL for transaction fees + rent for new accounts (0.1 SOL)
-          const reserveForFees = 100_000_000;
+          // Reserve SOL for transaction fees + rent for new accounts (0.125 SOL)
+          const reserveForFees = 125_000_000;
           tokenBAmountRaw = new BN(Math.max(0, solBalance - reserveForFees));
         } else {
           const tokenBAccount = await connection.getTokenAccountBalance(lpOwnerTokenBAta);
@@ -1234,6 +1260,7 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
     const hasLeftover = !leftoverTokenAAmount.isZero() || !leftoverTokenBAmount.isZero();
 
     // Store transaction data
+    // Store request data including adminWallet for confirm step
     depositRequests.set(requestId, {
       unsignedTransaction,
       unsignedTransactionHash,
@@ -1253,6 +1280,7 @@ router.post('/deposit/build', dammLiquidityLimiter, async (req: Request, res: Re
       poolPrice,
       liquidityDelta: liquidityDelta.toString(),
       positionAddress: position.toBase58(),
+      adminWallet,  // Store for confirm step to use correct DAO
       timestamp: Date.now()
     });
 
@@ -1357,23 +1385,21 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
       });
     }
 
-    // Get pool-specific LP owner and manager wallet
-    let LP_OWNER_PRIVATE_KEY: string;
-    let MANAGER_WALLET: string;
+    // Get pool config (checks both legacy whitelist and DAO database)
+    // Use stored adminWallet to get correct DAO when multiple DAOs share the same pool
+    let poolConfig: PoolConfig;
     try {
-      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(depositData.poolAddress);
-      MANAGER_WALLET = getManagerWalletForPool(depositData.poolAddress);
+      poolConfig = await getPoolConfig(depositData.poolAddress, depositData.adminWallet);
     } catch (error) {
-      return res.status(500).json({
-        error: 'Server configuration incomplete',
-        details: error instanceof Error ? error.message : String(error)
+      return res.status(403).json({
+        error: 'Pool not authorized for liquidity operations'
       });
     }
 
     // Initialize connection
     const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const managerWalletPubKey = new PublicKey(MANAGER_WALLET);
+    const lpOwnerKeypair = poolConfig.lpOwnerKeypair;
+    const managerWalletPubKey = new PublicKey(poolConfig.managerWallet);
 
     // Deserialize transaction
     let transaction: Transaction;
@@ -1551,9 +1577,9 @@ router.post('/deposit/confirm', dammLiquidityLimiter, async (req: Request, res: 
  */
 router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, res: Response) => {
   try {
-    const { poolAddress: poolAddressInput } = req.body;
+    const { poolAddress: poolAddressInput, adminWallet } = req.body;
 
-    console.log('DAMM cleanup swap build request received:', { poolAddress: poolAddressInput });
+    console.log('DAMM cleanup swap build request received:', { poolAddress: poolAddressInput, adminWallet });
 
     // Validate poolAddress
     if (!poolAddressInput) {
@@ -1571,13 +1597,6 @@ router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, re
       });
     }
 
-    // Validate pool is whitelisted
-    if (!WHITELISTED_DAMM_POOLS.has(poolAddress.toBase58())) {
-      return res.status(403).json({
-        error: 'Pool not authorized for liquidity operations'
-      });
-    }
-
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
     const JUP_API_KEY = process.env.JUP_API_KEY;
@@ -1587,23 +1606,21 @@ router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, re
       });
     }
 
-    // Get pool-specific LP owner and manager wallet
-    let LP_OWNER_PRIVATE_KEY: string;
-    let MANAGER_WALLET: string;
+    // Get pool config (checks both legacy whitelist and DAO database)
+    // Pass adminWallet to disambiguate when multiple DAOs share the same pool
+    let poolConfig: PoolConfig;
     try {
-      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(poolAddress.toBase58());
-      MANAGER_WALLET = getManagerWalletForPool(poolAddress.toBase58());
+      poolConfig = await getPoolConfig(poolAddress.toBase58(), adminWallet);
     } catch (error) {
-      return res.status(500).json({
-        error: 'Server configuration incomplete',
-        details: error instanceof Error ? error.message : String(error)
+      return res.status(403).json({
+        error: 'Pool not authorized for liquidity operations'
       });
     }
 
     // Initialize connection and keypairs
     const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwner = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const manager = new PublicKey(MANAGER_WALLET);
+    const lpOwner = poolConfig.lpOwnerKeypair;
+    const manager = new PublicKey(poolConfig.managerWallet);
 
     // SAFETY CHECK: Prevent cleanup swap for restricted LP owner address
     if (lpOwner.publicKey.toBase58() === RESTRICTED_LP_OWNER) {
@@ -1647,8 +1664,8 @@ router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, re
       if (isTokenBNativeSOL) {
         // For native SOL, check the account balance
         const solBalance = await connection.getBalance(lpOwner.publicKey);
-        // Reserve SOL for transaction fees + rent for new accounts (0.1 SOL)
-        const reserveForFees = 100_000_000; // 0.1 SOL in lamports
+        // Reserve SOL for transaction fees + rent for new accounts (0.125 SOL)
+        const reserveForFees = 125_000_000; // 0.125 SOL in lamports
         tokenBBalance = new BN(Math.max(0, solBalance - reserveForFees));
       } else {
         const tokenBAccount = await connection.getTokenAccountBalance(lpOwnerTokenBAta);
@@ -1887,7 +1904,7 @@ router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, re
     console.log(`  Swap source: ${swapSource}`);
     console.log(`  Request ID: ${requestId}`);
 
-    // Store request data
+    // Store request data including adminWallet for confirm step
     cleanupSwapRequests.set(requestId, {
       unsignedTransaction: unsignedSwapTx,
       unsignedTransactionHash: swapTxHash,
@@ -1903,6 +1920,7 @@ router.post('/cleanup/swap/build', dammLiquidityLimiter, async (req: Request, re
       swapOutputMint: swapOutputMint.toBase58(),
       swapExpectedOutputAmount: expectedOutputAmount,
       swapDirection,
+      adminWallet,  // Store for confirm step to use correct DAO
       timestamp: Date.now()
     });
 
@@ -1995,21 +2013,22 @@ router.post('/cleanup/swap/confirm', dammLiquidityLimiter, async (req: Request, 
 
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
-    let LP_OWNER_PRIVATE_KEY: string;
 
+    // Get pool config (checks both legacy whitelist and DAO database)
+    // Use stored adminWallet to get correct DAO when multiple DAOs share the same pool
+    let poolConfig: PoolConfig;
     try {
-      LP_OWNER_PRIVATE_KEY = getLpOwnerPrivateKeyForPool(requestData.poolAddress);
+      poolConfig = await getPoolConfig(requestData.poolAddress, requestData.adminWallet);
     } catch (error) {
-      return res.status(500).json({
-        error: 'Server configuration incomplete',
-        details: error instanceof Error ? error.message : String(error)
+      return res.status(403).json({
+        error: 'Pool not authorized for liquidity operations'
       });
     }
 
     // Initialize connection
     const connection = new Connection(RPC_URL!, 'confirmed');
-    const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(LP_OWNER_PRIVATE_KEY));
-    const managerWalletPubKey = new PublicKey(requestData.managerAddress);
+    const lpOwnerKeypair = poolConfig.lpOwnerKeypair;
+    const managerWalletPubKey = new PublicKey(poolConfig.managerWallet);
 
     // Deserialize transaction
     let transaction: Transaction;

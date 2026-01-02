@@ -1,304 +1,101 @@
 /**
- * Transfer a Meteora DAMM LP position NFT to a new owner
- *
- * IMPORTANT: This script ONLY works for DAMM (CP-AMM) positions!
- * DLMM positions CANNOT be transferred - they are tied to the wallet that created them.
- * For DLMM, you must: withdraw liquidity → close position → create new position with new owner.
- *
- * Usage:
- *   1. Update the configuration below (POOL_ADDRESS, NEW_OWNER)
- *   2. Set CURRENT_LP_OWNER_PRIVATE_KEY env var (base58 encoded)
- *   3. Run: pnpm tsx scripts/transfer-lp-position.ts
- *
- * Note: DAMM positions are represented as NFTs using Token-2022.
- * Transferring the NFT transfers ownership of the position.
+ * Transfer LP position from old DAO admin to new DAO admin
  */
 import 'dotenv/config';
-import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import {
-  getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
   createTransferInstruction,
-  getAccount,
-  TokenAccountNotFoundError,
+  getAssociatedTokenAddressSync,
+  TOKEN_2022_PROGRAM_ID
 } from '@solana/spl-token';
-import bs58 from 'bs58';
-import { CpAmm } from '@meteora-ag/cp-amm-sdk';
+import { fetchKeypair } from '../lib/keyService';
+import { getPool } from '../lib/db';
+import { getDaoByPda } from '../lib/db/daos';
 
-// ============================================================================
-// CONFIGURATION - Update these values before running
-// ============================================================================
+const OLD_DAO_PDA = process.env.OLD_DAO_PDA || 'CfsgE5ZLczDLUnBhkwKaNCUQtukhygKAwPXMEKUrEgAL';
+const NEW_DAO_PDA = process.env.NEW_DAO_PDA || 'RCdAasUjKZRwLu5AJXQK6Hj8AudCxT9hGyqi5qr3a6f';
 
-// DAMM pool address to find the position in
-const POOL_ADDRESS = 'PS3rPSb49GnAkmh3tec1RQizgNSb1hUwPsYHGGuAy5r'; // SURFTEST DAMM
-
-// The new owner's public key
-const NEW_OWNER = 'ESMiG5ppoVMtYq3EG8aKx3XzEtKPfiGQuAx2S4jhw3zf';
-
-// Skip confirmation delay (set to true for testing)
-const SKIP_DELAY = true;
-
-// ============================================================================
-
-// Token-2022 program ID (DAMM v2 uses this for position NFTs)
-const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
-
-/**
- * Find token account for a mint owned by a specific wallet.
- * Checks ATA first, then searches all token accounts.
- * Works with both Token and Token-2022 programs.
- */
-async function findTokenAccount(
-  connection: Connection,
-  mint: PublicKey,
-  owner: PublicKey,
-  tokenProgramId: PublicKey
-): Promise<PublicKey> {
-  // Try ATA first
-  const ata = await getAssociatedTokenAddress(mint, owner, false, tokenProgramId);
-  try {
-    const ataAccount = await getAccount(connection, ata, 'confirmed', tokenProgramId);
-    if (ataAccount.amount > BigInt(0)) {
-      return ata;
-    }
-  } catch (e) {
-    if (!(e instanceof TokenAccountNotFoundError)) {
-      throw e;
-    }
-  }
-
-  // Search all token accounts for owner under this program
-  const accounts = await connection.getParsedTokenAccountsByOwner(
-    owner,
-    { programId: tokenProgramId },
-    'confirmed'
-  );
-
-  for (const { pubkey, account } of accounts.value) {
-    const data = account.data.parsed.info;
-    if (data.mint === mint.toBase58() && BigInt(data.tokenAmount.amount) > BigInt(0)) {
-      return pubkey;
-    }
-  }
-
-  throw new Error(`No token account found for mint ${mint.toBase58()} owned by ${owner.toBase58()}`);
-}
-
-async function transferPosition() {
-  const poolAddressStr = POOL_ADDRESS;
-  const newOwnerAddress = NEW_OWNER;
-
-  // Validate environment
+async function main() {
   const RPC_URL = process.env.RPC_URL;
-  const CURRENT_LP_OWNER_PRIVATE_KEY = process.env.CURRENT_LP_OWNER_PRIVATE_KEY;
-
-  if (!RPC_URL) {
-    console.error('RPC_URL environment variable is required');
-    process.exit(1);
-  }
-
-  if (!CURRENT_LP_OWNER_PRIVATE_KEY) {
-    console.error('CURRENT_LP_OWNER_PRIVATE_KEY environment variable is required');
-    process.exit(1);
-  }
-
-  // Parse keys
-  let poolAddress: PublicKey;
-  let newOwner: PublicKey;
-  let currentOwner: Keypair;
-
-  try {
-    poolAddress = new PublicKey(poolAddressStr);
-  } catch {
-    console.error('Invalid pool address:', poolAddressStr);
-    process.exit(1);
-  }
-
-  try {
-    newOwner = new PublicKey(newOwnerAddress);
-  } catch {
-    console.error('Invalid new owner address:', newOwnerAddress);
-    process.exit(1);
-  }
-
-  try {
-    currentOwner = Keypair.fromSecretKey(bs58.decode(CURRENT_LP_OWNER_PRIVATE_KEY));
-  } catch {
-    console.error('Invalid CURRENT_LP_OWNER_PRIVATE_KEY');
-    process.exit(1);
-  }
-
-  console.log('=== Meteora DAMM LP Position Transfer ===');
-  console.log(`Pool: ${poolAddress.toBase58()}`);
-  console.log(`Current Owner: ${currentOwner.publicKey.toBase58()}`);
-  console.log(`New Owner: ${newOwner.toBase58()}`);
-  console.log('');
-
-  // Prevent accidental self-transfer
-  if (currentOwner.publicKey.equals(newOwner)) {
-    console.error('Error: Current owner and new owner are the same');
-    process.exit(1);
-  }
+  if (!RPC_URL) throw new Error('RPC_URL required');
 
   const connection = new Connection(RPC_URL, 'confirmed');
+  const pool = getPool();
 
-  try {
-    // Use CpAmm SDK to get position info
-    console.log('Fetching DAMM position...');
-    const cpAmm = new CpAmm(connection);
-    const userPositions = await cpAmm.getUserPositionByPool(poolAddress, currentOwner.publicKey);
+  console.log('=== Transfer LP Position ===');
 
-    if (userPositions.length === 0) {
-      console.error('Error: No DAMM positions found for current owner in this pool');
-      process.exit(1);
-    }
+  const oldDao = await getDaoByPda(pool, OLD_DAO_PDA);
+  if (!oldDao) throw new Error('Old DAO not found');
 
-    const { position, positionNftAccount } = userPositions[0];
+  const newDao = await getDaoByPda(pool, NEW_DAO_PDA);
+  if (!newDao) throw new Error('New DAO not found');
 
-    // Get the NFT mint from the position's token account
-    // Try Token-2022 first (DAMM v2 uses this), fallback to standard Token
-    let positionNftMint: PublicKey;
-    let tokenProgramId: PublicKey;
-    let sourceTokenAccount: PublicKey;
+  console.log('Old DAO:', oldDao.dao_name, '- Admin:', oldDao.admin_wallet, '(key idx:', oldDao.admin_key_idx, ')');
+  console.log('New DAO:', newDao.dao_name, '- Admin:', newDao.admin_wallet, '(key idx:', newDao.admin_key_idx, ')');
 
-    try {
-      // Try Token-2022 first
-      const tokenAccountInfo = await getAccount(connection, positionNftAccount, 'confirmed', TOKEN_2022_PROGRAM_ID);
-      positionNftMint = tokenAccountInfo.mint;
-      tokenProgramId = TOKEN_2022_PROGRAM_ID;
-      sourceTokenAccount = positionNftAccount;
-      console.log('Position uses Token-2022 program');
-    } catch {
-      // Fallback: try to find the token account manually
-      console.log('Searching for position NFT token account...');
+  // Fetch keypair using the key index from the DAO record
+  const oldAdminKeypair = await fetchKeypair(oldDao.admin_key_idx);
+  console.log('✓ Fetched old admin keypair');
 
-      // Get position account to find the NFT mint
-      const positionAccountInfo = await connection.getAccountInfo(position);
-      if (!positionAccountInfo) {
-        throw new Error('Could not fetch position account');
-      }
+  const cpAmm = new CpAmm(connection);
+  const poolPubkey = new PublicKey(oldDao.pool_address);
+  const oldAdmin = new PublicKey(oldDao.admin_wallet);
+  const newAdmin = new PublicKey(newDao.admin_wallet);
 
-      // Position structure: discriminator(8) + pool(32) + positionNftMint(32) + ...
-      // The NFT mint should be at offset 40 (after pool address)
-      positionNftMint = new PublicKey(positionAccountInfo.data.slice(40, 72));
+  console.log('\nFetching LP positions...');
+  const positions = await cpAmm.getUserPositionByPool(poolPubkey, oldAdmin);
 
-      // Try Token-2022 first, then standard Token
-      try {
-        sourceTokenAccount = await findTokenAccount(connection, positionNftMint, currentOwner.publicKey, TOKEN_2022_PROGRAM_ID);
-        tokenProgramId = TOKEN_2022_PROGRAM_ID;
-      } catch {
-        const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
-        sourceTokenAccount = await findTokenAccount(connection, positionNftMint, currentOwner.publicKey, TOKEN_PROGRAM_ID);
-        tokenProgramId = TOKEN_PROGRAM_ID;
-      }
-    }
-
-    console.log(`Position Address: ${position.toBase58()}`);
-    console.log(`Position NFT Mint: ${positionNftMint.toBase58()}`);
-    console.log(`Source Token Account: ${sourceTokenAccount.toBase58()}`);
-    console.log(`Token Program: ${tokenProgramId.toBase58()}`);
-
-    // Verify the current owner has the NFT
-    const tokenAccount = await getAccount(connection, sourceTokenAccount, 'confirmed', tokenProgramId);
-    if (tokenAccount.amount !== BigInt(1)) {
-      console.error('Error: Token account does not contain exactly 1 NFT');
-      console.error('Amount:', tokenAccount.amount.toString());
-      process.exit(1);
-    }
-
-    console.log('');
-    console.log('Position NFT verified in current owner wallet ✓');
-
-    // Safety warning
-    if (!SKIP_DELAY) {
-      console.log('');
-      console.log('⚠️  WARNING: This will permanently transfer the position NFT.');
-      console.log('Press Ctrl+C to abort, or wait 5 seconds to continue...');
-      console.log('');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-
-    // Get or create the new owner's token account (use ATA)
-    const newOwnerAta = await getAssociatedTokenAddress(
-      positionNftMint,
-      newOwner,
-      false,
-      tokenProgramId
-    );
-
-    console.log('New owner ATA:', newOwnerAta.toBase58());
-
-    // Build transaction
-    const transaction = new Transaction();
-
-    // Check if new owner ATA exists
-    const newOwnerAtaInfo = await connection.getAccountInfo(newOwnerAta);
-    if (!newOwnerAtaInfo) {
-      console.log('Creating ATA for new owner...');
-      transaction.add(
-        createAssociatedTokenAccountInstruction(
-          currentOwner.publicKey, // payer
-          newOwnerAta,
-          newOwner,
-          positionNftMint,
-          tokenProgramId
-        )
-      );
-    }
-
-    // Add transfer instruction
-    transaction.add(
-      createTransferInstruction(
-        sourceTokenAccount,
-        newOwnerAta,
-        currentOwner.publicKey,
-        1, // NFT amount is always 1
-        [],
-        tokenProgramId
-      )
-    );
-
-    // Set transaction properties
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-    transaction.recentBlockhash = blockhash;
-    transaction.feePayer = currentOwner.publicKey;
-
-    // Sign and send
-    console.log('Sending transaction...');
-    transaction.sign(currentOwner);
-
-    const signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-    });
-
-    console.log('Transaction sent:', signature);
-    console.log('Waiting for confirmation...');
-
-    await connection.confirmTransaction({
-      signature,
-      blockhash,
-      lastValidBlockHeight,
-    });
-
-    console.log('');
-    console.log('=== Transfer Complete ===');
-    console.log(`Signature: ${signature}`);
-    console.log(`Solscan: https://solscan.io/tx/${signature}`);
-    console.log('');
-    console.log(`Position: ${position.toBase58()}`);
-    console.log(`  From: ${currentOwner.publicKey.toBase58()}`);
-    console.log(`  To:   ${newOwner.toBase58()}`);
-
-  } catch (error) {
-    console.error('Error transferring position:', error);
-    process.exit(1);
+  if (positions.length === 0) {
+    console.log('No LP positions found for old admin');
+    return;
   }
+
+  console.log('Found', positions.length, 'position(s)');
+
+  for (const pos of positions) {
+    const nftMint = pos.positionState.nftMint;
+    const liquidity = pos.positionState.unlockedLiquidity;
+    
+    console.log('\nPosition:', nftMint.toBase58());
+    console.log('  Liquidity:', liquidity.toString());
+
+    if (liquidity.isZero()) {
+      console.log('  Skipping - no liquidity');
+      continue;
+    }
+
+    // Use Token-2022 for position NFTs
+    const oldAdminAta = getAssociatedTokenAddressSync(nftMint, oldAdmin, false, TOKEN_2022_PROGRAM_ID);
+    const newAdminAta = getAssociatedTokenAddressSync(nftMint, newAdmin, false, TOKEN_2022_PROGRAM_ID);
+
+    const tx = new Transaction();
+
+    const ataInfo = await connection.getAccountInfo(newAdminAta);
+    if (!ataInfo) {
+      console.log('  Creating ATA for new admin...');
+      tx.add(createAssociatedTokenAccountInstruction(
+        oldAdmin, newAdminAta, newAdmin, nftMint, TOKEN_2022_PROGRAM_ID
+      ));
+    }
+
+    tx.add(createTransferInstruction(oldAdminAta, newAdminAta, oldAdmin, 1, [], TOKEN_2022_PROGRAM_ID));
+
+    const { blockhash } = await connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = oldAdmin;
+    tx.sign(oldAdminKeypair);
+
+    const sig = await connection.sendRawTransaction(tx.serialize());
+    await connection.confirmTransaction(sig, 'confirmed');
+    console.log('  Transferred! Signature:', sig);
+  }
+
+  console.log('\n=== Transfer Complete ===');
+
+  const newPositions = await cpAmm.getUserPositionByPool(poolPubkey, newAdmin);
+  console.log('New admin now has', newPositions.length, 'position(s)');
 }
 
-// Run if called directly
-if (require.main === module) {
-  transferPosition();
-}
-
-export { transferPosition };
+main().catch(console.error);
