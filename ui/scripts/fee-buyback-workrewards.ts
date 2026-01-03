@@ -9,6 +9,7 @@
  * Usage: npx tsx fee-buyback-workrewards.ts
  */
 
+import 'dotenv/config';
 import {
   Connection,
   Keypair,
@@ -285,7 +286,8 @@ async function claimFeesFromPool(
     transaction.partialSign(wallet);
 
     // Step 3: Serialize the signed transaction (base58 for API)
-    const signedTxBase58 = bs58.encode(transaction.serialize());
+    // Use requireAllSignatures: false because the API server will add additional signatures
+    const signedTxBase58 = bs58.encode(transaction.serialize({ requireAllSignatures: false }));
 
     // Step 4: Submit to the confirm endpoint
     const confirmResponse = await confirmFeeClaim(
