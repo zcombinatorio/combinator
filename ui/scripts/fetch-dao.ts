@@ -60,8 +60,8 @@ interface Dao {
   pool_address: string;
   pool_type: 'damm' | 'dlmm';
   quote_mint: string;
-  treasury_multisig: string;
-  mint_auth_multisig: string;
+  treasury_vault: string;
+  mint_vault: string;
   treasury_cosigner: string;
   parent_dao_id?: number;
   dao_type: 'parent' | 'child';
@@ -109,8 +109,8 @@ function formatDao(dao: Dao, indent = ''): void {
   console.log(`${indent}  Token mint: ${dao.token_mint}`);
   console.log(`${indent}  Pool: ${dao.pool_address} (${dao.pool_type})`);
   console.log(`${indent}  Quote mint: ${dao.quote_mint}`);
-  console.log(`${indent}  Treasury multisig: ${dao.treasury_multisig}`);
-  console.log(`${indent}  Mint multisig: ${dao.mint_auth_multisig}`);
+  console.log(`${indent}  Treasury vault: ${dao.treasury_vault}`);
+  console.log(`${indent}  Mint vault: ${dao.mint_vault}`);
   console.log(`${indent}  Treasury cosigner: ${dao.treasury_cosigner}`);
   if (dao.moderator_pda) {
     console.log(`${indent}  Moderator PDA: ${dao.moderator_pda}`);

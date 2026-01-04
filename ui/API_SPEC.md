@@ -107,8 +107,8 @@ Lists all DAOs registered with this API. Used by clients to index supported DAOs
       "pool_address": "PoolAddress...",
       "pool_type": "damm",
       "quote_mint": "QuoteMintAddress...",
-      "treasury_multisig": "TreasuryMultisigAddress...",
-      "mint_auth_multisig": "MintMultisigAddress...",
+      "treasury_vault": "TreasuryVaultAddress...",
+      "mint_vault": "MintVaultAddress...",
       "treasury_cosigner": "CosignerAddress...",
       "dao_type": "parent",
       "created_at": "2025-01-01T00:00:00.000Z",
@@ -141,8 +141,8 @@ Gets detailed information about a specific DAO.
   "pool_address": "PoolAddress...",
   "pool_type": "damm",
   "quote_mint": "QuoteMintAddress...",
-  "treasury_multisig": "TreasuryMultisigAddress...",
-  "mint_auth_multisig": "MintMultisigAddress...",
+  "treasury_vault": "TreasuryVaultAddress...",
+  "mint_vault": "MintVaultAddress...",
   "treasury_cosigner": "CosignerAddress...",
   "dao_type": "parent",
   "created_at": "2025-01-01T00:00:00.000Z",
@@ -200,8 +200,8 @@ Creates a new parent DAO with its own liquidity pool, treasury, and mint authori
 |-------|------|-------------|
 | `dao_pda` | `string` | The DAO's on-chain address |
 | `moderator_pda` | `string` | The moderator account for proposals |
-| `treasury_multisig` | `string` | 2-of-3 treasury multisig (you + 2 platform keys) |
-| `mint_multisig` | `string` | 2-of-2 mint authority multisig |
+| `treasury_vault` | `string` | Treasury vault address (Squads vault PDA) |
+| `mint_vault` | `string` | Mint authority vault address (Squads vault PDA) |
 | `admin_wallet` | `string` | Wallet that manages the DAO and spot pool liquidity |
 | `pool_type` | `string` | Derived pool type: `"damm"` or `"dlmm"` |
 | `quote_mint` | `string` | Derived quote token mint |
@@ -230,8 +230,8 @@ curl -X POST https://api.zcombinator.io/dao/parent \
 {
   "dao_pda": "DaoPdaAddress...",
   "moderator_pda": "ModeratorPdaAddress...",
-  "treasury_multisig": "TreasuryMultisigAddress...",
-  "mint_multisig": "MintMultisigAddress...",
+  "treasury_vault": "TreasuryVaultAddress...",
+  "mint_vault": "MintVaultAddress...",
   "admin_wallet": "AdminWalletAddress...",
   "pool_type": "damm",
   "quote_mint": "So11111111111111111111111111111111111111112",
@@ -262,8 +262,8 @@ Creates a child DAO under an existing parent. Child DAOs share the parent's liqu
 |-------|------|-------------|
 | `dao_pda` | `string` | The child DAO's on-chain address |
 | `parent_dao_pda` | `string` | The parent DAO's address |
-| `treasury_multisig` | `string` | 2-of-3 treasury multisig (you + 2 platform keys) |
-| `mint_multisig` | `string` | 2-of-2 mint authority multisig |
+| `treasury_vault` | `string` | Treasury vault address (Squads vault PDA) |
+| `mint_vault` | `string` | Mint authority vault address (Squads vault PDA) |
 | `admin_wallet` | `string` | Wallet that manages the child DAO |
 | `transaction` | `string` | Transaction signature |
 
@@ -271,7 +271,7 @@ Creates a child DAO under an existing parent. Child DAOs share the parent's liqu
 
 - Parent must be a valid parent DAO (not a child)
 - `wallet` must be the same wallet that created the parent DAO
-- Child has its own `token_mint` (must transfer mint authority to `mint_multisig`)
+- Child has its own `token_mint` (must transfer mint authority to `mint_vault`)
 - Child inherits parent's pool for liquidity
 
 ---
@@ -308,8 +308,8 @@ Before creating a proposal, the server validates that the DAO is ready:
 
 | Check | Requirement | Error |
 |-------|-------------|-------|
-| Treasury funds | Treasury multisig must hold SOL, USDC, or DAO token | `treasury_funds` |
-| Mint authority | `mint_auth_multisig` must be the token's mint authority | `mint_authority` |
+| Treasury funds | Treasury vault must hold SOL, USDC, or DAO token | `treasury_funds` |
+| Mint authority | `mint_vault` must be the token's mint authority | `mint_authority` |
 | Token/pool match | Token must be the pool's base token (parent DAOs only) | `token_pool_match` |
 | LP holdings | Admin wallet must hold LP positions (parent's admin for child DAOs) | `admin_lp_holdings` |
 | Active proposal | No active proposal for this moderator | `active_proposal` |
@@ -338,16 +338,16 @@ Before creating a proposal, the server validates that the DAO is ready:
 
 ```
 1. Call POST /dao/parent with name, token_mint, pool_address, treasury_cosigner
-2. Receive dao_pda, admin_wallet, treasury_multisig, mint_multisig, pool_type, quote_mint
+2. Receive dao_pda, admin_wallet, treasury_vault, mint_vault, pool_type, quote_mint
 ```
 
 **Post-Creation Setup (required before proposals):**
 
 ```
 6. Transfer LP tokens/positions to admin_wallet
-7. Transfer funds (SOL/USDC/token) to treasury_multisig
-8. Transfer mint authority to mint_multisig:
-   spl-token authorize <token_mint> mint <mint_multisig>
+7. Transfer funds (SOL/USDC/token) to treasury_vault
+8. Transfer mint authority to mint_vault:
+   spl-token authorize <token_mint> mint <mint_vault>
 ```
 
 **Note:** The wallet that creates the DAO is automatically authorized to create proposals.
@@ -356,15 +356,15 @@ Before creating a proposal, the server validates that the DAO is ready:
 
 ```
 1. Call POST /dao/child with name, parent_pda, token_mint, treasury_cosigner
-2. Receive dao_pda, admin_wallet, treasury_multisig, mint_multisig
+2. Receive dao_pda, admin_wallet, treasury_vault, mint_vault
 ```
 
 **Post-Creation Setup (required before proposals):**
 
 ```
-6. Transfer funds (SOL/USDC/token) to treasury_multisig
-7. Transfer mint authority for child's token_mint to mint_multisig:
-   spl-token authorize <child_token_mint> mint <mint_multisig>
+6. Transfer funds (SOL/USDC/token) to treasury_vault
+7. Transfer mint authority for child's token_mint to mint_vault:
+   spl-token authorize <child_token_mint> mint <mint_vault>
 ```
 
 **Note:** Child DAOs use the parent's LP for proposals. The parent's admin_wallet must hold LP positions.
@@ -475,8 +475,8 @@ console.log("Moderator:", dao.moderator_pda);
 console.log("Pool type (derived):", dao.pool_type);
 console.log("Quote mint (derived):", dao.quote_mint);
 console.log("Transfer LP to:", dao.admin_wallet);
-console.log("Transfer treasury to:", dao.treasury_multisig);
-console.log("Transfer mint authority to:", dao.mint_multisig);
+console.log("Transfer treasury to:", dao.treasury_vault);
+console.log("Transfer mint authority to:", dao.mint_vault);
 ```
 
 ### Create Child DAO
@@ -546,8 +546,8 @@ interface CreateProposalRequest {
 interface DaoResponse {
   dao_pda: string;
   moderator_pda: string;
-  treasury_multisig: string;
-  mint_multisig: string;
+  treasury_vault: string;
+  mint_vault: string;
   admin_wallet: string;
   pool_type: "damm" | "dlmm";
   quote_mint: string;
@@ -557,8 +557,8 @@ interface DaoResponse {
 interface ChildDaoResponse {
   dao_pda: string;
   parent_dao_pda: string;
-  treasury_multisig: string;
-  mint_multisig: string;
+  treasury_vault: string;
+  mint_vault: string;
   admin_wallet: string;
   transaction: string;
 }
@@ -584,8 +584,8 @@ interface DaoWithStats {
   pool_address: string;
   pool_type: "damm" | "dlmm";
   quote_mint: string;
-  treasury_multisig: string;
-  mint_auth_multisig: string;
+  treasury_vault: string;
+  mint_vault: string;
   treasury_cosigner: string;
   parent_dao_id?: number;
   dao_type: "parent" | "child";

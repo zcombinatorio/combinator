@@ -7,32 +7,32 @@ Prerequisites:
 CRITICAL: MINT AUTHORITY TRANSFER
 ================================================================================
 
-When transferring mint authority, use the EXACT address from the database field
-`mint_auth_multisig`. DO NOT derive a vault PDA or any other address.
+When transferring mint authority, use the EXACT address from the API field
+`mint_vault`. DO NOT derive a vault PDA or any other address.
 
-The database stores the correct target address directly:
-  - Field name: `mint_auth_multisig`
+The API returns the correct target address directly:
+  - Field name: `mint_vault`
   - This IS the address to transfer mint authority to
-  - Despite the name, this is the vault address, not a multisig address
+  - This is the Squads vault address
 
 How to get the correct address:
   1. Run: DAO_PDA="..." pnpm tsx scripts/check-dao-db.ts
-  2. Look for the `mint_auth_multisig` field in the output
+  2. Look for the `mint_vault` field in the output
   3. Use that EXACT value as NEW_AUTHORITY
 
 Example:
   # After creating DAO, check the database:
   DAO_PDA="PfN2oXruFPqV92rYnVPMMQgi4QwFVxCPkXS99o57ZoC" pnpm tsx scripts/check-dao-db.ts
-  # Output shows: "mint_auth_multisig": "5KUFpt3tEeDP91nR3LhZi7sUrCBzBobC1WhLzX4qtZwh"
+  # Output shows: "mint_vault": "5KUFpt3tEeDP91nR3LhZi7sUrCBzBobC1WhLzX4qtZwh"
 
   # Transfer mint authority to that EXACT address:
   TOKEN_MINT="..." NEW_AUTHORITY="5KUFpt3tEeDP91nR3LhZi7sUrCBzBobC1WhLzX4qtZwh" \
     pnpm tsx scripts/transfer-mint-authority.ts
 
 WARNING: Do NOT:
-  - Derive a vault PDA from the multisig (the DB already stores the correct address)
-  - Use any other address than what's in mint_auth_multisig
-  - Transfer to the treasury_multisig (that's for treasury, not mint authority)
+  - Derive a vault PDA from the multisig (the API already returns the correct address)
+  - Use any other address than what's in mint_vault
+  - Transfer to the treasury_vault (that's for treasury, not mint authority)
 
 ================================================================================
 
@@ -42,7 +42,7 @@ E2E Test Plan (Simplified with create-token-with-pool.ts):
      (This replaces the old DBC pool creation + manual migration steps)
   2. Create parent DAO - scripts/test-dao-parent.ts
   3. Transfer mint authority - scripts/transfer-mint-authority.ts
-     (Use mint_auth_multisig from DB - see CRITICAL section above)
+     (Use mint_vault from API - see CRITICAL section above)
   4. Transfer LP position - scripts/e2e-transfer-lp.ts
   5. Fund admin wallet - scripts/fund-admin-wallet.ts
      (Admin wallet needs SOL for transaction fees - minimum 0.1 SOL, recommended 0.2 SOL)
@@ -69,10 +69,10 @@ Example Commands (Full E2E):
     pnpm tsx scripts/test-dao-parent.ts
   # Outputs: DAO_PDA, MODERATOR_PDA, ADMIN_WALLET
 
-  # Step 3: Get mint_auth_multisig from DB, then transfer mint authority
+  # Step 3: Get mint_vault from API, then transfer mint authority
   DAO_PDA="<from-step-2>" pnpm tsx scripts/check-dao-db.ts
-  # Look for mint_auth_multisig in output, then:
-  TOKEN_MINT="<from-step-1>" NEW_AUTHORITY="<mint_auth_multisig from DB>" \
+  # Look for mint_vault in output, then:
+  TOKEN_MINT="<from-step-1>" NEW_AUTHORITY="<mint_vault from API>" \
     pnpm tsx scripts/transfer-mint-authority.ts
 
   # Step 4: Transfer LP to admin wallet
@@ -128,8 +128,8 @@ CHILD DAO CREATION
 
 Child DAOs inherit the parent's liquidity pool and moderator, but have their own:
   - Token mint (governance token for the child DAO)
-  - Treasury multisig
-  - Mint authority multisig
+  - Treasury vault
+  - Mint vault
   - Admin wallet
 
 Prerequisites:
@@ -150,15 +150,15 @@ Steps to create a child DAO:
     PARENT_PDA="<parent-dao-pda>" \
     TOKEN_MINT="<child-token-mint-from-step-1>" \
     pnpm tsx scripts/test-dao-child.ts
-  # Outputs: DAO_PDA, ADMIN_WALLET, TREASURY_MULTISIG, MINT_AUTH_MULTISIG
+  # Outputs: DAO_PDA, ADMIN_WALLET, TREASURY_VAULT, MINT_VAULT
 
   # Step 3: Verify child DAO in database
   DAO_PDA="<child-dao-pda>" pnpm tsx scripts/check-dao-db.ts
   # Should show: dao_type: "child", parent_dao_id: <parent-id>
 
   # Step 4: Transfer mint authority for child token (same process as parent)
-  # Get mint_auth_multisig from database, then:
-  TOKEN_MINT="<child-token-mint>" NEW_AUTHORITY="<mint_auth_multisig from DB>" \
+  # Get mint_vault from API, then:
+  TOKEN_MINT="<child-token-mint>" NEW_AUTHORITY="<mint_vault from API>" \
     pnpm tsx scripts/transfer-mint-authority.ts
 
 Key differences from parent DAO:

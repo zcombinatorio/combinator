@@ -42,8 +42,15 @@ async function main() {
       console.log('DAO not found');
     } else {
       const dao = daoResult.rows[0];
+      // Rename DB columns to API field names for consistency
+      const { treasury_multisig, mint_auth_multisig, ...rest } = dao;
+      const output = {
+        ...rest,
+        treasury_vault: treasury_multisig,
+        mint_vault: mint_auth_multisig,
+      };
       console.log('DAO Details:');
-      console.log(JSON.stringify(dao, null, 2));
+      console.log(JSON.stringify(output, null, 2));
 
       // Check proposers
       const proposersResult = await pool.query(`

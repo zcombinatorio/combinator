@@ -144,8 +144,8 @@ API_URL=https://api.zcombinator.io \
 DAO_PDA=<dao-pda>
 MODERATOR_PDA=<moderator-pda>
 ADMIN_WALLET=<admin-wallet>
-TREASURY_MULTISIG=<treasury-multisig>
-MINT_AUTH_MULTISIG=<mint-auth-multisig>
+TREASURY_VAULT=<treasury-vault>
+MINT_VAULT=<mint-vault>
 ```
 
 ---
@@ -179,19 +179,19 @@ API_URL=https://api.zcombinator.io \
 ```
 DAO_PDA=<child-dao-pda>
 ADMIN_WALLET=<admin-wallet>
-MINT_AUTH_MULTISIG=<mint-auth-multisig>
+MINT_VAULT=<mint-vault>
 ```
 
 ---
 
 ### 6. transfer-mint-authority.ts
 
-Transfers token mint authority to the DAO's mint authority multisig.
+Transfers token mint authority to the DAO's mint vault.
 
 **Usage:**
 ```bash
 TOKEN_MINT="<token-mint>" \
-  NEW_AUTHORITY="<mint-auth-multisig-from-dao-creation>" \
+  NEW_AUTHORITY="<mint-vault-from-dao-creation>" \
   pnpm tsx scripts/transfer-mint-authority.ts
 ```
 
@@ -201,9 +201,9 @@ TOKEN_MINT="<token-mint>" \
 | `RPC_URL` | Yes | - | Solana RPC endpoint |
 | `PRIVATE_KEY` | Yes | - | Current mint authority (your wallet) |
 | `TOKEN_MINT` | Yes | - | Token mint address |
-| `NEW_AUTHORITY` | Yes | - | The `MINT_AUTH_MULTISIG` from DAO creation |
+| `NEW_AUTHORITY` | Yes | - | The `MINT_VAULT` from DAO creation |
 
-**CRITICAL:** Use the EXACT `MINT_AUTH_MULTISIG` address returned from DAO creation. Do NOT derive or modify this address.
+**CRITICAL:** Use the EXACT `MINT_VAULT` address returned from DAO creation. Do NOT derive or modify this address.
 
 ---
 
@@ -252,7 +252,7 @@ ADMIN_WALLET="<admin-wallet-from-dao-creation>" \
 
 ### 9. fetch-dao-info.ts
 
-Fetches DAO information from the API. Use this to retrieve `ADMIN_WALLET`, `MINT_AUTH_MULTISIG`, and other values needed for subsequent operations.
+Fetches DAO information from the API. Use this to retrieve `ADMIN_WALLET`, `MINT_VAULT`, and other values needed for subsequent operations.
 
 **Usage:**
 ```bash
@@ -325,11 +325,11 @@ API_URL=https://api.zcombinator.io \
   TOKEN_MINT="<from-step-1>" \
   POOL_ADDRESS="<from-step-1>" \
   pnpm tsx scripts/test-dao-parent.ts
-# Save: DAO_PDA, ADMIN_WALLET, MINT_AUTH_MULTISIG
+# Save: DAO_PDA, ADMIN_WALLET, MINT_VAULT
 
 # 3. Transfer mint authority
 TOKEN_MINT="<from-step-1>" \
-  NEW_AUTHORITY="<MINT_AUTH_MULTISIG from step-2>" \
+  NEW_AUTHORITY="<MINT_VAULT from step-2>" \
   pnpm tsx scripts/transfer-mint-authority.ts
 
 # 4. Transfer LP position to admin wallet
@@ -368,11 +368,11 @@ API_URL=https://api.zcombinator.io \
   PARENT_PDA="<parent-dao-pda>" \
   TOKEN_MINT="<from-step-1>" \
   pnpm tsx scripts/test-dao-child.ts
-# Save: DAO_PDA, MINT_AUTH_MULTISIG
+# Save: DAO_PDA, MINT_VAULT
 
 # 3. Transfer mint authority for child token
 TOKEN_MINT="<from-step-1>" \
-  NEW_AUTHORITY="<MINT_AUTH_MULTISIG from step-2>" \
+  NEW_AUTHORITY="<MINT_VAULT from step-2>" \
   pnpm tsx scripts/transfer-mint-authority.ts
 
 # 4. Verify setup

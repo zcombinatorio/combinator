@@ -44,8 +44,8 @@ const API_URL = process.env.API_URL || 'http://localhost:3001';
 interface CreateParentDaoResponse {
   dao_pda: string;
   moderator_pda: string;
-  treasury_multisig: string;
-  mint_multisig: string;
+  treasury_vault: string;
+  mint_vault: string;
   admin_wallet: string;
   pool_type: 'damm' | 'dlmm';
   quote_mint: string;
@@ -145,8 +145,8 @@ async function main() {
     console.log('Response:');
     console.log(`  DAO PDA: ${response.dao_pda}`);
     console.log(`  Moderator PDA: ${response.moderator_pda}`);
-    console.log(`  Treasury multisig: ${response.treasury_multisig}`);
-    console.log(`  Mint multisig: ${response.mint_multisig}`);
+    console.log(`  Treasury vault: ${response.treasury_vault}`);
+    console.log(`  Mint vault: ${response.mint_vault}`);
     console.log(`  Admin wallet: ${response.admin_wallet}`);
     console.log(`  Pool type (derived): ${response.pool_type}`);
     console.log(`  Quote mint (derived): ${response.quote_mint}`);
@@ -154,8 +154,8 @@ async function main() {
 
     console.log('\n=== Next Steps ===');
     console.log(`1. Transfer LP tokens for pool ${pool_address} to admin wallet: ${response.admin_wallet}`);
-    console.log(`2. Transfer treasury funds to: ${response.treasury_multisig}`);
-    console.log(`3. Transfer mint authority to: ${response.mint_multisig}`);
+    console.log(`2. Transfer treasury funds to: ${response.treasury_vault}`);
+    console.log(`3. Transfer mint authority to: ${response.mint_vault}`);
   } catch (error) {
     console.error('❌ Error creating parent DAO:', error);
     process.exit(1);

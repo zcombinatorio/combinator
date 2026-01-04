@@ -2,20 +2,20 @@
  * Transfer mint authority to a new address
  *
  * IMPORTANT: When transferring mint authority for a DAO, use the EXACT address from
- * the database field `mint_auth_multisig`. Do NOT derive any other address.
+ * the API field `mint_vault`. Do NOT derive any other address.
  *
  * How to get the correct NEW_AUTHORITY:
  *   1. Run: DAO_PDA="..." pnpm tsx scripts/check-dao-db.ts
- *   2. Look for the `mint_auth_multisig` field in the output
+ *   2. Look for the `mint_vault` field in the output
  *   3. Use that EXACT value as NEW_AUTHORITY
  *
  * Usage:
- *   TOKEN_MINT="..." NEW_AUTHORITY="<mint_auth_multisig from DB>" pnpm tsx scripts/transfer-mint-authority.ts
+ *   TOKEN_MINT="..." NEW_AUTHORITY="<mint_vault from API>" pnpm tsx scripts/transfer-mint-authority.ts
  *
  * Optional:
  *   OWNER_PRIVATE_KEY - If set, use this as the current authority (defaults to PROTOCOL_PRIVATE_KEY)
  *
- * WARNING: Do NOT derive a vault PDA from the multisig - the DB already stores the correct address.
+ * WARNING: Do NOT derive a vault PDA from the multisig - the API already returns the correct address.
  */
 import 'dotenv/config';
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';

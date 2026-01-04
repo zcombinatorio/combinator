@@ -1,7 +1,7 @@
 /**
  * Fetch DAO information from the API
  *
- * Retrieves DAO details including admin_wallet, mint_auth_multisig, and other
+ * Retrieves DAO details including admin_wallet, mint_vault, and other
  * configuration needed for subsequent operations.
  *
  * Usage:
@@ -30,8 +30,8 @@ interface DaoInfo {
   pool_address: string;
   pool_type: 'damm' | 'dlmm';
   quote_mint: string;
-  treasury_multisig: string;
-  mint_auth_multisig: string;
+  treasury_vault: string;
+  mint_vault: string;
   treasury_cosigner: string;
   parent_dao_id?: number;
   proposer_token_threshold?: string;
@@ -76,8 +76,8 @@ async function main() {
   console.log('Wallets & Multisigs:');
   console.log('─'.repeat(50));
   console.log(`  Admin Wallet:      ${dao.admin_wallet}`);
-  console.log(`  Mint Auth Multisig: ${dao.mint_auth_multisig}`);
-  console.log(`  Treasury Multisig: ${dao.treasury_multisig}`);
+  console.log(`  Mint Vault:        ${dao.mint_vault}`);
+  console.log(`  Treasury Vault:    ${dao.treasury_vault}`);
   console.log(`  Treasury Cosigner: ${dao.treasury_cosigner}`);
   console.log('');
   console.log('Token & Pool:');
@@ -120,7 +120,7 @@ async function main() {
   console.log('For use in other scripts:');
   console.log('─'.repeat(50));
   console.log(`  ADMIN_WALLET="${dao.admin_wallet}"`);
-  console.log(`  MINT_AUTH_MULTISIG="${dao.mint_auth_multisig}"`);
+  console.log(`  MINT_VAULT="${dao.mint_vault}"`);
   console.log(`  MODERATOR_PDA="${dao.moderator_pda}"`);
   console.log(`  POOL_ADDRESS="${dao.pool_address}"`);
   console.log(`  TOKEN_MINT="${dao.token_mint}"`);

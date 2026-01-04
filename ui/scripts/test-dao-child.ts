@@ -44,8 +44,8 @@ const API_URL = process.env.API_URL || 'http://localhost:3001';
 interface CreateChildDaoResponse {
   dao_pda: string;
   parent_dao_pda: string;
-  treasury_multisig: string;
-  mint_multisig: string;
+  treasury_vault: string;
+  mint_vault: string;
   admin_wallet: string;
   transaction: string;
 }
@@ -143,13 +143,13 @@ async function main() {
     console.log('Response:');
     console.log(`  DAO PDA: ${response.dao_pda}`);
     console.log(`  Parent DAO PDA: ${response.parent_dao_pda}`);
-    console.log(`  Treasury multisig: ${response.treasury_multisig}`);
-    console.log(`  Mint multisig: ${response.mint_multisig}`);
+    console.log(`  Treasury vault: ${response.treasury_vault}`);
+    console.log(`  Mint vault: ${response.mint_vault}`);
     console.log(`  Admin wallet: ${response.admin_wallet}`);
     console.log(`  Transaction: ${response.transaction}`);
 
     console.log('\n=== Next Steps ===');
-    console.log(`1. Transfer treasury funds to: ${response.treasury_multisig}`);
+    console.log(`1. Transfer treasury funds to: ${response.treasury_vault}`);
     console.log('   (Child DAOs share the parent\'s liquidity pool)');
   } catch (error) {
     console.error('❌ Error creating child DAO:', error);

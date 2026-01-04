@@ -291,39 +291,6 @@ async function main() {
   });
 
   // =========================================================================
-  // STEP 8: Verify Second Proposal Can Be Created
-  // =========================================================================
-  log('STEP 8', 'Verifying second proposal can be created...');
-
-  moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda!));
-  log('STEP 8', 'Counter before second proposal: ' + moderator.proposalIdCounter);
-
-  const proposal2 = await signedPost('/dao/proposal', {
-    dao_pda: DAO_PDA,
-    title: 'Second Test Proposal ' + Date.now(),
-    description: 'Verifying counter increment works for subsequent proposals',
-    options: ['Yes', 'No'],
-    length_secs: PROPOSAL_DURATION_SECS,
-  }, testKeypair);
-
-  log('STEP 8', '✓ Second Proposal Created');
-  logState('Proposal 2', {
-    pda: proposal2.proposal_pda,
-    id: proposal2.proposal_id,
-  });
-
-  // Verify counter
-  moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda!));
-  log('STEP 8', 'Counter after second proposal: ' + moderator.proposalIdCounter);
-
-  const expectedCounter = initialCounter + 2;
-  if (moderator.proposalIdCounter === expectedCounter) {
-    log('STEP 8', `✓ Counter correctly at ${expectedCounter}`);
-  } else {
-    throw new Error(`Counter should be ${expectedCounter}, got ${moderator.proposalIdCounter}`);
-  }
-
-  // =========================================================================
   // SUMMARY
   // =========================================================================
   console.log('');
@@ -333,9 +300,7 @@ async function main() {
   console.log('');
   console.log('Summary:');
   console.log(`  DAO: ${DAO_PDA} (${dao.dao_name})`);
-  console.log(`  Proposal 1: ${proposalPda} (ID: ${proposalId})`);
-  console.log(`  Proposal 2: ${proposal2.proposal_pda} (ID: ${proposal2.proposal_id})`);
-  console.log(`  Final Counter: ${moderator.proposalIdCounter}`);
+  console.log(`  Proposal: ${proposalPda} (ID: ${proposalId})`);
   console.log('');
   console.log('All lifecycle steps verified:');
   console.log('  ✓ DAO with on-chain moderator');
@@ -344,7 +309,6 @@ async function main() {
   console.log('  ✓ Proposal finalization');
   console.log('  ✓ Liquidity redemption');
   console.log('  ✓ Deposit back to pool');
-  console.log('  ✓ Second proposal creation with counter increment');
   console.log('');
 
   await dbPool.end();

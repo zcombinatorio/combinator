@@ -685,12 +685,17 @@ router.get('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Enrich with stats and strip internal fields
+    // Enrich with stats, strip internal fields, and rename DB columns to API fields
     const enrichedDaos = await Promise.all(
       daos.map(async (dao) => {
         const stats = await getDaoStats(pool, dao.id!);
-        const { admin_key_idx, ...publicDao } = dao;
-        return { ...publicDao, stats };
+        const { admin_key_idx, treasury_multisig, mint_auth_multisig, ...rest } = dao;
+        return {
+          ...rest,
+          treasury_vault: treasury_multisig,
+          mint_vault: mint_auth_multisig,
+          stats,
+        };
       })
     );
 
@@ -725,14 +730,22 @@ router.get('/:daoPda', async (req: Request, res: Response) => {
       children = childDaos.map(({ admin_key_idx, ...child }) => child);
     }
 
-    // Strip internal fields from response
-    const { admin_key_idx, ...publicDao } = dao;
+    // Strip internal fields and rename DB columns to API fields
+    const { admin_key_idx, treasury_multisig, mint_auth_multisig, ...rest } = dao;
+
+    // Also rename fields in children
+    const renamedChildren = children.map((child: any) => {
+      const { treasury_multisig: tv, mint_auth_multisig: mv, ...childRest } = child;
+      return { ...childRest, treasury_vault: tv, mint_vault: mv };
+    });
 
     res.json({
-      ...publicDao,
+      ...rest,
+      treasury_vault: treasury_multisig,
+      mint_vault: mint_auth_multisig,
       stats,
       proposers,
-      children,
+      children: renamedChildren,
     });
   } catch (error) {
     console.error('Error fetching DAO:', error);
