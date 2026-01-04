@@ -35,6 +35,7 @@ const RPC_URL = process.env.RPC_URL;
 const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
 const ADMIN_WALLET = process.env.ADMIN_WALLET;
 const SOL_AMOUNT = parseFloat(process.env.SOL_AMOUNT || '0.2');
+const MIN_ADMIN_BALANCE_SOL = 0.1; // Minimum required for proposal creation
 
 if (!RPC_URL) throw new Error('RPC_URL is required');
 if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or PROTOCOL_PRIVATE_KEY is required');
@@ -65,6 +66,14 @@ async function main() {
   const adminBalance = await connection.getBalance(adminWallet);
   const adminBalanceSol = adminBalance / LAMPORTS_PER_SOL;
   console.log(`Admin wallet balance: ${adminBalanceSol.toFixed(4)} SOL`);
+
+  // Skip if admin wallet already has minimum required balance
+  if (adminBalanceSol >= MIN_ADMIN_BALANCE_SOL) {
+    console.log(`\nAdmin wallet already has sufficient balance (>= ${MIN_ADMIN_BALANCE_SOL} SOL).`);
+    console.log('No funding needed.');
+    console.log('\n=== Done ===');
+    return;
+  }
 
   // Create transfer transaction
   const transaction = new Transaction().add(

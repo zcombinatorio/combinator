@@ -21,7 +21,7 @@ import bs58 from 'bs58';
 
 // Minimum SOL balance for a managed wallet to operate
 const MIN_WALLET_BALANCE_SOL = 0.05;
-const FUNDING_AMOUNT_SOL = 0.333;
+const FUNDING_AMOUNT_SOL = 0.1;
 
 // Minimum key index allowed for DAO operations (indices 0-8 are reserved)
 const MIN_KEY_INDEX = 9;

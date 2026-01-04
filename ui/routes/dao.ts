@@ -854,7 +854,7 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
     let tx: string;
 
     // Allocate and fund admin wallet from key service
-    const { publicKey: allocatedWallet } = await allocateKey(connection, keyIdx, true);  // skipFunding - client must fund admin wallet
+    const { publicKey: allocatedWallet } = await allocateKey(connection, keyIdx, false);
     adminWallet = allocatedWallet;
 
     // Register the key
@@ -1041,7 +1041,7 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
 
       // Get next key index and allocate admin wallet
       const keyIdx = await getNextKeyIndex(pool);
-      const { publicKey: childAdminWallet } = await allocateKey(connection, keyIdx, true);  // skipFunding - client must fund admin wallet
+      const { publicKey: childAdminWallet } = await allocateKey(connection, keyIdx, false);
 
     // Register the key
     await registerKey(pool, {
