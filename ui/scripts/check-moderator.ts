@@ -11,8 +11,8 @@ const FUTARCHY_PROGRAM_ID = new PublicKey('FUTKPrt66uGGCTpk6f9tmRX2325cWgXzGCwvW
 
 async function main() {
   const RPC_URL = process.env.RPC_URL;
-  const PROTOCOL_PRIVATE_KEY = process.env.PROTOCOL_PRIVATE_KEY;
-  if (!RPC_URL || !PROTOCOL_PRIVATE_KEY) throw new Error('RPC_URL and PROTOCOL_PRIVATE_KEY required');
+  const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+  if (!RPC_URL || !PRIVATE_KEY) throw new Error('RPC_URL and PRIVATE_KEY required');
 
   const connection = new Connection(RPC_URL, 'confirmed');
 

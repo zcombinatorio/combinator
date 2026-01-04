@@ -23,7 +23,7 @@
  *   pnpm tsx scripts/test-dao-proposal.ts
  *
  * Required environment variables:
- *   - TEST_WALLET_PRIVATE_KEY: Base58-encoded private key for signing (must be DAO owner or proposer)
+ *   - PRIVATE_KEY: Base58-encoded private key for signing (must be DAO owner or proposer)
  *   - API_URL: API base URL (defaults to http://localhost:3001)
  *   - DAO_PDA: The DAO PDA to create a proposal for
  *
@@ -99,9 +99,9 @@ async function main() {
   console.log('=== Test POST /dao/proposal ===\n');
 
   // Load test wallet
-  const privateKey = process.env.TEST_WALLET_PRIVATE_KEY;
+  const privateKey = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
   if (!privateKey) {
-    throw new Error('TEST_WALLET_PRIVATE_KEY environment variable is required');
+    throw new Error('PRIVATE_KEY environment variable is required');
   }
   const keypair = loadKeypair(privateKey);
   console.log(`Test wallet: ${keypair.publicKey.toBase58()}`);

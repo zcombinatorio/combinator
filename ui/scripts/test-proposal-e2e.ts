@@ -13,13 +13,14 @@ import { AnchorProvider, Wallet, BN } from '@coral-xyz/anchor';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import * as futarchy from '@zcomb/programs-sdk';
 import { getPool } from '../lib/db';
-import { getDaoByPda } from '../lib/db/daos';
+import { getDaoByPda, getDaoById } from '../lib/db/daos';
 
 const API_URL = process.env.API_URL || 'http://localhost:6770';
-const TEST_WALLET_PRIVATE_KEY = process.env.TEST_WALLET_PRIVATE_KEY || '5xvu7CaRDxvUUxDV1zpWrnV4crCRPXecZ5YcJ2pgzXASFLmRXsSJkJ9tgrVtBdgHE2XAF3eumdcag19KSWP38hZ3';
+const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+const DAO_PDA = process.env.DAO_PDA;
 
-// Use existing DAO with LP
-const DAO_PDA = process.env.DAO_PDA || '2EYfVdtRF8YqhzxnU4Lu6DemmvVtWFB9t6NJycinTwEx';
+if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY is required');
+if (!DAO_PDA) throw new Error('DAO_PDA is required');
 
 // Proposal duration in seconds (short for testing)
 const PROPOSAL_DURATION_SECS = parseInt(process.env.PROPOSAL_DURATION_SECS || '120');
@@ -83,7 +84,7 @@ async function main() {
 
   const connection = new Connection(RPC_URL, 'confirmed');
   const dbPool = getPool();
-  const testKeypair = loadKeypair(TEST_WALLET_PRIVATE_KEY);
+  const testKeypair = loadKeypair(PRIVATE_KEY!);
   const cpAmm = new CpAmm(connection);
 
   console.log('');
@@ -103,11 +104,23 @@ async function main() {
   // =========================================================================
   log('STEP 1', 'Loading DAO info...');
 
-  const dao = await getDaoByPda(dbPool, DAO_PDA);
+  const dao = await getDaoByPda(dbPool, DAO_PDA!);
   if (!dao) throw new Error('DAO not found in database');
 
+  // For child DAOs, use parent's admin wallet for LP operations
+  const isChildDao = !!dao.parent_dao_id;
+  let lpAdminWallet: PublicKey;
+
+  if (isChildDao) {
+    const parentDao = await getDaoById(dbPool, dao.parent_dao_id!);
+    if (!parentDao) throw new Error('Parent DAO not found in database');
+    lpAdminWallet = new PublicKey(parentDao.admin_wallet);
+    log('STEP 1', `Child DAO detected - using parent admin for LP: ${parentDao.admin_wallet}`);
+  } else {
+    lpAdminWallet = new PublicKey(dao.admin_wallet);
+  }
+
   const moderatorPda = dao.moderator_pda;
-  const adminWallet = new PublicKey(dao.admin_wallet);
   const poolPubkey = new PublicKey(dao.pool_address);
 
   log('STEP 1', '✓ DAO Found');
@@ -116,13 +129,15 @@ async function main() {
     pda: dao.dao_pda,
     moderator_pda: moderatorPda,
     admin_wallet: dao.admin_wallet,
+    is_child: isChildDao,
+    lp_admin: lpAdminWallet.toBase58(),
   });
 
   // Verify on-chain: Moderator account exists
   const provider = new AnchorProvider(connection, new Wallet(testKeypair), { commitment: 'confirmed' });
   const futarchyClient = new futarchy.FutarchyClient(provider);
 
-  let moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda));
+  let moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda!));
   log('STEP 1', 'On-chain moderator state:');
   logState('Moderator', {
     proposalIdCounter: moderator.proposalIdCounter,
@@ -130,10 +145,10 @@ async function main() {
     admin: moderator.admin.toBase58(),
   });
 
-  // Verify LP exists
-  const positions = await cpAmm.getUserPositionByPool(poolPubkey, adminWallet);
+  // Verify LP exists (use lpAdminWallet - parent's admin for child DAOs)
+  const positions = await cpAmm.getUserPositionByPool(poolPubkey, lpAdminWallet);
   const hasLP = positions.some(p => !p.positionState.unlockedLiquidity.isZero());
-  if (!hasLP) throw new Error('DAO admin has no LP positions');
+  if (!hasLP) throw new Error('LP admin has no LP positions');
 
   log('STEP 1', 'On-chain LP state:');
   logState('Admin LP', {
@@ -178,7 +193,7 @@ async function main() {
   });
 
   // Verify on-chain: Proposal exists and counter incremented
-  moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda));
+  moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda!));
   const proposalAccount = await futarchyClient.fetchProposal(new PublicKey(proposalPda));
 
   log('STEP 3', 'On-chain state after proposal creation:');
@@ -188,14 +203,12 @@ async function main() {
   });
 
   // Handle different status formats - could be enum object or string
-  const statusKey = proposalAccount.status ?
-    (typeof proposalAccount.status === 'object' ? Object.keys(proposalAccount.status)[0] : String(proposalAccount.status))
+  const statusKey = proposalAccount.state ?
+    (typeof proposalAccount.state === 'object' ? Object.keys(proposalAccount.state)[0] : String(proposalAccount.state))
     : 'unknown';
-  const endTimeMs = proposalAccount.endTime?.toNumber ? proposalAccount.endTime.toNumber() * 1000 : Date.now();
 
   logState('Proposal', {
     status: statusKey,
-    endTime: new Date(endTimeMs).toISOString(),
   });
 
   if (moderator.proposalIdCounter !== initialCounter + 1) {
@@ -205,18 +218,14 @@ async function main() {
   // =========================================================================
   // STEP 4: Wait for Proposal to End
   // =========================================================================
-  const endTime = proposalAccount.endTime.toNumber();
-  const now = Math.floor(Date.now() / 1000);
-  const actualWait = Math.max(endTime - now + 2, 0);
+  // Wait for warmup (60s) + proposal duration + buffer
+  const WARMUP_SECS = 60;
+  const waitTime = WARMUP_SECS + PROPOSAL_DURATION_SECS + 5;
 
   log('STEP 4', `Waiting for proposal to end...`);
-  log('STEP 4', `Proposal ends at ${new Date(endTime * 1000).toISOString()}`);
-  log('STEP 4', `Current time: ${new Date().toISOString()}`);
-  log('STEP 4', `Wait time: ${actualWait}s`);
+  log('STEP 4', `Wait time: ${waitTime}s (warmup: ${WARMUP_SECS}s + duration: ${PROPOSAL_DURATION_SECS}s + buffer: 5s)`);
 
-  if (actualWait > 0) {
-    await new Promise(r => setTimeout(r, actualWait * 1000));
-  }
+  await new Promise(r => setTimeout(r, waitTime * 1000));
 
   log('STEP 4', '✓ Wait complete');
 
@@ -237,8 +246,8 @@ async function main() {
 
   // Verify on-chain: Proposal is resolved
   const proposalAfterFinalize = await futarchyClient.fetchProposal(new PublicKey(proposalPda));
-  const finalStatusKey = proposalAfterFinalize.status ?
-    (typeof proposalAfterFinalize.status === 'object' ? Object.keys(proposalAfterFinalize.status)[0] : String(proposalAfterFinalize.status))
+  const finalStatusKey = proposalAfterFinalize.state ?
+    (typeof proposalAfterFinalize.state === 'object' ? Object.keys(proposalAfterFinalize.state)[0] : String(proposalAfterFinalize.state))
     : 'unknown';
   log('STEP 5', 'On-chain state after finalization:');
   logState('Proposal', {
@@ -273,8 +282,8 @@ async function main() {
     signature: depositResult.signature?.slice(0, 20) + '...',
   });
 
-  // Verify on-chain: Admin has LP again
-  const finalPositions = await cpAmm.getUserPositionByPool(poolPubkey, adminWallet);
+  // Verify on-chain: LP admin has LP again
+  const finalPositions = await cpAmm.getUserPositionByPool(poolPubkey, lpAdminWallet);
   log('STEP 7', 'On-chain state after deposit-back:');
   logState('Admin LP', {
     positionCount: finalPositions.length,
@@ -286,7 +295,7 @@ async function main() {
   // =========================================================================
   log('STEP 8', 'Verifying second proposal can be created...');
 
-  moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda));
+  moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda!));
   log('STEP 8', 'Counter before second proposal: ' + moderator.proposalIdCounter);
 
   const proposal2 = await signedPost('/dao/proposal', {
@@ -304,7 +313,7 @@ async function main() {
   });
 
   // Verify counter
-  moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda));
+  moderator = await futarchyClient.fetchModerator(new PublicKey(moderatorPda!));
   log('STEP 8', 'Counter after second proposal: ' + moderator.proposalIdCounter);
 
   const expectedCounter = initialCounter + 2;

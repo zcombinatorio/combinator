@@ -854,7 +854,7 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
     let tx: string;
 
     // Allocate and fund admin wallet from key service
-    const { publicKey: allocatedWallet } = await allocateKey(connection, keyIdx);
+    const { publicKey: allocatedWallet } = await allocateKey(connection, keyIdx, true);  // skipFunding - client must fund admin wallet
     adminWallet = allocatedWallet;
 
     // Register the key
@@ -1041,7 +1041,7 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
 
       // Get next key index and allocate admin wallet
       const keyIdx = await getNextKeyIndex(pool);
-      const { publicKey: childAdminWallet } = await allocateKey(connection, keyIdx);
+      const { publicKey: childAdminWallet } = await allocateKey(connection, keyIdx, true);  // skipFunding - client must fund admin wallet
 
     // Register the key
     await registerKey(pool, {
@@ -1562,6 +1562,22 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         error: 'DAO not ready for proposals',
         reason: activeProposalCheck.reason,
         check: 'active_proposal',
+      });
+    }
+
+    // 5. Check admin wallet has sufficient SOL balance for transaction fees
+    // The admin wallet is used to sign proposal creation and liquidity operations
+    const MIN_ADMIN_BALANCE_SOL = 0.1;
+    const adminBalance = await connection.getBalance(new PublicKey(lpCheckWallet));
+    const adminBalanceSol = adminBalance / 1e9;
+    if (adminBalanceSol < MIN_ADMIN_BALANCE_SOL) {
+      return res.status(400).json({
+        error: 'DAO not ready for proposals',
+        reason: `Admin wallet has insufficient SOL balance: ${adminBalanceSol.toFixed(4)} SOL. Minimum required: ${MIN_ADMIN_BALANCE_SOL} SOL. Use the fund-admin-wallet script to fund it.`,
+        check: 'admin_wallet_balance',
+        admin_wallet: lpCheckWallet,
+        current_balance: adminBalanceSol,
+        required_balance: MIN_ADMIN_BALANCE_SOL,
       });
     }
 

@@ -2,73 +2,176 @@ Prerequisites:
   - API running locally: pnpm run api (runs on http://localhost:6770)
   - Environment variables set in .env: RPC_URL, PROTOCOL_PRIVATE_KEY, DB_URL
 
-E2E Test Plan:
-  1. Create DBC pool - scripts/setup-test-token-damm.ts (outputs token mint, DBC pool address)
-  2. You buy/migrate - Purchase ~0.1 SOL of tokens to trigger migration (outputs DAMM v2 pool address)
-  3. Create parent DAO - scripts/test-dao-parent.ts
-  4. Transfer mint authority - scripts/transfer-mint-authority.ts (to mint VAULT, not multisig)
-  5. Transfer LP position - scripts/e2e-transfer-lp.ts
+
+================================================================================
+CRITICAL: MINT AUTHORITY TRANSFER
+================================================================================
+
+When transferring mint authority, use the EXACT address from the database field
+`mint_auth_multisig`. DO NOT derive a vault PDA or any other address.
+
+The database stores the correct target address directly:
+  - Field name: `mint_auth_multisig`
+  - This IS the address to transfer mint authority to
+  - Despite the name, this is the vault address, not a multisig address
+
+How to get the correct address:
+  1. Run: DAO_PDA="..." pnpm tsx scripts/check-dao-db.ts
+  2. Look for the `mint_auth_multisig` field in the output
+  3. Use that EXACT value as NEW_AUTHORITY
+
+Example:
+  # After creating DAO, check the database:
+  DAO_PDA="PfN2oXruFPqV92rYnVPMMQgi4QwFVxCPkXS99o57ZoC" pnpm tsx scripts/check-dao-db.ts
+  # Output shows: "mint_auth_multisig": "5KUFpt3tEeDP91nR3LhZi7sUrCBzBobC1WhLzX4qtZwh"
+
+  # Transfer mint authority to that EXACT address:
+  TOKEN_MINT="..." NEW_AUTHORITY="5KUFpt3tEeDP91nR3LhZi7sUrCBzBobC1WhLzX4qtZwh" \
+    pnpm tsx scripts/transfer-mint-authority.ts
+
+WARNING: Do NOT:
+  - Derive a vault PDA from the multisig (the DB already stores the correct address)
+  - Use any other address than what's in mint_auth_multisig
+  - Transfer to the treasury_multisig (that's for treasury, not mint authority)
+
+================================================================================
+
+
+E2E Test Plan (Simplified with create-token-with-pool.ts):
+  1. Create token + DAMM pool - scripts/create-token-with-pool.ts
+     (This replaces the old DBC pool creation + manual migration steps)
+  2. Create parent DAO - scripts/test-dao-parent.ts
+  3. Transfer mint authority - scripts/transfer-mint-authority.ts
+     (Use mint_auth_multisig from DB - see CRITICAL section above)
+  4. Transfer LP position - scripts/e2e-transfer-lp.ts
+  5. Fund admin wallet - scripts/fund-admin-wallet.ts
+     (Admin wallet needs SOL for transaction fees - minimum 0.1 SOL, recommended 0.2 SOL)
   6. Verify DAO readiness - scripts/check-dao-db.ts
   7. Check moderator state - scripts/check-moderator.ts
-  8. Create proposal - API: POST /dao/proposal (or scripts/test-proposal-e2e.ts)
-  9. Wait ~180s - Warmup (60s) + duration (120s)
+  8. Create proposal - scripts/test-proposal-e2e.ts (or API: POST /dao/proposal)
+  9. Wait ~185s - Warmup (60s) + duration (120s) + buffer (5s)
   10. Finalize proposal - API: POST /dao/finalize-proposal
   11. Redeem liquidity - API: POST /dao/redeem-liquidity
   12. Deposit-back - API: POST /dao/deposit-back
-  13. Verify LP restored - scripts/check-lp-positions.ts
+  13. Verify LP state - scripts/check-lp-positions.ts
 
 
-E2E Test Summary
-  All core steps completed:
-  | Step                  | Status  | Notes                                                  |
-  |-----------------------|---------|--------------------------------------------------------|
-  | 1. Create DBC pool    | ✓       | Token: AT9zstb3LfyCYH6ReaPmKuxWDDgeGANhKHbJde6muRNs    |
-  | 2. User migrates      | ✓       | DAMM v2: 86xRA5LCbF24jeiFDqmRKrvP1Qam4h3oXxjgrtHX7Bzj  |
-  | 3. Create parent DAO  | ✓       | PDA: HncqWYfhEc6KqGpUtNrgu4VCjjKgJuzokrXDKLq5Hexd      |
-  | 4. Transfer mint auth | ✓       | To vault: 8ysh18jmbBniye6b7QttD6JKfwDmyWx4wXnyp7AYRsWs |
-  | 5. Transfer LP        | ✓       | To admin: DyCW5nbNjX12JtjxsRDVFb6UEUV6u9GpEMW3rFVCW5WD |
-  | 6-7. Verify readiness | ✓       | Moderator counter: 0 → 1                               |
-  | 8. Create proposal    | ✓       | PDA: Fcp9cs9KHyJru4Y3JBUXegcFaTcitbSa7ZnxuNmP1J28      |
-  | 9. Finalize           | ✓       | Winning option: 0                                      |
-  | 10. Redeem liquidity  | ✓       | Liquidity redeemed                                     |
-  | 11. Deposit-back      | Partial | Swap OK, deposit failed (SOL balance issue)            |
-  | 12. Verify LP         | ✓       | Admin still holds LP position                          |
-  Key findings:
-  - Mint authority check now active and working correctly
-  - Proposal creation with counter increment verified (0 → 1)
-  - Deposit-back swap works but SOL balance shows 0 after swap, preventing deposit
-  - LP is preserved - admin wallet still holds LP position
+Example Commands (Full E2E):
 
+  # Step 1: Create token + DAMM pool directly (no migration needed!)
+  TOKEN_NAME="TestDAO" TOKEN_SYMBOL="TDAO" SOL_AMOUNT=0.1 TOKEN_PERCENT=10 \
+    SKIP_METADATA=true pnpm tsx scripts/create-token-with-pool.ts
+  # Outputs: TOKEN_MINT, POOL_ADDRESS
 
-E2E Test Scripts Used
-  | Step                    | Script(s)                                                 |
-  |-------------------------|-----------------------------------------------------------|
-  | 1. Create DBC pool      | scripts/setup-test-token-damm.ts                          |
-  | 2. User migrates        | Manual (user bought tokens to trigger migration)          |
-  | 3. Create parent DAO    | scripts/test-dao-parent.ts                                |
-  | 4. Transfer mint auth   | scripts/transfer-mint-authority.ts                        |
-  | 5. Transfer LP          | scripts/e2e-transfer-lp.ts                                |
-  | 6. Verify DAO readiness | scripts/check-dao-db.ts                                   |
-  | 7. Check moderator      | scripts/check-moderator.ts                                |
-  | 8. Create proposal      | scripts/test-proposal-e2e.ts (or API: POST /dao/proposal) |
-  | 9. Finalize             | API: POST /dao/finalize-proposal                          |
-  | 10. Redeem liquidity    | API: POST /dao/redeem-liquidity                           |
-  | 11. Deposit-back        | API: POST /dao/deposit-back                               |
-  | 12. Verify LP           | scripts/check-lp-positions.ts                             |
-  Example commands:
-  # Step 1: Create DBC
-  pnpm tsx scripts/setup-test-token-damm.ts
-  # Step 3: Create parent DAO
-  API_URL=http://localhost:6770 TEST_WALLET_PRIVATE_KEY="..." \
-    DAO_NAME="TestDAO" TOKEN_MINT="..." POOL_ADDRESS="..." \
+  # Step 2: Create parent DAO
+  API_URL=http://localhost:6770 PRIVATE_KEY="..." \
+    DAO_NAME="TestDAO$(date +%s)" TOKEN_MINT="<from-step-1>" POOL_ADDRESS="<from-step-1>" \
     pnpm tsx scripts/test-dao-parent.ts
-  # Step 4: Transfer mint authority
-  TOKEN_MINT="..." NEW_AUTHORITY="..." pnpm tsx scripts/transfer-mint-authority.ts
-  # Step 5: Transfer LP
-  DAMM_POOL="..." ADMIN_WALLET="..." pnpm tsx scripts/e2e-transfer-lp.ts
-  # Step 6: Check DB
-  DAO_PDA="..." pnpm tsx scripts/check-dao-db.ts
-  # Step 7: Check moderator
-  MODERATOR_PDA="..." pnpm tsx scripts/check-moderator.ts
-  # Step 12: Check LP
-  POOL_ADDRESS="..." ADMIN_WALLET="..." pnpm tsx scripts/check-lp-positions.ts
+  # Outputs: DAO_PDA, MODERATOR_PDA, ADMIN_WALLET
+
+  # Step 3: Get mint_auth_multisig from DB, then transfer mint authority
+  DAO_PDA="<from-step-2>" pnpm tsx scripts/check-dao-db.ts
+  # Look for mint_auth_multisig in output, then:
+  TOKEN_MINT="<from-step-1>" NEW_AUTHORITY="<mint_auth_multisig from DB>" \
+    pnpm tsx scripts/transfer-mint-authority.ts
+
+  # Step 4: Transfer LP to admin wallet
+  POOL_ADDRESS="<POOL_ADDRESS from step-1>" ADMIN_WALLET="<from-step-2>" \
+    pnpm tsx scripts/e2e-transfer-lp.ts
+
+  # Step 5: Fund admin wallet (needs SOL for transaction fees)
+  ADMIN_WALLET="<from-step-2>" SOL_AMOUNT=0.2 \
+    pnpm tsx scripts/fund-admin-wallet.ts
+
+  # Step 6-7: Verify DAO and moderator state
+  DAO_PDA="<from-step-2>" pnpm tsx scripts/check-dao-db.ts
+  MODERATOR_PDA="<from-step-2>" pnpm tsx scripts/check-moderator.ts
+
+  # Step 8: Create proposal (this also waits and finalizes)
+  API_URL=http://localhost:6770 DAO_PDA="<from-step-2>" PROPOSAL_DURATION_SECS=120 \
+    pnpm tsx scripts/test-proposal-e2e.ts
+
+  # Or do steps 8-12 manually:
+  # Create proposal via API
+  curl -X POST http://localhost:6770/dao/proposal -H "Content-Type: application/json" \
+    -d '{"dao_pda": "...", "title": "Test", "description": "...", "options": ["Yes", "No"], "length_secs": 120, "wallet": "...", "signed_hash": "..."}'
+
+  # Wait 185 seconds (60s warmup + 120s duration + 5s buffer)
+  sleep 185
+
+  # Finalize
+  curl -X POST http://localhost:6770/dao/finalize-proposal -H "Content-Type: application/json" \
+    -d '{"proposal_pda": "..."}'
+
+  # Redeem liquidity
+  curl -X POST http://localhost:6770/dao/redeem-liquidity -H "Content-Type: application/json" \
+    -d '{"proposal_pda": "..."}'
+
+  # Deposit-back
+  curl -X POST http://localhost:6770/dao/deposit-back -H "Content-Type: application/json" \
+    -d '{"proposal_pda": "..."}'
+
+  # Step 13: Check LP positions
+  POOL_ADDRESS="<from-step-1>" ADMIN_WALLET="<from-step-2>" pnpm tsx scripts/check-lp-positions.ts
+
+
+Notes:
+  - Deposit-back may show "deposit_signature: null" with small test amounts due to
+    gas costs exceeding the redeemed liquidity. This is expected in testing.
+  - LP position is preserved even if deposit fails - admin wallet retains the position
+  - The withdrawal_percentage (default 12%) determines how much liquidity is used per proposal
+
+
+================================================================================
+CHILD DAO CREATION
+================================================================================
+
+Child DAOs inherit the parent's liquidity pool and moderator, but have their own:
+  - Token mint (governance token for the child DAO)
+  - Treasury multisig
+  - Mint authority multisig
+  - Admin wallet
+
+Prerequisites:
+  - Parent DAO must exist first
+  - A token mint for the child DAO (can be created with scripts/create-token.ts)
+
+Steps to create a child DAO:
+
+  # Step 1: Create a token for the child DAO (if not already existing)
+  TOKEN_NAME="ChildToken" TOKEN_SYMBOL="CHILD" SKIP_METADATA=true \
+    pnpm tsx scripts/create-token.ts
+  # Outputs: TOKEN_MINT
+
+  # Step 2: Create the child DAO
+  API_URL=http://localhost:6770 \
+    PRIVATE_KEY="<parent-dao-owner-private-key>" \
+    CHILD_DAO_NAME="MyChildDAO$(date +%s)" \
+    PARENT_PDA="<parent-dao-pda>" \
+    TOKEN_MINT="<child-token-mint-from-step-1>" \
+    pnpm tsx scripts/test-dao-child.ts
+  # Outputs: DAO_PDA, ADMIN_WALLET, TREASURY_MULTISIG, MINT_AUTH_MULTISIG
+
+  # Step 3: Verify child DAO in database
+  DAO_PDA="<child-dao-pda>" pnpm tsx scripts/check-dao-db.ts
+  # Should show: dao_type: "child", parent_dao_id: <parent-id>
+
+  # Step 4: Transfer mint authority for child token (same process as parent)
+  # Get mint_auth_multisig from database, then:
+  TOKEN_MINT="<child-token-mint>" NEW_AUTHORITY="<mint_auth_multisig from DB>" \
+    pnpm tsx scripts/transfer-mint-authority.ts
+
+Key differences from parent DAO:
+  - Child DAOs share the parent's pool_address and moderator_pda
+  - Child DAOs have their own token_mint (different from parent)
+  - Child DAOs do NOT need LP transfer (they use parent's liquidity)
+  - Child DAOs do NOT need separate admin wallet funding (they use parent's admin wallet for LP operations)
+  - Proposals on child DAOs use the shared pool for liquidity operations
+
+================================================================================
+
+
+Legacy E2E Test Plan (with DBC pool migration):
+  1. Create DBC pool - scripts/setup-test-token-damm.ts
+  2. Buy tokens to trigger migration - Manual purchase of ~0.1 SOL
+  3-12. Same as simplified flow above, starting from "Create parent DAO"

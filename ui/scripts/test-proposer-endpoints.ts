@@ -3,7 +3,7 @@
  *
  * Usage:
  *   API_URL=http://localhost:6770 \
- *   TEST_WALLET_PRIVATE_KEY="..." \
+ *   PRIVATE_KEY="..." \
  *   DAO_PDA="..." \
  *   pnpm tsx scripts/test-proposer-endpoints.ts
  */
@@ -14,11 +14,11 @@ import bs58 from 'bs58';
 import * as crypto from 'crypto';
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
-const TEST_WALLET_PRIVATE_KEY = process.env.TEST_WALLET_PRIVATE_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
 const DAO_PDA = process.env.DAO_PDA;
 
-if (!TEST_WALLET_PRIVATE_KEY) {
-  console.error('Missing TEST_WALLET_PRIVATE_KEY environment variable');
+if (!PRIVATE_KEY) {
+  console.error('Missing PRIVATE_KEY environment variable');
   process.exit(1);
 }
 
@@ -28,7 +28,7 @@ if (!DAO_PDA) {
 }
 
 // Load test wallet
-const testWallet = Keypair.fromSecretKey(bs58.decode(TEST_WALLET_PRIVATE_KEY));
+const testWallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 console.log('Test wallet:', testWallet.publicKey.toBase58());
 console.log('DAO PDA:', DAO_PDA);
 console.log('API URL:', API_URL);

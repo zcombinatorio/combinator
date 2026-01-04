@@ -1,11 +1,21 @@
 /**
  * Transfer mint authority to a new address
  *
+ * IMPORTANT: When transferring mint authority for a DAO, use the EXACT address from
+ * the database field `mint_auth_multisig`. Do NOT derive any other address.
+ *
+ * How to get the correct NEW_AUTHORITY:
+ *   1. Run: DAO_PDA="..." pnpm tsx scripts/check-dao-db.ts
+ *   2. Look for the `mint_auth_multisig` field in the output
+ *   3. Use that EXACT value as NEW_AUTHORITY
+ *
  * Usage:
- *   TOKEN_MINT="..." NEW_AUTHORITY="..." pnpm tsx scripts/transfer-mint-authority.ts
+ *   TOKEN_MINT="..." NEW_AUTHORITY="<mint_auth_multisig from DB>" pnpm tsx scripts/transfer-mint-authority.ts
  *
  * Optional:
  *   OWNER_PRIVATE_KEY - If set, use this as the current authority (defaults to PROTOCOL_PRIVATE_KEY)
+ *
+ * WARNING: Do NOT derive a vault PDA from the multisig - the DB already stores the correct address.
  */
 import 'dotenv/config';
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
@@ -15,7 +25,7 @@ import bs58 from 'bs58';
 const RPC_URL = process.env.RPC_URL;
 const TOKEN_MINT = process.env.TOKEN_MINT;
 const NEW_AUTHORITY = process.env.NEW_AUTHORITY;
-const OWNER_KEY = process.env.OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+const OWNER_KEY = process.env.OWNER_PRIVATE_KEY || process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
 
 if (!RPC_URL) throw new Error('RPC_URL is required');
 if (!TOKEN_MINT) throw new Error('TOKEN_MINT is required');
@@ -23,10 +33,10 @@ if (!NEW_AUTHORITY) throw new Error('NEW_AUTHORITY is required');
 if (!OWNER_KEY) throw new Error('OWNER_PRIVATE_KEY or PROTOCOL_PRIVATE_KEY is required');
 
 async function main() {
-  const connection = new Connection(RPC_URL, 'confirmed');
-  const keypair = Keypair.fromSecretKey(bs58.decode(OWNER_KEY));
-  const tokenMint = new PublicKey(TOKEN_MINT);
-  const newAuthority = new PublicKey(NEW_AUTHORITY);
+  const connection = new Connection(RPC_URL!, 'confirmed');
+  const keypair = Keypair.fromSecretKey(bs58.decode(OWNER_KEY!));
+  const tokenMint = new PublicKey(TOKEN_MINT!);
+  const newAuthority = new PublicKey(NEW_AUTHORITY!);
 
   console.log('=== Transfer Mint Authority ===');
   console.log(`Token Mint: ${TOKEN_MINT}`);

@@ -4,7 +4,7 @@
  *
  * Usage:
  *   API_URL=http://localhost:6770 \
- *   TEST_WALLET_PRIVATE_KEY="..." \
+ *   PRIVATE_KEY="..." \
  *   DAO_PDA="..." \
  *   pnpm tsx scripts/test-proposal-auth-flow.ts
  */
@@ -15,15 +15,15 @@ import bs58 from 'bs58';
 import { Keypair } from '@solana/web3.js';
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
-const TEST_WALLET_PRIVATE_KEY = process.env.TEST_WALLET_PRIVATE_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
 const DAO_PDA = process.env.DAO_PDA;
 
-if (!TEST_WALLET_PRIVATE_KEY || !DAO_PDA) {
-  console.error('Missing TEST_WALLET_PRIVATE_KEY or DAO_PDA');
+if (!PRIVATE_KEY || !DAO_PDA) {
+  console.error('Missing PRIVATE_KEY or DAO_PDA');
   process.exit(1);
 }
 
-const ownerWallet = Keypair.fromSecretKey(bs58.decode(TEST_WALLET_PRIVATE_KEY));
+const ownerWallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const unauthorizedWallet = Keypair.generate();
 
 console.log('=== Proposal Authorization Flow Test ===\n');
