@@ -10,6 +10,8 @@
  */
 
 import 'dotenv/config';
+import { getPool } from '../lib/db';
+import { getAllDaos } from '../lib/db/daos';
 import {
   Connection,
   Keypair,
@@ -40,14 +42,14 @@ const CONFIG = {
   ZC_MINT: 'GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC',
   USDC_MINT: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // Mainnet USDC
 
-  // DAMM pool addresses to claim fees from (Dynamic AMM v2)
-  DAMM_POOLS: [
+  // Legacy DAMM pool addresses (hardcoded for backward compatibility)
+  LEGACY_DAMM_POOLS: [
     'BTYhoRPEUXs8ESYFjKDXRYf5qjH4chzZoBokMEApKEfJ', // SolPay
     'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1', // SurfCash
   ] as string[],
 
-  // DLMM pool addresses to claim fees from (Dynamic Liquidity Market Maker)
-  DLMM_POOLS: [
+  // Legacy DLMM pool addresses (hardcoded for backward compatibility)
+  LEGACY_DLMM_POOLS: [
     '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2', // ZC DLMM pool
   ] as string[],
 
@@ -202,6 +204,45 @@ function logError(message: string, error: unknown) {
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ============================================================================
+// DAO POOL FETCHING (direct DB access)
+// ============================================================================
+
+interface DaoPoolsResult {
+  dammPools: string[];
+  dlmmPools: string[];
+  totalDaos: number;
+}
+
+/**
+ * Fetch DAO pools directly from the database.
+ * These are programmatically created DAOs that also need fee claiming.
+ */
+async function fetchDaoPools(): Promise<DaoPoolsResult> {
+  try {
+    const pool = getPool();
+    const daos = await getAllDaos(pool, { daoType: 'parent' });
+
+    const dammPools: string[] = [];
+    const dlmmPools: string[] = [];
+
+    for (const dao of daos) {
+      if (dao.pool_address) {
+        if (dao.pool_type === 'damm') {
+          dammPools.push(dao.pool_address);
+        } else if (dao.pool_type === 'dlmm') {
+          dlmmPools.push(dao.pool_address);
+        }
+      }
+    }
+
+    return { dammPools, dlmmPools, totalDaos: daos.length };
+  } catch (error) {
+    logError('Error fetching DAO pools from database, continuing with legacy pools only', error);
+    return { dammPools: [], dlmmPools: [], totalDaos: 0 };
+  }
 }
 
 // ============================================================================
@@ -643,16 +684,27 @@ async function main() {
   // ========================================================================
   log('\n--- STEP 1: Claiming LP Fees ---');
 
+  // Fetch DAO pools from database and merge with legacy pools
+  log('Fetching DAO pools from database...');
+  const daoPools = await fetchDaoPools();
+  log(`Found ${daoPools.totalDaos} DAO(s) with ${daoPools.dammPools.length} DAMM and ${daoPools.dlmmPools.length} DLMM pools`);
+
+  // Merge and deduplicate pools (legacy + DAO)
+  const allDammPools = [...new Set([...CONFIG.LEGACY_DAMM_POOLS, ...daoPools.dammPools])];
+  const allDlmmPools = [...new Set([...CONFIG.LEGACY_DLMM_POOLS, ...daoPools.dlmmPools])];
+
+  log(`Total pools to claim: ${allDammPools.length} DAMM, ${allDlmmPools.length} DLMM`);
+
   // Track results for both DAMM and DLMM claims
   const dammClaimResults: { pool: string; signature: string | null }[] = [];
   const dlmmClaimResults: { pool: string; signatures: string[] | null }[] = [];
 
   // Claim from DAMM pools
-  if (CONFIG.DAMM_POOLS.length === 0) {
+  if (allDammPools.length === 0) {
     log('No DAMM pools configured.');
   } else {
-    log(`Claiming from ${CONFIG.DAMM_POOLS.length} DAMM pool(s)...`);
-    for (const poolAddress of CONFIG.DAMM_POOLS) {
+    log(`Claiming from ${allDammPools.length} DAMM pool(s)...`);
+    for (const poolAddress of allDammPools) {
       const signature = await claimFeesFromPool(wallet, poolAddress);
       dammClaimResults.push({ pool: poolAddress, signature });
 
@@ -662,11 +714,11 @@ async function main() {
   }
 
   // Claim from DLMM pools
-  if (CONFIG.DLMM_POOLS.length === 0) {
+  if (allDlmmPools.length === 0) {
     log('No DLMM pools configured.');
   } else {
-    log(`Claiming from ${CONFIG.DLMM_POOLS.length} DLMM pool(s)...`);
-    for (const poolAddress of CONFIG.DLMM_POOLS) {
+    log(`Claiming from ${allDlmmPools.length} DLMM pool(s)...`);
+    for (const poolAddress of allDlmmPools) {
       const signatures = await claimFeesFromDlmmPool(wallet, poolAddress);
       dlmmClaimResults.push({ pool: poolAddress, signatures });
 

@@ -25,7 +25,7 @@ import * as crypto from 'crypto';
 import bs58 from 'bs58';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { futarchy } from '@zcomb/programs-sdk';
-import { CpAmm } from '@meteora-ag/cp-amm-sdk';
+import { CpAmm, feeNumeratorToBps, getFeeNumerator } from '@meteora-ag/cp-amm-sdk';
 import DLMM from '@meteora-ag/dlmm';
 import * as multisig from '@sqds/multisig';
 
@@ -509,6 +509,7 @@ interface PoolInfo {
   poolType: 'damm' | 'dlmm';
   tokenAMint: string;
   tokenBMint: string;
+  feeBps: number;  // Pool trading fee in basis points (e.g., 50 = 0.5%)
 }
 
 /**
@@ -528,18 +529,47 @@ async function getPoolInfo(connection: Connection, poolAddress: PublicKey): Prom
     // DAMM pool - use CpAmm SDK
     const cpAmm = new CpAmm(connection);
     const poolState = await cpAmm.fetchPoolState(poolAddress);
+
+    // Calculate STEADY STATE fee rate (after all decay periods complete)
+    // DAMM pools can have time-decaying fees, so we need to check what the
+    // minimum fee will be to ensure the DAO always receives sufficient fees.
+    // Compute a point far enough in the future that all periods have elapsed:
+    // steadyStatePoint = activationPoint + (numberOfPeriod + 1) * periodFrequency
+    const baseFee = poolState.poolFees.baseFee;
+    const steadyStatePoint = poolState.activationPoint
+      .add(baseFee.periodFrequency.muln(baseFee.numberOfPeriod + 1))
+      .toNumber();
+
+    const steadyStateFeeNumerator = getFeeNumerator(
+      steadyStatePoint,
+      poolState.activationPoint,
+      baseFee.numberOfPeriod,
+      baseFee.periodFrequency,
+      baseFee.feeSchedulerMode,
+      baseFee.cliffFeeNumerator,
+      baseFee.reductionFactor,
+    );
+
+    const feeBps = feeNumeratorToBps(steadyStateFeeNumerator);
     return {
       poolType: 'damm',
       tokenAMint: poolState.tokenAMint.toBase58(),
       tokenBMint: poolState.tokenBMint.toBase58(),
+      feeBps,
     };
   } else if (owner.equals(DLMM_PROGRAM_ID)) {
     // DLMM pool - use DLMM SDK
     const dlmmPool = await DLMM.create(connection, poolAddress);
+    // Use SDK's getFeeInfo() which correctly calculates:
+    // baseFee = baseFactor * binStep * 10 * 10^baseFeePowerFactor
+    // Returns baseFeeRatePercentage as a Decimal (0-100%), multiply by 100 to get bps
+    const feeInfo = dlmmPool.getFeeInfo();
+    const feeBps = feeInfo.baseFeeRatePercentage.mul(100).toNumber();
     return {
       poolType: 'dlmm',
       tokenAMint: dlmmPool.lbPair.tokenXMint.toBase58(),
       tokenBMint: dlmmPool.lbPair.tokenYMint.toBase58(),
+      feeBps,
     };
   } else {
     throw new Error(`Unknown pool program: ${owner.toBase58()}. Expected DAMM or DLMM.`);
@@ -835,6 +865,18 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
     }
 
     const pool_type = poolInfo.poolType;
+
+    // Validate pool fee rate is sufficient for protocol to capture 0.5% of swap volume
+    // Meteora takes 20% of pool fees, so LP only receives 80%
+    // To capture 0.5% of swap volume: poolFee * 0.8 >= 0.5% → poolFee >= 0.625% (63bps)
+    const MIN_FEE_BPS = 63;
+    if (poolInfo.feeBps < MIN_FEE_BPS) {
+      return res.status(400).json({
+        error: `Pool fee rate too low. Minimum required: ${MIN_FEE_BPS}bps (${(MIN_FEE_BPS / 100).toFixed(2)}%). Pool has: ${poolInfo.feeBps}bps (${(poolInfo.feeBps / 100).toFixed(2)}%). Protocol requires at least 0.5% of swap volume after Meteora's 20% fee.`,
+        pool_fee_bps: poolInfo.feeBps,
+        min_fee_bps: MIN_FEE_BPS,
+      });
+    }
 
     // Derive quote_mint from pool tokens and token_mint
     let quote_mint: string;

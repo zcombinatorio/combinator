@@ -29,8 +29,11 @@ import {
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
-import { CpAmm, getTokenProgram, getUnClaimReward } from '@meteora-ag/cp-amm-sdk';
+import { CpAmm, getTokenProgram, getUnClaimReward, feeNumeratorToBps, getFeeNumerator } from '@meteora-ag/cp-amm-sdk';
 import rateLimit from 'express-rate-limit';
+import { getPool } from '../lib/db';
+import { getDaoByPoolAddress } from '../lib/db/daos';
+import { fetchKeypair } from '../lib/keyService';
 
 /**
  * Fee Claim Routes
@@ -46,27 +49,156 @@ const router = Router();
 // Maps pool address to list of fee recipients with their percentage share
 // Percentages must sum to 100 for each pool
 
+// Protocol fee wallet - receives protocol's share of trading fees
+const PROTOCOL_FEE_WALLET = 'FEEnkcCNE2623LYCPtLf63LFzXpCFigBLTu4qZovRGZC';
+
+// Protocol target fee rate: 0.5% of swap volume
+// Meteora takes 20% of pool fees, so LP owner only receives 80%
+// Formula: protocol_percent = (0.5 / (pool_fee_rate * 0.8)) * 100
+const PROTOCOL_TARGET_FEE_PERCENT = 0.5;
+const METEORA_FEE_PERCENT = 0.20;  // Meteora takes 20% of collected fees
+
 interface FeeRecipient {
   address: string;  // Solana wallet address
   percent: number;  // Percentage of fees (0-100)
 }
 
-const POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
+interface PoolFeeConfigResult {
+  feeRecipients: FeeRecipient[];
+  lpOwnerKeypair: Keypair;
+  source: 'legacy' | 'dao';
+  daoName?: string;
+}
+
+// Legacy hardcoded pool configurations (for backward compatibility)
+const LEGACY_POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
   // SolPay
   'BTYhoRPEUXs8ESYFjKDXRYf5qjH4chzZoBokMEApKEfJ': [
     { address: '3KJab78N7AmVU8ZwRx5bVyVnSxHd9W1cKzvuwbx3sW1r', percent: 70 },
-    { address: 'FEEnkcCNE2623LYCPtLf63LFzXpCFigBLTu4qZovRGZC', percent: 30 },
+    { address: PROTOCOL_FEE_WALLET, percent: 30 },
   ],
   // SurfCash
   'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': [
     { address: 'BmfaxQCRqf4xZFmQa5GswShBZhRBf4bED7hadFkpgBC3', percent: 34.375 },
     { address: 'HU65idnreBAe9gsLzSGTV7w7tVTzaSzXBw518F1aQrGv', percent: 34.375 },
-    { address: 'FEEnkcCNE2623LYCPtLf63LFzXpCFigBLTu4qZovRGZC', percent: 31.25 },
+    { address: PROTOCOL_FEE_WALLET, percent: 31.25 },
   ],
 };
 
-function getPoolFeeConfig(poolAddress: string): FeeRecipient[] | null {
-  return POOL_FEE_CONFIG[poolAddress] || null;
+/**
+ * Calculate protocol fee percentage based on pool fee rate.
+ * Protocol targets 0.5% of swap volume.
+ * Meteora takes 20% of pool fees, so LP only receives 80%.
+ * Formula: protocol_percent = (0.5 / (pool_fee_rate * 0.8)) * 100
+ *
+ * Example with 2% pool fee:
+ * - Pool collects 2% of swap volume
+ * - Meteora takes 20% → 0.4% goes to Meteora
+ * - LP receives 80% → 1.6% of swap volume
+ * - Protocol wants 0.5% → needs 0.5/1.6 = 31.25% of LP's share
+ *
+ * @param poolFeeBps - Pool fee rate in basis points
+ * @returns Protocol fee percentage (0-100)
+ */
+function calculateProtocolFeePercent(poolFeeBps: number): number {
+  if (poolFeeBps <= 0) {
+    throw new Error(`Invalid pool fee: ${poolFeeBps}bps. Pool fee must be positive.`);
+  }
+  const poolFeePercent = poolFeeBps / 100;  // Convert bps to percent
+  const lpSharePercent = poolFeePercent * (1 - METEORA_FEE_PERCENT);  // LP gets 80%
+  const protocolPercent = (PROTOCOL_TARGET_FEE_PERCENT / lpSharePercent) * 100;
+  // Cap at 100% (for pools where LP share equals or is less than 0.5%)
+  return Math.min(protocolPercent, 100);
+}
+
+/**
+ * Get fee configuration for a pool.
+ * First checks legacy hardcoded config, then database for DAO pools.
+ * For DAO pools, dynamically calculates protocol fee based on pool fee rate.
+ */
+async function getPoolFeeConfig(
+  connection: Connection,
+  poolAddress: string
+): Promise<PoolFeeConfigResult | null> {
+  // First, check legacy hardcoded config
+  const legacyConfig = LEGACY_POOL_FEE_CONFIG[poolAddress];
+  if (legacyConfig) {
+    // Get pool-specific LP private key from env
+    const poolPrefix = poolAddress.substring(0, 8);
+    const lpPrivateKeyEnvName = `LP_PRIVATE_KEY_${poolPrefix}`;
+    const lpPrivateKey = process.env[lpPrivateKeyEnvName];
+    if (!lpPrivateKey) {
+      return null;  // Legacy pool but no key configured
+    }
+    return {
+      feeRecipients: legacyConfig,
+      lpOwnerKeypair: Keypair.fromSecretKey(bs58.decode(lpPrivateKey)),
+      source: 'legacy',
+    };
+  }
+
+  // Check database for DAO pools
+  const pool = getPool();
+  const dao = await getDaoByPoolAddress(pool, poolAddress);
+
+  if (dao && dao.pool_type === 'damm') {
+    // Fetch pool state to get fee rate
+    const cpAmm = new CpAmm(connection);
+    const poolState = await cpAmm.fetchPoolState(new PublicKey(poolAddress));
+
+    // Calculate current fee rate using getFeeNumerator
+    // activationType 1 = timestamp-based, 0 = slot-based
+    const currentPoint = poolState.activationType === 1
+      ? Math.floor(Date.now() / 1000)  // Current timestamp
+      : await connection.getSlot();     // Current slot
+
+    const baseFee = poolState.poolFees.baseFee;
+    const currentFeeNumerator = getFeeNumerator(
+      currentPoint,
+      poolState.activationPoint,
+      baseFee.numberOfPeriod,
+      baseFee.periodFrequency,
+      baseFee.feeSchedulerMode,
+      baseFee.cliffFeeNumerator,
+      baseFee.reductionFactor,
+    );
+
+    const poolFeeBps = feeNumeratorToBps(currentFeeNumerator);
+
+    // Calculate dynamic protocol fee percentage
+    const protocolPercent = calculateProtocolFeePercent(poolFeeBps);
+    const daoPercent = 100 - protocolPercent;
+
+    // Get LP owner keypair from key service
+    const lpOwnerKeypair = await fetchKeypair(dao.admin_key_idx);
+
+    // Build fee recipients: protocol + DAO treasury
+    const feeRecipients: FeeRecipient[] = [
+      { address: PROTOCOL_FEE_WALLET, percent: protocolPercent },
+    ];
+
+    // Add DAO treasury if they get a share
+    if (daoPercent > 0) {
+      if (!dao.treasury_multisig) {
+        throw new Error(`DAO "${dao.dao_name}" is entitled to ${daoPercent.toFixed(2)}% of fees but has no treasury configured. The DAO must set up a treasury before fees can be claimed.`);
+      }
+      feeRecipients.push({
+        address: dao.treasury_multisig,  // This is actually treasury_vault (see dao.ts comment)
+        percent: daoPercent,
+      });
+    }
+
+    console.log(`[Fee Claim] DAO pool ${dao.dao_name}: pool fee ${poolFeeBps}bps, protocol ${protocolPercent.toFixed(2)}%, DAO ${daoPercent.toFixed(2)}%`);
+
+    return {
+      feeRecipients,
+      lpOwnerKeypair,
+      source: 'dao',
+      daoName: dao.dao_name,
+    };
+  }
+
+  return null;  // Pool not found
 }
 
 // Rate limiter for fee claim endpoints
@@ -187,36 +319,26 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       });
     }
 
-    // Get pool fee configuration
-    const feeConfig = getPoolFeeConfig(poolAddress.toBase58());
-    if (!feeConfig || feeConfig.length === 0) {
+    // Initialize connection
+    const connection = new Connection(RPC_URL, 'confirmed');
+
+    // Get pool fee configuration (checks legacy config, then database for DAO pools)
+    const feeConfig = await getPoolFeeConfig(connection, poolAddress.toBase58());
+    if (!feeConfig) {
       return res.status(400).json({
         error: `Pool not supported for fee claiming. No fee configuration for pool: ${poolAddress.toBase58()}`
       });
     }
 
+    const { feeRecipients, lpOwnerKeypair: lpOwner, source, daoName } = feeConfig;
+
     // Validate fee percentages sum to 100
-    const totalPercent = feeConfig.reduce((sum, r) => sum + r.percent, 0);
-    if (totalPercent !== 100) {
+    const totalPercent = feeRecipients.reduce((sum, r) => sum + r.percent, 0);
+    if (Math.abs(totalPercent - 100) > 0.01) {  // Allow small floating point tolerance
       return res.status(500).json({
         error: `Invalid fee configuration for pool. Percentages sum to ${totalPercent}, expected 100.`
       });
     }
-
-    // Get pool-specific LP private key using first 8 characters of pool address
-    const poolPrefix = poolAddress.toBase58().substring(0, 8);
-    const lpPrivateKeyEnvName = `LP_PRIVATE_KEY_${poolPrefix}`;
-    const lpPrivateKey = process.env[lpPrivateKeyEnvName];
-
-    if (!lpPrivateKey) {
-      return res.status(400).json({
-        error: `Pool not supported for fee claiming. No LP key configured for pool prefix: ${poolPrefix}`
-      });
-    }
-
-    // Initialize connection and keypairs
-    const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwner = Keypair.fromSecretKey(bs58.decode(lpPrivateKey));
 
     // Create CpAmm instance and get pool state
     const cpAmm = new CpAmm(connection);
@@ -322,7 +444,7 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
     combinedTx.add(...claimTx.instructions);
 
     // Add transfer instructions for each fee recipient based on their percentage
-    for (const recipient of feeConfig) {
+    for (const recipient of feeRecipients) {
       const destinationAddress = new PublicKey(recipient.address);
 
       // Calculate this recipient's share of fees
@@ -427,7 +549,7 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
     console.log(`  Positions: ${userPositions.length} (claiming from position 1)`);
     console.log(`  Token A fees: ${totalTokenAFees.toString()}`);
     console.log(`  Token B fees: ${totalTokenBFees.toString()}`);
-    console.log(`  Fee recipients: ${feeConfig.map(r => `${r.address.substring(0, 8)}...(${r.percent}%)`).join(', ')}`);
+    console.log(`  Fee recipients: ${feeRecipients.map(r => `${r.address.substring(0, 8)}...(${r.percent}%)`).join(', ')}`);
     console.log(`  Request ID: ${requestId}`);
 
     // Store transaction data in memory
@@ -439,7 +561,7 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       tokenBMint: poolState.tokenBMint.toBase58(),
       lpOwnerAddress: lpOwner.publicKey.toBase58(),
       feePayerAddress: payerPubKey.toBase58(),
-      feeRecipients: feeConfig,
+      feeRecipients,
       estimatedTokenAFees: totalTokenAFees.toString(),
       estimatedTokenBFees: totalTokenBFees.toString(),
       positionsCount: 1,
@@ -457,7 +579,7 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       totalPositions: userPositions.length,
       claimingPosition: 1,
       instructionsCount: combinedTx.instructions.length,
-      feeRecipients: feeConfig,
+      feeRecipients,
       estimatedFees: {
         tokenA: totalTokenAFees.toString(),
         tokenB: totalTokenBFees.toString(),
@@ -520,7 +642,9 @@ router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => 
     releaseLock = await acquireFeeClaimLock(feeClaimData.poolAddress);
     console.log('  Lock acquired');
 
-    // NOTE: No authorization check needed - fee recipients are hardcoded in POOL_FEE_CONFIG
+    // NOTE: No authorization check needed - fee recipients are either:
+    // 1. Hardcoded in LEGACY_POOL_FEE_CONFIG for legacy pools
+    // 2. Dynamically determined from database for DAO pools (protocol + DAO treasury)
     // Transaction hash verification ensures the exact transaction from /claim is submitted
     // Fee payer only covers transaction costs, cannot redirect funds
     // This allows anyone to trigger fee claims, which is the intended design
@@ -543,20 +667,18 @@ router.post('/confirm', feeClaimLimiter, async (req: Request, res: Response) => 
       });
     }
 
-    // Get pool-specific LP private key using first 8 characters of pool address
-    const poolPrefix = feeClaimData.poolAddress.substring(0, 8);
-    const lpPrivateKeyEnvName = `LP_PRIVATE_KEY_${poolPrefix}`;
-    const lpPrivateKey = process.env[lpPrivateKeyEnvName];
+    // Initialize connection
+    const connection = new Connection(RPC_URL, 'confirmed');
 
-    if (!lpPrivateKey) {
+    // Get pool fee configuration to retrieve LP keypair (checks legacy config, then database)
+    const poolFeeConfig = await getPoolFeeConfig(connection, feeClaimData.poolAddress);
+    if (!poolFeeConfig) {
       return res.status(400).json({
-        error: `Pool not supported for fee claiming. No LP key configured for pool prefix: ${poolPrefix}`
+        error: `Pool not supported for fee claiming: ${feeClaimData.poolAddress}`
       });
     }
 
-    // Initialize connection and LP owner keypair
-    const connection = new Connection(RPC_URL, 'confirmed');
-    const lpOwnerKeypair = Keypair.fromSecretKey(bs58.decode(lpPrivateKey));
+    const lpOwnerKeypair = poolFeeConfig.lpOwnerKeypair;
 
     // Deserialize and verify the transaction
     const expectedFeePayer = new PublicKey(feeClaimData.feePayerAddress);
