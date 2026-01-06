@@ -261,6 +261,7 @@ export interface Dao {
   // Liquidity withdrawal config
   withdrawal_percentage: number; // Percentage of LP to withdraw for proposals (1-50, default 12)
   // Metadata
+  verified?: boolean;
   created_at?: Date;
 }
 

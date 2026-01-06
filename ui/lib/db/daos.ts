@@ -118,7 +118,7 @@ export async function updateKeyDaoId(
 
 export async function createDao(
   pool: Pool,
-  dao: Omit<Dao, 'id' | 'created_at'>
+  dao: Omit<Dao, 'id' | 'created_at' | 'verified'>
 ): Promise<Dao> {
   const query = `
     INSERT INTO cmb_daos (
@@ -158,7 +158,7 @@ export async function createDao(
     dao.treasury_cosigner,
     dao.parent_dao_id || null,
     dao.dao_type,
-    dao.withdrawal_percentage ?? 12  // Default to 12% if not specified
+    dao.withdrawal_percentage
   ];
 
   try {
