@@ -2575,4 +2575,152 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
   }
 });
 
+// POST /dao/crank-twap - Crank TWAP for all pools on a proposal
+// ============================================================================
+// Permissionless endpoint that updates the TWAP oracle for each pool on a proposal.
+// This can be called by anyone to ensure TWAP values are current.
+// The DAO's admin keypair is used to pay for transaction fees.
+// ============================================================================
+
+router.post('/crank-twap', async (req: Request, res: Response) => {
+  try {
+    const { proposal_pda } = req.body;
+
+    // Validate required fields
+    if (!proposal_pda) {
+      return res.status(400).json({
+        error: 'Missing required field: proposal_pda'
+      });
+    }
+
+    // Validate PDA is valid public key
+    if (!isValidTokenMintAddress(proposal_pda)) {
+      return res.status(400).json({ error: 'Invalid proposal_pda' });
+    }
+
+    const pool = getPool();
+    const connection = getConnection();
+
+    // Create a read-only provider to fetch proposal first
+    const readProvider = new AnchorProvider(
+      connection,
+      { publicKey: PublicKey.default, signTransaction: async (tx: Transaction) => tx, signAllTransactions: async (txs: Transaction[]) => txs } as any,
+      { commitment: 'confirmed' }
+    );
+    const readClient = new futarchy.FutarchyClient(readProvider);
+
+    // Fetch proposal from on-chain
+    const proposalPubkey = new PublicKey(proposal_pda);
+    let proposal;
+    try {
+      proposal = await readClient.fetchProposal(proposalPubkey);
+    } catch (err) {
+      return res.status(404).json({
+        error: 'Proposal not found on-chain',
+        details: String(err)
+      });
+    }
+
+    // Get moderator PDA from proposal and lookup DAO
+    const moderatorPda = proposal.moderator.toBase58();
+    const dao = await getDaoByModeratorPda(pool, moderatorPda);
+    if (!dao) {
+      return res.status(404).json({
+        error: 'DAO not found for this proposal',
+        moderator_pda: moderatorPda
+      });
+    }
+
+    if (dao.admin_key_idx === undefined || dao.admin_key_idx === null) {
+      return res.status(500).json({ error: 'DAO has no admin key index' });
+    }
+
+    // Get admin keypair to pay for transactions
+    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
+
+    // Create provider and client with admin keypair
+    const provider = createProvider(adminKeypair);
+    const client = new futarchy.FutarchyClient(provider);
+
+    // Get all valid pools from the proposal
+    // The pools array is fixed-size (6), but only numOptions are used.
+    // Additionally, some pools may be null (Pubkey.default = 11111111111111111111111111111111)
+    const numOptions = proposal.numOptions;
+    const validPools = proposal.pools
+      .slice(0, numOptions)
+      .filter((pool: PublicKey) => !pool.equals(PublicKey.default));
+
+    console.log(`Cranking TWAP for proposal ${proposal_pda}`);
+    console.log(`  DAO: ${dao.dao_name} (${dao.dao_pda})`);
+    console.log(`  Total options: ${numOptions}, valid pools: ${validPools.length}`);
+
+    // Crank TWAP for each valid pool (only if warmup passed and enough time since last crank)
+    // Note: On-chain code handles early cranks gracefully (returns cached TWAP), but still costs gas
+    const now = Math.floor(Date.now() / 1000);
+    const results: { pool: string; signature?: string; skipped?: boolean; reason?: string }[] = [];
+
+    for (let i = 0; i < validPools.length; i++) {
+      const poolPda = validPools[i];
+      try {
+        // Fetch pool to check oracle timing
+        const poolAccount = await client.amm.fetchPool(poolPda);
+        const oracle = poolAccount.oracle;
+
+        // Check 1: Warmup period must have passed
+        const createdAt = Number(oracle.createdAtUnixTime);
+        const warmupDuration = Number(oracle.warmupDuration);
+        const warmupEndsAt = createdAt + warmupDuration;
+
+        if (now < warmupEndsAt) {
+          const waitTime = warmupEndsAt - now;
+          console.log(`  Pool ${i} (${poolPda.toBase58()}): skipped, warmup ends in ${waitTime}s`);
+          results.push({
+            pool: poolPda.toBase58(),
+            skipped: true,
+            reason: `Warmup period: ${waitTime}s remaining`
+          });
+          continue;
+        }
+
+        // Check 2: Minimum recording interval must have passed since last crank
+        const lastUpdate = Number(oracle.lastUpdateUnixTime);
+        const minInterval = Number(oracle.minRecordingInterval);
+        const timeSinceLastUpdate = now - lastUpdate;
+
+        if (timeSinceLastUpdate < minInterval) {
+          const waitTime = minInterval - timeSinceLastUpdate;
+          console.log(`  Pool ${i} (${poolPda.toBase58()}): skipped, ${waitTime}s until next crank`);
+          results.push({
+            pool: poolPda.toBase58(),
+            skipped: true,
+            reason: `Rate limited: ${waitTime}s until next crank (interval: ${minInterval}s)`
+          });
+          continue;
+        }
+
+        const builder = await client.amm.crankTwap(poolPda);
+        const tx = await builder.rpc();
+        console.log(`  Pool ${i} (${poolPda.toBase58()}): ${tx}`);
+        results.push({ pool: poolPda.toBase58(), signature: tx });
+      } catch (err) {
+        console.error(`  Pool ${i} (${poolPda.toBase58()}) failed:`, err);
+        results.push({ pool: poolPda.toBase58(), reason: `error: ${String(err)}` });
+      }
+    }
+
+    res.json({
+      message: 'TWAP crank completed',
+      proposal_pda,
+      dao_pda: dao.dao_pda,
+      num_options: numOptions,
+      pools_cranked: validPools.length,
+      results
+    });
+
+  } catch (error) {
+    console.error('Error cranking TWAP:', error);
+    res.status(500).json({ error: 'Failed to crank TWAP', details: String(error) });
+  }
+});
+
 export default router;

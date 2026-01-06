@@ -123,6 +123,69 @@ Notes:
 
 
 ================================================================================
+TWAP CRANKING
+================================================================================
+
+The TWAP (Time-Weighted Average Price) oracle needs to be cranked periodically during
+a proposal's trading period to record price observations. This is used to determine
+the winning outcome when the proposal is finalized.
+
+Endpoint: POST /dao/crank-twap
+  - Permissionless (no wallet signature required)
+  - Takes a proposal_pda
+  - Cranks TWAP for all valid pools on the proposal
+
+Request:
+  {
+    "proposal_pda": "<proposal-pda>"
+  }
+
+Response:
+  {
+    "proposal_pda": "...",
+    "pools_cranked": 2,
+    "results": [
+      { "pool": "...", "signature": "..." },           // Successfully cranked
+      { "pool": "...", "skipped": true, "reason": "..." }  // Skipped (see below)
+    ]
+  }
+
+Skip reasons:
+  - "Warmup period not ended (X seconds remaining)" - TWAP oracle is still warming up
+  - "Too soon since last crank (X seconds remaining)" - Minimum 60s between cranks
+
+Timing constraints:
+  - Warmup period: First ~half of proposal duration (or max 5 min), no cranking allowed
+  - Rate limit: Must wait at least 60 seconds between cranks per pool
+  - Cranking before these thresholds wastes gas (tx succeeds but returns cached value)
+
+Test script:
+  # Full lifecycle test with TWAP cranking
+  API_URL=http://localhost:6770 \
+    TEST_WALLET_PRIVATE_KEY="<wallet-private-key>" \
+    DAO_PDA="<dao-pda>" \
+    PROPOSAL_DURATION_SECS=240 \
+    pnpm tsx scripts/test-crank-twap.ts
+
+  # Manual crank via curl
+  curl -X POST http://localhost:6770/dao/crank-twap \
+    -H "Content-Type: application/json" \
+    -d '{"proposal_pda": "..."}'
+
+Integration with proposal lifecycle:
+  1. Create proposal (POST /dao/proposal)
+  2. Wait for warmup to end (~half of proposal duration)
+  3. Crank TWAP every 60+ seconds during trading period (POST /dao/crank-twap)
+  4. Wait for proposal to end
+  5. Finalize proposal (POST /dao/finalize-proposal)
+  6. Redeem liquidity (POST /dao/redeem-liquidity)
+  7. Deposit back (POST /dao/deposit-back)
+
+Note: TWAP cranking is optional but recommended for accurate price discovery.
+If not cranked, the oracle uses cached/interpolated values.
+
+
+================================================================================
 CHILD DAO CREATION
 ================================================================================
 
