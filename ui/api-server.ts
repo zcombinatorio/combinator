@@ -45,7 +45,7 @@ const baseMintKeypairs = new Map<string, string>();
 
 const limiter = rateLimit({
   windowMs: 2 * 60 * 1000, // 2 minutes
-  max: 16, // 16 requests per IP per window
+  max: 160, // 160 requests per IP per window
   keyGenerator: (req) => {
     // Cloudflare sends the real client IP in the CF-Connecting-IP header
     const cfIp = req.headers['cf-connecting-ip'];
