@@ -930,12 +930,14 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
         let title = `Proposal #${proposalId}`;
         let description = '';
         let options: string[] = ['Pass', 'Fail'];
-        let status: 'Setup' | 'Pending' | 'Passed' | 'Failed' = 'Pending';
+        let status: 'Setup' | 'Pending' | 'Resolved' = 'Pending';
         let finalizedAt: number | null = null;
         let endsAt: number | null = null;
         let createdAt: number = Date.now();
         let metadataCid: string | null = null;
         let metadataDaoPda: string | null = null;
+        let winningIndex: number | null = null;
+        let vault: string = '';
 
         // Fetch on-chain state
         try {
@@ -947,14 +949,16 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
           createdAt = proposalAccount.createdAt.toNumber() * 1000; // Convert to milliseconds
           endsAt = createdAt + (proposalLength * 1000);
 
-          // Get metadata CID from on-chain
+          // Get metadata CID and vault from on-chain
           metadataCid = proposalAccount.metadata || null;
+          vault = proposalAccount.vault.toBase58();
 
           // Determine status
           if (parsedState.state === 'setup') {
             status = 'Setup';
           } else if (parsedState.state === 'resolved') {
-            status = parsedState.winningIdx === 0 ? 'Passed' : 'Failed';
+            status = 'Resolved';
+            winningIndex = parsedState.winningIdx;
             finalizedAt = Date.now(); // Approximate
           } else {
             status = 'Pending';
@@ -988,6 +992,8 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
           description,
           options,
           status,
+          winningIndex,
+          vault,
           createdAt,
           endsAt,
           finalizedAt,
@@ -1084,12 +1090,14 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
             let title = `Proposal #${proposalId}`;
             let description = '';
             let options: string[] = ['Pass', 'Fail'];
-            let status: 'Setup' | 'Pending' | 'Passed' | 'Failed' = 'Pending';
+            let status: 'Setup' | 'Pending' | 'Resolved' = 'Pending';
             let finalizedAt: number | null = null;
             let endsAt: number | null = null;
             let createdAt: number = Date.now();
             let metadataCid: string | null = null;
             let metadataDaoPda: string | null = null;
+            let winningIndex: number | null = null;
+            let vault: string = '';
 
             try {
               const proposalAccount = await readClient.fetchProposal(proposalPda);
@@ -1099,11 +1107,13 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
               createdAt = proposalAccount.createdAt.toNumber() * 1000;
               endsAt = createdAt + (proposalLength * 1000);
               metadataCid = proposalAccount.metadata || null;
+              vault = proposalAccount.vault.toBase58();
 
               if (parsedState.state === 'setup') {
                 status = 'Setup';
               } else if (parsedState.state === 'resolved') {
-                status = parsedState.winningIdx === 0 ? 'Passed' : 'Failed';
+                status = 'Resolved';
+                winningIndex = parsedState.winningIdx;
                 finalizedAt = Date.now();
               } else {
                 status = 'Pending';
@@ -1141,6 +1151,8 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
               description,
               options,
               status,
+              winningIndex,
+              vault,
               createdAt,
               endsAt,
               finalizedAt,
@@ -1210,11 +1222,13 @@ router.get('/proposal/:proposalPda', async (req: Request, res: Response) => {
 
     // Parse on-chain state
     const parsedState = futarchy.parseProposalState(proposalAccount.state);
-    let status: 'Setup' | 'Pending' | 'Passed' | 'Failed' = 'Pending';
+    let status: 'Setup' | 'Pending' | 'Resolved' = 'Pending';
+    let winningIndex: number | null = null;
     if (parsedState.state === 'setup') {
       status = 'Setup';
     } else if (parsedState.state === 'resolved') {
-      status = parsedState.winningIdx === 0 ? 'Passed' : 'Failed';
+      status = 'Resolved';
+      winningIndex = parsedState.winningIdx;
     }
 
     // Get proposal timing info from config
@@ -1257,6 +1271,7 @@ router.get('/proposal/:proposalPda', async (req: Request, res: Response) => {
       description,
       options,
       status,
+      winningIndex,
       numOptions: proposalAccount.numOptions,
       createdAt,
       endsAt,
