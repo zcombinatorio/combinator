@@ -27,6 +27,8 @@
  *   - API_URL: API base URL (defaults to http://localhost:3001)
  *   - DAO_PDA: The DAO PDA to create a proposal for
  *
+ *   - WARMUP_SECS: Warmup duration in seconds (must be <= 80% of length_secs)
+ *
  * Optional environment variables:
  *   - PROPOSAL_TITLE: Proposal title (defaults to test title)
  *   - PROPOSAL_DESCRIPTION: Proposal description (defaults to test description)
@@ -116,13 +118,19 @@ async function main() {
   const description = process.env.PROPOSAL_DESCRIPTION ||
     'This is a test proposal created by the automated test script. It demonstrates the proposal creation flow.';
   const length_secs = parseInt(process.env.PROPOSAL_LENGTH_SECS || '86400', 10); // Default: 1 day
+
+  if (!process.env.WARMUP_SECS) {
+    throw new Error('WARMUP_SECS environment variable is required');
+  }
+  const warmup_secs = parseInt(process.env.WARMUP_SECS, 10);
   const options = ['Approve', 'Reject'];
 
   console.log(`\nCreating proposal:`);
   console.log(`  DAO PDA: ${dao_pda}`);
   console.log(`  Title: ${title}`);
   console.log(`  Description: ${description.substring(0, 50)}...`);
-  console.log(`  Duration: ${length_secs} seconds (${(length_secs / 3600).toFixed(1)} hours)`);
+  console.log(`  Duration: ${length_secs} seconds (${(length_secs / 60).toFixed(1)} minutes)`);
+  console.log(`  Warmup: ${warmup_secs} seconds (${(warmup_secs / 60).toFixed(1)} minutes)`);
   console.log(`  Options: ${options.join(', ')}`);
   console.log(`  API URL: ${API_URL}\n`);
 
@@ -132,6 +140,7 @@ async function main() {
       title,
       description,
       length_secs,
+      warmup_secs,
       options,
     }, keypair);
 

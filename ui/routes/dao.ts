@@ -1015,9 +1015,9 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
-// GET /dao/proposals/all - Get all proposals from all verified DAOs
+// GET /dao/proposals/all - Get all proposals from all DAOs
 // ============================================================================
-// Aggregates proposals from all verified futarchy DAOs for the markets page.
+// Aggregates proposals from all futarchy DAOs for the markets page.
 // Returns proposals with DAO metadata (name, icon, daoPda).
 
 router.get('/proposals/all', async (req: Request, res: Response) => {
@@ -1025,16 +1025,15 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
     const pool = getPool();
     const connection = getConnection();
 
-    // Fetch all verified DAOs
+    // Fetch all DAOs (including unverified)
     const allDaos = await getAllDaos(pool);
-    const verifiedDaos = allDaos.filter(dao => dao.verified === true);
 
-    if (verifiedDaos.length === 0) {
+    if (allDaos.length === 0) {
       return res.json({ proposals: [] });
     }
 
     // Batch fetch token icons for all DAOs
-    const tokenMints = verifiedDaos.map(dao => dao.token_mint);
+    const tokenMints = allDaos.map(dao => dao.token_mint);
     const iconMap = await getTokenIcons(connection, tokenMints);
 
     // Create a read-only client for on-chain fetching
@@ -1045,9 +1044,9 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
     );
     const readClient = new futarchy.FutarchyClient(readProvider);
 
-    // Fetch proposals from all verified DAOs in parallel
+    // Fetch proposals from all DAOs in parallel
     const allProposals = await Promise.all(
-      verifiedDaos.map(async (dao) => {
+      allDaos.map(async (dao) => {
         // Get moderator PDA - for child DAOs, use parent's moderator
         let moderatorPda = dao.moderator_pda;
         if (!moderatorPda && dao.parent_dao_id) {
@@ -1932,13 +1931,14 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       title,
       description,
       length_secs,
+      warmup_secs,
       options,
     } = req.body;
 
     // Validate required fields
-    if (!dao_pda || !title || !description || !length_secs || !options) {
+    if (!dao_pda || !title || !description || !length_secs || warmup_secs === undefined || !options) {
       return res.status(400).json({
-        error: 'Missing required fields: dao_pda, title, description, length_secs, options'
+        error: 'Missing required fields: dao_pda, title, description, length_secs, warmup_secs, options'
       });
     }
 
@@ -1958,6 +1958,19 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // Validate length_secs is a positive number (range validation after DAO lookup)
     if (typeof length_secs !== 'number' || length_secs <= 0) {
       return res.status(400).json({ error: 'length_secs must be a positive number' });
+    }
+
+    // Validate warmup_secs if provided (must be positive and <= 80% of length_secs)
+    if (warmup_secs !== undefined) {
+      if (typeof warmup_secs !== 'number' || warmup_secs <= 0) {
+        return res.status(400).json({ error: 'warmup_secs must be a positive number' });
+      }
+      const maxWarmup = Math.floor(length_secs * 0.8);
+      if (warmup_secs > maxWarmup) {
+        return res.status(400).json({
+          error: `warmup_secs must not exceed 80% of length_secs (max: ${maxWarmup} seconds)`,
+        });
+      }
     }
 
     const pool = getPool();
@@ -2359,15 +2372,14 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
       // Create proposal step by step, executing each transaction before building the next
       // (SDK's createProposal tries to fetch accounts during build phase before they exist)
-      // warmupDuration must be <= length_secs (program constraint)
-      // Use min(300, length_secs / 2) to ensure it fits within proposal duration
-      const warmupDuration = Math.min(300, Math.floor(length_secs / 2));
+      // warmupDuration must be <= 80% of length_secs (validated above)
+      const warmupDuration = warmup_secs;
 
       const proposalParams = {
         length: length_secs,
         startingObservation,        // Calculated from liquidity ratio
         maxObservationDelta,        // 5% of starting observation
-        warmupDuration,             // min(5 minutes, half of proposal length)
+        warmupDuration,             // Client-specified warmup period
         marketBias: 0,              // 0% (Pass Fail Gap)
         fee: 50,                    // 0.5% fee
       };
