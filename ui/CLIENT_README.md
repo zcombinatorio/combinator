@@ -74,7 +74,7 @@ TOKEN_MINT="<mint-address>" SOL_AMOUNT=0.1 TOKEN_PERCENT=10 \
 | `SOL_AMOUNT` | No | 0.1 | SOL to provide as liquidity |
 | `TOKEN_PERCENT` | No | 10 | Percentage of token balance to use |
 | `TOKEN_AMOUNT` | No | - | Exact token amount (overrides TOKEN_PERCENT) |
-| `FEE_BPS` | No | 25 | Pool fee in basis points (25 = 0.25%) |
+| `FEE_BPS` | No | 100 | Pool fee in basis points (100 = 1%) |
 
 **Output:**
 ```
@@ -105,7 +105,7 @@ TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" SOL_AMOUNT=0.5 TOKEN_PERCENT=10 SKIP_MET
 | `TOTAL_SUPPLY` | No | 1000000 | Total supply |
 | `SOL_AMOUNT` | No | 0.1 | SOL for pool liquidity |
 | `TOKEN_PERCENT` | No | 10 | % of tokens for pool |
-| `FEE_BPS` | No | 25 | Pool fee in bps |
+| `FEE_BPS` | No | 100 | Pool fee in bps |
 | `SKIP_METADATA` | No | false | Skip metadata creation |
 
 **Output:**
@@ -401,7 +401,7 @@ curl -X POST https://api.zcombinator.io/dao/proposal \
     "dao_pda": "<dao-pda>",
     "title": "My Proposal",
     "description": "Description of the proposal",
-    "options": ["Approve", "Reject"],
+    "options": ["Approve", "Reject", "Abstain"],
     "length_secs": 86400,
     "wallet": "<your-wallet-pubkey>",
     "signed_hash": "<signature>"
@@ -436,7 +436,8 @@ POOL_ADDRESS="<pool-address>" ADMIN_WALLET="<admin-wallet>" \
 **Notes:**
 - Proposal creation requires a signed request (wallet + signed_hash)
 - Use `test-dao-parent.ts` signing logic as reference for generating signed_hash
-- Only one active proposal per moderator at a time
+- Proposals support 2-6 options
+- Only one pending (non-expired) proposal per moderator at a time
 
 ---
 
@@ -456,7 +457,7 @@ curl -X POST https://api.zcombinator.io/dao/proposal \
     "dao_pda": "<child-dao-pda>",
     "title": "Child DAO Proposal",
     "description": "Description of the proposal",
-    "options": ["Yes", "No"],
+    "options": ["Yes", "No", "Abstain"],
     "length_secs": 86400,
     "wallet": "<your-wallet-pubkey>",
     "signed_hash": "<signature>"
@@ -486,4 +487,4 @@ POOL_ADDRESS="<parent-pool-address>" ADMIN_WALLET="<parent-admin-wallet>" \
 **Key Differences from Parent DAO Proposals:**
 - Uses child DAO PDA for proposal creation
 - Liquidity operations use parent's pool and admin wallet
-- Parent and child share the same moderator (only one active proposal across both)
+- Parent and child share the same moderator (only one pending proposal across both)

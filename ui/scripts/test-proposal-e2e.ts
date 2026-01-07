@@ -178,7 +178,14 @@ async function main() {
     dao_pda: DAO_PDA,
     title: proposalTitle,
     description: 'End-to-end test of proposal lifecycle',
-    options: ['Approve', 'Reject'],
+    options: [
+      'Approve',
+      'Reject',
+      'Abstain',
+      'Defer',
+      'Amend',
+      'Table',
+    ],
     length_secs: PROPOSAL_DURATION_SECS,
   }, testKeypair);
 

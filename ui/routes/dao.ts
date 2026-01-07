@@ -2497,8 +2497,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
         // Add compute budget instruction (SDK defaults to 500k CUs via preInstructions,
         // but .instruction() doesn't include them - we must add manually)
-        // 4-option proposals require higher CUs due to pool initialization complexity
-        const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 });
+        const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 });
 
         // Build versioned transaction using the ALT
         const versionedTx = await client.buildVersionedTx(
