@@ -499,9 +499,10 @@ export async function getDaoStats(
   try {
     const result = await pool.query(query, [daoId]);
     const row = result.rows[0];
+
     return {
       proposerCount: parseInt(row.proposer_count),
-      childDaoCount: parseInt(row.child_dao_count)
+      childDaoCount: parseInt(row.child_dao_count),
     };
   } catch (error) {
     console.error('Error fetching DAO stats:', error);
@@ -613,3 +614,4 @@ export async function getWithdrawalPercentage(
     throw error;
   }
 }
+

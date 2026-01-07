@@ -19,7 +19,7 @@
  *   - SOL_AMOUNT: Amount of SOL to provide as liquidity (default: 0.1)
  *   - TOKEN_PERCENT: Percentage of token balance to use (default: 10)
  *   - TOKEN_AMOUNT: Exact token amount (overrides TOKEN_PERCENT)
- *   - FEE_BPS: Pool fee in basis points (default: 25 = 0.25%)
+ *   - FEE_BPS: Pool fee in basis points (default: 100 = 1%)
  */
 import 'dotenv/config';
 import {
@@ -51,7 +51,7 @@ const TOKEN_MINT = process.env.TOKEN_MINT;
 const SOL_AMOUNT = parseFloat(process.env.SOL_AMOUNT || '0.1');
 const TOKEN_PERCENT = parseInt(process.env.TOKEN_PERCENT || '10');
 const TOKEN_AMOUNT = process.env.TOKEN_AMOUNT ? parseInt(process.env.TOKEN_AMOUNT) : undefined;
-const FEE_BPS = parseInt(process.env.FEE_BPS || '25'); // 0.25% default
+const FEE_BPS = parseInt(process.env.FEE_BPS || '100'); // 1% default
 
 // Native SOL mint (WSOL)
 const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');

@@ -25,7 +25,7 @@
  *   - DAO_ADMIN: Transfer mint authority to this address
  *   - SOL_AMOUNT: SOL for pool liquidity (default: 0.1)
  *   - TOKEN_PERCENT: % of tokens for pool (default: 10)
- *   - FEE_BPS: Pool fee in bps (default: 25)
+ *   - FEE_BPS: Pool fee in bps (default: 100 = 1%)
  */
 import 'dotenv/config';
 import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
@@ -45,7 +45,7 @@ const TOTAL_SUPPLY = parseInt(process.env.TOTAL_SUPPLY || '1000000');
 const DAO_ADMIN = process.env.DAO_ADMIN;
 const SOL_AMOUNT = parseFloat(process.env.SOL_AMOUNT || '0.1');
 const TOKEN_PERCENT = parseInt(process.env.TOKEN_PERCENT || '10');
-const FEE_BPS = parseInt(process.env.FEE_BPS || '25');
+const FEE_BPS = parseInt(process.env.FEE_BPS || '100');
 
 if (!RPC_URL) throw new Error('RPC_URL not found');
 if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or PROTOCOL_PRIVATE_KEY not found');

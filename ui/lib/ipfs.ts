@@ -67,16 +67,20 @@ export async function uploadToIPFS(
 /**
  * Upload proposal metadata to IPFS
  * Returns the IPFS CID
+ *
+ * @param dao_pda - The DAO this proposal belongs to (for filtering proposals by DAO)
  */
 export async function uploadProposalMetadata(
   title: string,
   description: string,
-  options: string[]
+  options: string[],
+  dao_pda: string
 ): Promise<string> {
   const metadata = {
     title,
     description,
     options,
+    dao_pda,  // Include DAO PDA for proposal-to-DAO mapping
     created_at: new Date().toISOString(),
   };
 

@@ -17,7 +17,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { Connection, PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, SystemProgram, VersionedTransaction, ComputeBudgetProgram } from '@solana/web3.js';
 import { AnchorProvider, Wallet, BN } from '@coral-xyz/anchor';
 import { getMint, getAccount, getAssociatedTokenAddress, NATIVE_MINT } from '@solana/spl-token';
 import * as nacl from 'tweetnacl';
@@ -74,8 +74,45 @@ import {
 import { allocateKey, fetchKeypair } from '../lib/keyService';
 import { isValidSolanaAddress, isValidTokenMintAddress } from '../lib/validation';
 import { uploadProposalMetadata } from '../lib/ipfs';
+import { getTokenIcon, getTokenIcons } from '../lib/tokenMetadata';
 
 const router = Router();
+
+// ============================================================================
+// In-memory proposal count cache
+// ============================================================================
+// Caches proposal counts per DAO to avoid expensive on-chain fetches on the
+// projects page. Populated lazily when proposals are fetched, updated on
+// proposal creation. No TTL needed since we control proposal creation.
+const proposalCountCache = new Map<string, number>();
+
+/**
+ * Get cached proposal count for a DAO.
+ * Returns undefined if not cached (needs to be fetched).
+ */
+export function getCachedProposalCount(daoPda: string): number | undefined {
+  return proposalCountCache.get(daoPda);
+}
+
+/**
+ * Set the proposal count cache for a DAO.
+ * Called after fetching proposals from chain.
+ */
+export function setCachedProposalCount(daoPda: string, count: number): void {
+  proposalCountCache.set(daoPda, count);
+}
+
+/**
+ * Increment the proposal count cache for a DAO.
+ * Called after successfully creating a proposal.
+ */
+export function incrementProposalCount(daoPda: string): void {
+  const current = proposalCountCache.get(daoPda);
+  if (current !== undefined) {
+    proposalCountCache.set(daoPda, current + 1);
+  }
+  // If not cached, don't initialize - let it be populated on next fetch
+}
 
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
 
@@ -465,19 +502,12 @@ async function checkNoActiveProposal(
       return { ready: true };
     }
 
-    // Check proposal state - block if Setup or (Pending and not expired)
+    // Check proposal state - only block if Pending and not expired
+    // Setup state is allowed: each proposal has its own vault/pools (no shared state)
     // ProposalState is an enum-like object: { setup: {} } | { pending: {} } | { resolved: {} }
     const stateKey = Object.keys(proposal.state)[0];
-    const isSetup = stateKey === 'setup';
     const isPending = stateKey === 'pending';
     const isExpired = client.isProposalExpired(proposal);
-
-    if (isSetup) {
-      return {
-        ready: false,
-        reason: `Proposal ${latestProposalId} is still being set up. Complete or cancel it before creating a new one.`,
-      };
-    }
 
     if (isPending && !isExpired) {
       const timeRemaining = client.getTimeRemaining(proposal);
@@ -702,6 +732,7 @@ function createProvider(keypair: { publicKey: PublicKey; secretKey: Uint8Array }
 router.get('/', async (req: Request, res: Response) => {
   try {
     const pool = getPool();
+    const connection = getConnection();
     const { type, owner, limit, offset } = req.query;
 
     let daos;
@@ -715,16 +746,28 @@ router.get('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Enrich with stats, strip internal fields, and rename DB columns to API fields
+    // Batch fetch token icons for all DAOs
+    const tokenMints = daos.map(dao => dao.token_mint);
+    const iconMap = await getTokenIcons(connection, tokenMints);
+
+    // Enrich with stats, icons, strip internal fields, and rename DB columns to API fields
     const enrichedDaos = await Promise.all(
       daos.map(async (dao) => {
         const stats = await getDaoStats(pool, dao.id!);
         const { admin_key_idx, treasury_multisig, mint_auth_multisig, ...rest } = dao;
+        // Get proposal count from cache (undefined if not yet fetched)
+        const proposalCount = getCachedProposalCount(dao.dao_pda);
+        // Get icon from token metadata
+        const icon = iconMap.get(dao.token_mint) || null;
         return {
           ...rest,
           treasury_vault: treasury_multisig,
           mint_vault: mint_auth_multisig,
-          stats,
+          icon,
+          stats: {
+            ...stats,
+            proposalCount,
+          },
         };
       })
     );
@@ -744,6 +787,7 @@ router.get('/:daoPda', async (req: Request, res: Response) => {
   try {
     const { daoPda } = req.params;
     const pool = getPool();
+    const connection = getConnection();
 
     const dao = await getDaoByPda(pool, daoPda);
     if (!dao) {
@@ -752,6 +796,9 @@ router.get('/:daoPda', async (req: Request, res: Response) => {
 
     const stats = await getDaoStats(pool, dao.id!);
     const proposers = await getProposersByDao(pool, dao.id!);
+
+    // Fetch token icon from metadata
+    const icon = await getTokenIcon(connection, dao.token_mint);
 
     // If parent, also fetch child DAOs (strip internal fields)
     let children: any[] = [];
@@ -769,11 +816,18 @@ router.get('/:daoPda', async (req: Request, res: Response) => {
       return { ...childRest, treasury_vault: tv, mint_vault: mv };
     });
 
+    // Get proposal count from cache (undefined if not yet fetched)
+    const proposalCount = getCachedProposalCount(daoPda);
+
     res.json({
       ...rest,
       treasury_vault: treasury_multisig,
       mint_vault: mint_auth_multisig,
-      stats,
+      icon,
+      stats: {
+        ...stats,
+        proposalCount,
+      },
       proposers,
       children: renamedChildren,
     });
@@ -807,6 +861,426 @@ router.get('/:daoPda/proposers', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching proposers:', error);
     res.status(500).json({ error: 'Failed to fetch proposers' });
+  }
+});
+
+// ============================================================================
+// GET /dao/:daoPda/proposals - Get all proposals for a DAO
+// ============================================================================
+// Reads on-chain (source of truth): fetches moderator's proposalIdCounter,
+// derives all proposal PDAs, fetches each proposal's state and metadata.
+// UI can filter by status (Pending for live, Passed/Failed for history).
+
+router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
+  try {
+    const { daoPda } = req.params;
+    const connection = getConnection();
+
+    // Look up DAO to get moderator PDA (still need DB for DAO verification)
+    const pool = getPool();
+    const dao = await getDaoByPda(pool, daoPda);
+    if (!dao) {
+      return res.status(404).json({ error: 'DAO not found' });
+    }
+
+    // Get the moderator PDA - for child DAOs, use parent's moderator
+    let moderatorPda = dao.moderator_pda;
+    if (!moderatorPda && dao.parent_dao_id) {
+      // Child DAO - get moderator from parent
+      const parentDao = await getDaoById(pool, dao.parent_dao_id);
+      if (parentDao?.moderator_pda) {
+        moderatorPda = parentDao.moderator_pda;
+      }
+    }
+
+    if (!moderatorPda) {
+      return res.json({ proposals: [] });
+    }
+
+    // Create a read-only client for on-chain fetching
+    const readProvider = new AnchorProvider(
+      connection,
+      { signTransaction: async () => { throw new Error('Read-only'); }, signAllTransactions: async () => { throw new Error('Read-only'); }, publicKey: PublicKey.default } as unknown as Wallet,
+      { commitment: 'confirmed', skipPreflight: true }
+    );
+    const readClient = new futarchy.FutarchyClient(readProvider);
+
+    // Fetch moderator from chain to get the proposal count (on-chain is source of truth)
+    const moderatorPubkey = new PublicKey(moderatorPda);
+    let proposalCount = 0;
+    try {
+      const moderator = await readClient.fetchModerator(moderatorPubkey);
+      proposalCount = moderator.proposalIdCounter;
+    } catch (err) {
+      console.error(`Failed to fetch moderator ${moderatorPda}:`, err);
+      return res.status(500).json({ error: 'Failed to fetch moderator from chain' });
+    }
+
+    if (proposalCount === 0) {
+      return res.json({ proposals: [] });
+    }
+
+    // Fetch all proposals (0 to proposalCount-1) directly from chain
+    const proposals = await Promise.all(
+      Array.from({ length: proposalCount }, (_, i) => i).map(async (proposalId) => {
+        // Derive the proposal PDA
+        const [proposalPda] = readClient.deriveProposalPDA(moderatorPubkey, proposalId);
+        const proposalPdaStr = proposalPda.toBase58();
+
+        let title = `Proposal #${proposalId}`;
+        let description = '';
+        let options: string[] = ['Pass', 'Fail'];
+        let status: 'Setup' | 'Pending' | 'Passed' | 'Failed' = 'Pending';
+        let finalizedAt: number | null = null;
+        let endsAt: number | null = null;
+        let createdAt: number = Date.now();
+        let metadataCid: string | null = null;
+        let metadataDaoPda: string | null = null;
+
+        // Fetch on-chain state
+        try {
+          const proposalAccount = await readClient.fetchProposal(proposalPda);
+          const parsedState = futarchy.parseProposalState(proposalAccount.state);
+
+          // Get timing info from on-chain
+          const proposalLength = proposalAccount.config.length; // in seconds
+          createdAt = proposalAccount.createdAt.toNumber() * 1000; // Convert to milliseconds
+          endsAt = createdAt + (proposalLength * 1000);
+
+          // Get metadata CID from on-chain
+          metadataCid = proposalAccount.metadata || null;
+
+          // Determine status
+          if (parsedState.state === 'setup') {
+            status = 'Setup';
+          } else if (parsedState.state === 'resolved') {
+            status = parsedState.winningIdx === 0 ? 'Passed' : 'Failed';
+            finalizedAt = Date.now(); // Approximate
+          } else {
+            status = 'Pending';
+          }
+        } catch (err) {
+          // Proposal might be closed or inaccessible
+          console.warn(`Failed to fetch on-chain state for proposal ${proposalId} (${proposalPdaStr}):`, err);
+          return null;
+        }
+
+        // Fetch IPFS metadata if available
+        if (metadataCid) {
+          try {
+            const metadataRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCid}`);
+            if (metadataRes.ok) {
+              const metadata = await metadataRes.json();
+              title = metadata.title || title;
+              description = metadata.description || description;
+              options = metadata.options || options;
+              metadataDaoPda = metadata.dao_pda || null;
+            }
+          } catch (err) {
+            console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
+          }
+        }
+
+        return {
+          id: proposalId,
+          proposalPda: proposalPdaStr,
+          title,
+          description,
+          options,
+          status,
+          createdAt,
+          endsAt,
+          finalizedAt,
+          metadataCid,
+          metadataDaoPda,
+        };
+      })
+    );
+
+    // Filter out null entries (failed fetches), filter by dao_pda matching requested DAO,
+    // and sort by ID descending (newest first)
+    const validProposals = proposals
+      .filter((p): p is NonNullable<typeof p> => p !== null)
+      .filter((p) => p.metadataDaoPda === daoPda)
+      .sort((a, b) => b.id - a.id);
+
+    // Cache the proposal count for this DAO
+    setCachedProposalCount(daoPda, validProposals.length);
+
+    res.json({ proposals: validProposals });
+  } catch (error) {
+    console.error('Error fetching proposals:', error);
+    res.status(500).json({ error: 'Failed to fetch proposals' });
+  }
+});
+
+// ============================================================================
+// GET /dao/proposals/all - Get all proposals from all verified DAOs
+// ============================================================================
+// Aggregates proposals from all verified futarchy DAOs for the markets page.
+// Returns proposals with DAO metadata (name, icon, daoPda).
+
+router.get('/proposals/all', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const connection = getConnection();
+
+    // Fetch all verified DAOs
+    const allDaos = await getAllDaos(pool);
+    const verifiedDaos = allDaos.filter(dao => dao.verified === true);
+
+    if (verifiedDaos.length === 0) {
+      return res.json({ proposals: [] });
+    }
+
+    // Batch fetch token icons for all DAOs
+    const tokenMints = verifiedDaos.map(dao => dao.token_mint);
+    const iconMap = await getTokenIcons(connection, tokenMints);
+
+    // Create a read-only client for on-chain fetching
+    const readProvider = new AnchorProvider(
+      connection,
+      { signTransaction: async () => { throw new Error('Read-only'); }, signAllTransactions: async () => { throw new Error('Read-only'); }, publicKey: PublicKey.default } as unknown as Wallet,
+      { commitment: 'confirmed', skipPreflight: true }
+    );
+    const readClient = new futarchy.FutarchyClient(readProvider);
+
+    // Fetch proposals from all verified DAOs in parallel
+    const allProposals = await Promise.all(
+      verifiedDaos.map(async (dao) => {
+        // Get moderator PDA - for child DAOs, use parent's moderator
+        let moderatorPda = dao.moderator_pda;
+        if (!moderatorPda && dao.parent_dao_id) {
+          const parentDao = await getDaoById(pool, dao.parent_dao_id);
+          if (parentDao?.moderator_pda) {
+            moderatorPda = parentDao.moderator_pda;
+          }
+        }
+
+        if (!moderatorPda) {
+          return [];
+        }
+
+        const moderatorPubkey = new PublicKey(moderatorPda);
+        let proposalCount = 0;
+
+        try {
+          const moderator = await readClient.fetchModerator(moderatorPubkey);
+          proposalCount = moderator.proposalIdCounter;
+        } catch (err) {
+          console.warn(`Failed to fetch moderator ${moderatorPda} for DAO ${dao.dao_name}:`, err);
+          return [];
+        }
+
+        if (proposalCount === 0) {
+          return [];
+        }
+
+        // Fetch all proposals for this DAO
+        const proposals = await Promise.all(
+          Array.from({ length: proposalCount }, (_, i) => i).map(async (proposalId) => {
+            const [proposalPda] = readClient.deriveProposalPDA(moderatorPubkey, proposalId);
+            const proposalPdaStr = proposalPda.toBase58();
+
+            let title = `Proposal #${proposalId}`;
+            let description = '';
+            let options: string[] = ['Pass', 'Fail'];
+            let status: 'Setup' | 'Pending' | 'Passed' | 'Failed' = 'Pending';
+            let finalizedAt: number | null = null;
+            let endsAt: number | null = null;
+            let createdAt: number = Date.now();
+            let metadataCid: string | null = null;
+            let metadataDaoPda: string | null = null;
+
+            try {
+              const proposalAccount = await readClient.fetchProposal(proposalPda);
+              const parsedState = futarchy.parseProposalState(proposalAccount.state);
+
+              const proposalLength = proposalAccount.config.length;
+              createdAt = proposalAccount.createdAt.toNumber() * 1000;
+              endsAt = createdAt + (proposalLength * 1000);
+              metadataCid = proposalAccount.metadata || null;
+
+              if (parsedState.state === 'setup') {
+                status = 'Setup';
+              } else if (parsedState.state === 'resolved') {
+                status = parsedState.winningIdx === 0 ? 'Passed' : 'Failed';
+                finalizedAt = Date.now();
+              } else {
+                status = 'Pending';
+              }
+            } catch (err) {
+              console.warn(`Failed to fetch proposal ${proposalId} for DAO ${dao.dao_name}:`, err);
+              return null;
+            }
+
+            // Fetch IPFS metadata
+            if (metadataCid) {
+              try {
+                const metadataRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCid}`);
+                if (metadataRes.ok) {
+                  const metadata = await metadataRes.json();
+                  title = metadata.title || title;
+                  description = metadata.description || description;
+                  options = metadata.options || options;
+                  metadataDaoPda = metadata.dao_pda || null;
+                }
+              } catch (err) {
+                console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
+              }
+            }
+
+            // Only include proposals that belong to this DAO
+            if (metadataDaoPda !== dao.dao_pda) {
+              return null;
+            }
+
+            return {
+              id: proposalId,
+              proposalPda: proposalPdaStr,
+              title,
+              description,
+              options,
+              status,
+              createdAt,
+              endsAt,
+              finalizedAt,
+              metadataCid,
+              // DAO metadata for markets page
+              daoPda: dao.dao_pda,
+              daoName: dao.dao_name,
+              tokenMint: dao.token_mint,
+              tokenIcon: iconMap.get(dao.token_mint) || null,
+            };
+          })
+        );
+
+        // Filter out nulls and Setup status, update proposal count cache
+        const validProposals = proposals.filter((p): p is NonNullable<typeof p> => p !== null && p.status !== 'Setup');
+        setCachedProposalCount(dao.dao_pda, validProposals.length);
+
+        return validProposals;
+      })
+    );
+
+    // Flatten and sort by createdAt descending (newest first)
+    const flattenedProposals = allProposals
+      .flat()
+      .sort((a, b) => b.createdAt - a.createdAt);
+
+    res.json({ proposals: flattenedProposals });
+  } catch (error) {
+    console.error('Error fetching all proposals:', error);
+    res.status(500).json({ error: 'Failed to fetch proposals' });
+  }
+});
+
+// ============================================================================
+// GET /dao/proposal/:proposalPda - Get a single proposal by PDA
+// ============================================================================
+// Reads proposal directly from on-chain, fetches IPFS metadata.
+
+router.get('/proposal/:proposalPda', async (req: Request, res: Response) => {
+  try {
+    const { proposalPda } = req.params;
+    const connection = getConnection();
+
+    // Validate the PDA
+    if (!isValidTokenMintAddress(proposalPda)) {
+      return res.status(400).json({ error: 'Invalid proposal PDA' });
+    }
+
+    const proposalPubkey = new PublicKey(proposalPda);
+
+    // Create a read-only client for on-chain fetching
+    const readProvider = new AnchorProvider(
+      connection,
+      { signTransaction: async () => { throw new Error('Read-only'); }, signAllTransactions: async () => { throw new Error('Read-only'); }, publicKey: PublicKey.default } as unknown as Wallet,
+      { commitment: 'confirmed', skipPreflight: true }
+    );
+    const readClient = new futarchy.FutarchyClient(readProvider);
+
+    // Fetch proposal from on-chain
+    let proposalAccount;
+    try {
+      proposalAccount = await readClient.fetchProposal(proposalPubkey);
+    } catch (err) {
+      console.error(`Failed to fetch proposal ${proposalPda} from chain:`, err);
+      return res.status(404).json({ error: 'Proposal not found on-chain' });
+    }
+
+    // Parse on-chain state
+    const parsedState = futarchy.parseProposalState(proposalAccount.state);
+    let status: 'Setup' | 'Pending' | 'Passed' | 'Failed' = 'Pending';
+    if (parsedState.state === 'setup') {
+      status = 'Setup';
+    } else if (parsedState.state === 'resolved') {
+      status = parsedState.winningIdx === 0 ? 'Passed' : 'Failed';
+    }
+
+    // Get proposal timing info from config
+    const proposalLength = proposalAccount.config.length; // in seconds
+    const createdAt = proposalAccount.createdAt.toNumber() * 1000; // Convert to milliseconds
+    const endsAt = createdAt + (proposalLength * 1000);
+    const warmupDuration = proposalAccount.config.warmupDuration; // in seconds
+    const warmupEndsAt = createdAt + (warmupDuration * 1000);
+
+    // Get metadata CID from on-chain
+    const metadataCid = proposalAccount.metadata || null;
+
+    // Default values
+    let title = `Proposal #${proposalAccount.id}`;
+    let description = '';
+    let options: string[] = ['Pass', 'Fail'];
+    let daoPda: string | null = null;
+
+    // Fetch IPFS metadata if available
+    if (metadataCid) {
+      try {
+        const metadataRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCid}`);
+        if (metadataRes.ok) {
+          const metadata = await metadataRes.json();
+          title = metadata.title || title;
+          description = metadata.description || description;
+          options = metadata.options || options;
+          daoPda = metadata.dao_pda || null;
+        }
+      } catch (err) {
+        console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
+      }
+    }
+
+    // Return proposal data
+    res.json({
+      id: proposalAccount.id,
+      proposalPda,
+      title,
+      description,
+      options,
+      status,
+      numOptions: proposalAccount.numOptions,
+      createdAt,
+      endsAt,
+      warmupEndsAt,
+      moderator: proposalAccount.moderator.toBase58(),
+      creator: proposalAccount.creator.toBase58(),
+      vault: proposalAccount.vault.toBase58(),
+      baseMint: proposalAccount.baseMint.toBase58(),
+      quoteMint: proposalAccount.quoteMint.toBase58(),
+      pools: proposalAccount.pools.map((p: PublicKey) => p.toBase58()),
+      metadataCid,
+      daoPda,
+      // Config details
+      config: {
+        length: proposalLength,
+        warmupDuration,
+        marketBias: proposalAccount.config.marketBias,
+        fee: proposalAccount.config.fee,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching proposal:', error);
+    res.status(500).json({ error: 'Failed to fetch proposal' });
   }
 });
 
@@ -1805,10 +2279,10 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
     console.log(`TWAP config: startingObservation=${startingObservation.toString()}, maxObservationDelta=${maxObservationDelta.toString()} (5%)`);
 
-    // Upload proposal metadata to IPFS
+    // Upload proposal metadata to IPFS (includes dao_pda for proposal-to-DAO mapping)
     let metadataCid: string;
     try {
-      metadataCid = await uploadProposalMetadata(title, description, options);
+      metadataCid = await uploadProposalMetadata(title, description, options, dao_pda);
       console.log(`Uploaded proposal metadata to IPFS: ${metadataCid}`);
     } catch (error) {
       console.error('Failed to upload proposal metadata to IPFS:', error);
@@ -1835,6 +2309,53 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       const client = new futarchy.FutarchyClient(provider);
 
       const moderatorPda = new PublicKey(dao.moderator_pda);
+
+      // Step 0: Create Address Lookup Table (ALT) for proposal accounts
+      //
+      // ALT enables versioned transactions that use 1-byte index lookups instead of
+      // 32-byte pubkeys. This is REQUIRED for launchProposal which has:
+      //   - 8 fixed accounts
+      //   - 6 + 7*N remaining accounts (N = numOptions)
+      //   - 4 options = 42 accounts = 1344+ bytes > 1232 byte limit (without ALT)
+      //   - With ALT: 42 accounts = ~42 bytes (fits easily)
+      //
+      // The SDK's createProposalALT derives addresses using the moderator's CURRENT
+      // proposalIdCounter, which will be the ID of the NEXT proposal we create.
+      console.log('Step 0: Creating Address Lookup Table for versioned transactions...');
+      console.log(`  Options: ${options.length} (accounts: ${8 + 6 + 7 * options.length})`);
+
+      const altResult = await client.createProposalALT(
+        adminKeypair.publicKey,
+        moderatorPda,
+        options.length,
+      );
+      const altAddress = altResult.altAddress;
+      console.log(`  ✓ ALT created: ${altAddress.toBase58()}`);
+
+      // Poll for ALT readiness (Solana needs 1-2 slots for ALT to be usable)
+      console.log('  Waiting for ALT finalization...');
+      const ALT_POLL_INTERVAL_MS = 500;
+      const ALT_MAX_WAIT_MS = 10000;
+      let altReady = false;
+      let altAddressCount = 0;
+      const startTime = Date.now();
+
+      while (!altReady && Date.now() - startTime < ALT_MAX_WAIT_MS) {
+        const altAccount = await provider.connection.getAddressLookupTable(altAddress);
+        if (altAccount.value && altAccount.value.state.addresses.length > 0) {
+          altReady = true;
+          altAddressCount = altAccount.value.state.addresses.length;
+        } else {
+          await new Promise(resolve => setTimeout(resolve, ALT_POLL_INTERVAL_MS));
+        }
+      }
+
+      if (!altReady) {
+        throw new Error(
+          `ALT not ready after ${ALT_MAX_WAIT_MS}ms. This may indicate an RPC issue or network congestion.`
+        );
+      }
+      console.log(`  ✓ ALT verified with ${altAddressCount} addresses (waited ${Date.now() - startTime}ms)`);
 
       // Create proposal step by step, executing each transaction before building the next
       // (SDK's createProposal tries to fetch accounts during build phase before they exist)
@@ -1895,6 +2416,8 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         try {
           const initSig = await initResult.builder.rpc();
           console.log(`  ✓ Initialize tx: ${initSig}`);
+          // Wait for confirmation before proceeding to addOption
+          await provider.connection.confirmTransaction(initSig, 'confirmed');
         } catch (e) {
           console.error('  ✗ Initialize failed:', e);
           throw e;
@@ -1908,6 +2431,8 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
           const addResult = await client.addOption(adminKeypair.publicKey, initResult.proposalPda);
           const optSig = await addResult.builder.rpc();
           console.log(`  ✓ AddOption ${i} tx: ${optSig}`);
+          // Wait for confirmation before next iteration
+          await provider.connection.confirmTransaction(optSig, 'confirmed');
         } catch (e) {
           console.error(`  ✗ AddOption ${i} failed:`, e);
           throw e;
@@ -1956,8 +2481,9 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         console.log(`  ✓ Wrapped ${quoteAmount.toString()} lamports to WSOL: ${wrapSig}`);
       }
 
-      // Step 3: Launch proposal (now vault exists so SDK can fetch it)
-      console.log('Step 3: Launching proposal...');
+      // Step 3: Launch proposal using versioned transaction with ALT
+      // ALT reduces account references from 32 bytes to 1 byte each
+      console.log('Step 3: Launching proposal with versioned transaction...');
       try {
         const launchResult = await client.launchProposal(
           adminKeypair.publicKey,
@@ -1965,7 +2491,34 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
           baseAmount,
           quoteAmount,
         );
-        const launchSig = await launchResult.builder.rpc();
+
+        // Extract the instruction from the builder
+        const launchInstruction = await launchResult.builder.instruction();
+
+        // Add compute budget instruction (SDK defaults to 500k CUs via preInstructions,
+        // but .instruction() doesn't include them - we must add manually)
+        // 4-option proposals require higher CUs due to pool initialization complexity
+        const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 });
+
+        // Build versioned transaction using the ALT
+        const versionedTx = await client.buildVersionedTx(
+          adminKeypair.publicKey,
+          [computeBudgetIx, launchInstruction],
+          altAddress,
+        );
+
+        // Sign the versioned transaction
+        versionedTx.sign([adminKeypair]);
+
+        // Send and confirm
+        const launchSig = await provider.connection.sendTransaction(versionedTx, {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        });
+
+        // Wait for confirmation
+        await provider.connection.confirmTransaction(launchSig, 'confirmed');
+
         console.log(`  ✓ Launch tx: ${launchSig}`);
       } catch (e) {
         console.error('  ✗ Launch failed:', e);
@@ -1977,6 +2530,9 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     console.log(`Created proposal ${proposalPda} for DAO ${dao_pda}`);
+
+    // Update the proposal count cache
+    incrementProposalCount(dao_pda);
 
     res.json({
       proposal_pda: proposalPda,
@@ -2251,19 +2807,36 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
 
     console.log(`Redeeming liquidity for proposal ${proposal_pda}`);
     console.log(`  Winning index: ${winningIdx}`);
+    console.log(`  Num options: ${proposal.numOptions}`);
     console.log(`  DAO: ${dao.dao_name} (${dao.dao_pda})`);
     if (liquidityDao !== dao) {
       console.log(`  Parent DAO (LP owner): ${liquidityDao.dao_name} (${liquidityDao.dao_pda})`);
     }
 
-    // Call SDK redeemLiquidity
-    const { builder } = await client.redeemLiquidity(
-      adminKeypair.publicKey,
-      proposalPubkey
-    );
+    let tx: string;
 
-    // Execute the transaction
-    const tx = await builder.rpc();
+    // Use versioned transaction with ALT for 3+ option proposals
+    // This avoids exceeding the 1232 byte transaction size limit
+    if (proposal.numOptions >= 3) {
+      console.log(`  Using versioned transaction (${proposal.numOptions} options)`);
+      const result = await client.redeemLiquidityVersioned(
+        adminKeypair.publicKey,
+        proposalPubkey
+      );
+
+      // Sign the versioned transaction with admin keypair
+      result.versionedTx.sign([adminKeypair]);
+
+      // Send the signed transaction
+      tx = await client.sendVersionedTransaction(result.versionedTx);
+    } else {
+      // Standard transaction for 2-option proposals
+      const { builder } = await client.redeemLiquidity(
+        adminKeypair.publicKey,
+        proposalPubkey
+      );
+      tx = await builder.rpc();
+    }
 
     console.log(`Liquidity redeemed successfully: ${tx}`);
 

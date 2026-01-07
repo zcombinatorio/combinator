@@ -103,12 +103,12 @@ async function main() {
   // =========================================================================
   log('STEP 1', 'Creating proposal...');
 
-  const proposalTitle = 'TWAP Crank Test ' + Date.now();
+  const proposalTitle = 'Treasury Allocation Strategy Q1 2026';
   const proposal = await signedPost('/dao/proposal', {
     dao_pda: DAO_PDA,
     title: proposalTitle,
-    description: 'Test proposal for TWAP crank endpoint verification',
-    options: ['Approve', 'Reject'],
+    description: 'This proposal seeks community input on how to allocate the DAO treasury funds for Q1 2026. The options represent different strategic directions that will shape our growth and development priorities.',
+    options: ['Approve Allocation', 'Reject Allocation'],
     length_secs: PROPOSAL_DURATION_SECS,
   }, testKeypair);
 
