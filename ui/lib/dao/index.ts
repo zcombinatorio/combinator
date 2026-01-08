@@ -18,6 +18,7 @@
 
 export * from './auth';
 export * from './cache';
+export * from './client';
 export * from './mock';
 export * from './pool';
 export * from './squads';

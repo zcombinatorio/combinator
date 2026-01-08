@@ -30,9 +30,9 @@
  *   - WARMUP_SECS: Warmup duration in seconds (must be <= 80% of length_secs)
  *
  * Optional environment variables:
- *   - PROPOSAL_TITLE: Proposal title (defaults to test title)
- *   - PROPOSAL_DESCRIPTION: Proposal description (defaults to test description)
- *   - PROPOSAL_LENGTH_SECS: Proposal duration in seconds (defaults to 86400 = 1 day)
+ *   - PROPOSAL_TITLE: Proposal title (defaults to "Community Decision Proposal")
+ *   - PROPOSAL_DESCRIPTION: Proposal description (defaults to community governance description)
+ *   - PROPOSAL_LENGTH_SECS: Proposal duration in seconds (defaults to 3600 = 1 hour)
  */
 
 import 'dotenv/config';
@@ -114,10 +114,10 @@ async function main() {
     throw new Error('DAO_PDA environment variable is required');
   }
 
-  const title = process.env.PROPOSAL_TITLE || `Test Proposal ${Date.now()}`;
+  const title = process.env.PROPOSAL_TITLE || `Community Decision Proposal ${Date.now()}`;
   const description = process.env.PROPOSAL_DESCRIPTION ||
-    'This is a test proposal created by the automated test script. It demonstrates the proposal creation flow.';
-  const length_secs = parseInt(process.env.PROPOSAL_LENGTH_SECS || '86400', 10); // Default: 1 day
+    'This proposal seeks community input on an important governance decision. Vote to express your preference among the available options.';
+  const length_secs = parseInt(process.env.PROPOSAL_LENGTH_SECS || '3600', 10); // Default: 1 hour
 
   if (!process.env.WARMUP_SECS) {
     throw new Error('WARMUP_SECS environment variable is required');
@@ -125,7 +125,7 @@ async function main() {
   const warmup_secs = parseInt(process.env.WARMUP_SECS, 10);
   const options = process.env.PROPOSAL_OPTIONS
     ? process.env.PROPOSAL_OPTIONS.split(',').map(o => o.trim())
-    : ['Approve', 'Reject'];
+    : ['Yes', 'No', 'Abstain'];
 
   console.log(`\nCreating proposal:`);
   console.log(`  DAO PDA: ${dao_pda}`);

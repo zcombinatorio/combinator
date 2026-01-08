@@ -17,6 +17,78 @@
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
+import { getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+
+// In-memory cache for token decimals (mint -> decimals)
+const tokenDecimalsCache = new Map<string, number>();
+
+/**
+ * Fetch the decimals for a token mint.
+ * Supports both Token and Token-2022 programs.
+ * Results are cached in memory (decimals never change for a mint).
+ */
+export async function getTokenDecimals(
+  connection: Connection,
+  mintAddress: string
+): Promise<number> {
+  // Check cache first
+  if (tokenDecimalsCache.has(mintAddress)) {
+    return tokenDecimalsCache.get(mintAddress)!;
+  }
+
+  try {
+    const mint = new PublicKey(mintAddress);
+
+    // First, fetch the account to determine which program owns it
+    const accountInfo = await connection.getAccountInfo(mint);
+    if (!accountInfo) {
+      throw new Error(`Mint account not found: ${mintAddress}`);
+    }
+
+    // Determine the program ID based on account owner
+    let programId: PublicKey;
+    if (accountInfo.owner.equals(TOKEN_PROGRAM_ID)) {
+      programId = TOKEN_PROGRAM_ID;
+    } else if (accountInfo.owner.equals(TOKEN_2022_PROGRAM_ID)) {
+      programId = TOKEN_2022_PROGRAM_ID;
+    } else {
+      throw new Error(`Unknown token program owner: ${accountInfo.owner.toBase58()}`);
+    }
+
+    const mintInfo = await getMint(connection, mint, undefined, programId);
+    const decimals = mintInfo.decimals;
+    tokenDecimalsCache.set(mintAddress, decimals);
+    return decimals;
+  } catch (error) {
+    console.error(`Failed to fetch token decimals for ${mintAddress}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Batch fetch decimals for multiple tokens.
+ * Returns a map of mint address -> decimals.
+ */
+export async function getTokenDecimalsBatch(
+  connection: Connection,
+  mintAddresses: string[]
+): Promise<Map<string, number>> {
+  const results = new Map<string, number>();
+
+  // Fetch in parallel with a concurrency limit
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < mintAddresses.length; i += BATCH_SIZE) {
+    const batch = mintAddresses.slice(i, i + BATCH_SIZE);
+    const decimals = await Promise.all(
+      batch.map(mint => getTokenDecimals(connection, mint))
+    );
+    batch.forEach((mint, idx) => {
+      results.set(mint, decimals[idx]);
+    });
+  }
+
+  return results;
+}
 
 // Metaplex Token Metadata Program ID
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
