@@ -2289,11 +2289,6 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // PRICE_SCALE = 10^12 (from @zcomb/programs-sdk/amm/constants)
     const PRICE_SCALE = new BN('1000000000000'); // 10^12
 
-    // Get token decimals for proper price calculation
-    // For now, fetch from the DAO's token info
-    const baseMintInfo = await getMint(connection, new PublicKey(dao.token_mint));
-    const quoteMintInfo = await getMint(connection, new PublicKey(dao.quote_mint));
-
     // Calculate starting observation: (quoteAmount / baseAmount) * PRICE_SCALE * 10^(baseDecimals - quoteDecimals)
     let startingObservation: BN;
     if (baseAmount.isZero()) {
