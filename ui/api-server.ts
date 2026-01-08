@@ -30,8 +30,8 @@ import claimsRouter from './routes/claims';
 import presaleRouter from './routes/presale';
 import feeClaimRouter from './routes/fee-claim';
 import dlmmFeeClaimRouter from './routes/dlmm-fee-claim';
-import dammLiquidityRouter from './routes/damm-liquidity';
-import dlmmLiquidityRouter from './routes/dlmm-liquidity';
+// Refactored liquidity routers - modular structure in routes/liquidity/
+import { dammRouter as dammLiquidityRouter, dlmmRouter as dlmmLiquidityRouter } from './routes/liquidity';
 import icoRouter from './routes/ico';
 import daoRouter from './routes/dao';
 
