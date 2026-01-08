@@ -23,8 +23,9 @@ const API_URL = process.env.API_URL || 'http://localhost:6770';
 const PRIVATE_KEY = process.env.TEST_WALLET_PRIVATE_KEY || process.env.PRIVATE_KEY;
 const DAO_PDA = process.env.DAO_PDA;
 
-// Proposal duration: 4 minutes (240s) - warmup will be ~120s automatically
-const PROPOSAL_DURATION_SECS = parseInt(process.env.PROPOSAL_DURATION_SECS || '240');
+// Proposal duration: 25 minutes (1500s) and 1 minute (60s) warmup
+const PROPOSAL_DURATION_SECS = parseInt(process.env.PROPOSAL_DURATION_SECS || '1500');
+const WARMUP_SECS = parseInt(process.env.WARMUP_SECS || '60');
 // Crank interval: 60s (minimum recording interval)
 const CRANK_INTERVAL_SECS = 65; // slightly more than 60s to be safe
 
@@ -95,6 +96,7 @@ async function main() {
   console.log(`  Test Wallet: ${testKeypair.publicKey.toBase58()}`);
   console.log(`  DAO PDA: ${DAO_PDA}`);
   console.log(`  Proposal Duration: ${PROPOSAL_DURATION_SECS}s`);
+  console.log(`  Warmup Duration: ${WARMUP_SECS}s`);
   console.log(`  Crank Interval: ${CRANK_INTERVAL_SECS}s`);
   console.log('');
 
@@ -103,13 +105,14 @@ async function main() {
   // =========================================================================
   log('STEP 1', 'Creating proposal...');
 
-  const proposalTitle = 'Treasury Allocation Strategy Q1 2026';
+  const proposalTitle = 'TWAP Batch Crank Test ' + Date.now();
   const proposal = await signedPost('/dao/proposal', {
     dao_pda: DAO_PDA,
     title: proposalTitle,
-    description: 'This proposal seeks community input on how to allocate the DAO treasury funds for Q1 2026. The options represent different strategic directions that will shape our growth and development priorities.',
-    options: ['Approve Allocation', 'Reject Allocation'],
+    description: 'Testing the new batch TWAP crank functionality that packs all pool cranks into a single transaction for synchronized oracle updates.',
+    options: ['Run Batch Crank', 'Use Individual Cranks', 'Defer Decision'],
     length_secs: PROPOSAL_DURATION_SECS,
+    warmup_secs: WARMUP_SECS,
   }, testKeypair);
 
   const proposalPda = proposal.proposal_pda;
@@ -117,8 +120,8 @@ async function main() {
 
   log('STEP 1', `✓ Proposal Created: ${proposalPda} (ID: ${proposalId})`);
 
-  // Calculate warmup (same formula as server)
-  const warmupDuration = Math.min(300, Math.floor(PROPOSAL_DURATION_SECS / 2));
+  // Use the configured warmup duration
+  const warmupDuration = WARMUP_SECS;
   const totalWaitTime = warmupDuration + PROPOSAL_DURATION_SECS;
 
   log('STEP 1', `  Warmup: ${warmupDuration}s, Total duration: ${totalWaitTime}s`);

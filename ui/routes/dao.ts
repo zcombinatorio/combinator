@@ -3253,15 +3253,16 @@ router.post('/crank-twap', async (req: Request, res: Response) => {
     console.log(`  DAO: ${dao.dao_name} (${dao.dao_pda})`);
     console.log(`  Total options: ${numOptions}, valid pools: ${validPools.length}`);
 
-    // Crank TWAP for each valid pool (only if warmup passed and enough time since last crank)
-    // Note: On-chain code handles early cranks gracefully (returns cached TWAP), but still costs gas
+    // Crank TWAP for all eligible pools in a single transaction
+    // This ensures all pools are cranked at the exact same time interval
     const now = Math.floor(Date.now() / 1000);
     const results: { pool: string; signature?: string; skipped?: boolean; reason?: string }[] = [];
+    const poolsToCrank: { index: number; poolPda: PublicKey }[] = [];
 
+    // First pass: check eligibility and collect pools to crank
     for (let i = 0; i < validPools.length; i++) {
       const poolPda = validPools[i];
       try {
-        // Fetch pool to check oracle timing
         const poolAccount = await client.amm.fetchPool(poolPda);
         const oracle = poolAccount.oracle;
 
@@ -3297,13 +3298,47 @@ router.post('/crank-twap', async (req: Request, res: Response) => {
           continue;
         }
 
-        const builder = await client.amm.crankTwap(poolPda);
-        const tx = await builder.rpc();
-        console.log(`  Pool ${i} (${poolPda.toBase58()}): ${tx}`);
-        results.push({ pool: poolPda.toBase58(), signature: tx });
+        poolsToCrank.push({ index: i, poolPda });
       } catch (err) {
-        console.error(`  Pool ${i} (${poolPda.toBase58()}) failed:`, err);
+        console.error(`  Pool ${i} (${poolPda.toBase58()}) failed to fetch:`, err);
         results.push({ pool: poolPda.toBase58(), reason: `error: ${String(err)}` });
+      }
+    }
+
+    // Second pass: build all crank instructions and send in a single transaction
+    if (poolsToCrank.length > 0) {
+      try {
+        const instructions = [];
+        for (const { poolPda } of poolsToCrank) {
+          const builder = await client.amm.crankTwap(poolPda);
+          const ix = await builder.instruction();
+          instructions.push(ix);
+        }
+
+        // Build and send single transaction with all crank instructions
+        const tx = new Transaction();
+        for (const ix of instructions) {
+          tx.add(ix);
+        }
+
+        const { blockhash } = await provider.connection.getLatestBlockhash();
+        tx.recentBlockhash = blockhash;
+        tx.feePayer = adminKeypair.publicKey;
+
+        const signature = await provider.connection.sendTransaction(tx, [adminKeypair]);
+        await provider.connection.confirmTransaction(signature, 'confirmed');
+
+        console.log(`  Cranked ${poolsToCrank.length} pools in single tx: ${signature}`);
+
+        // Mark all pools as cranked with the same signature
+        for (const { poolPda } of poolsToCrank) {
+          results.push({ pool: poolPda.toBase58(), signature });
+        }
+      } catch (err) {
+        console.error('  Batch crank failed:', err);
+        for (const { poolPda } of poolsToCrank) {
+          results.push({ pool: poolPda.toBase58(), reason: `batch error: ${String(err)}` });
+        }
       }
     }
 
@@ -3312,7 +3347,7 @@ router.post('/crank-twap', async (req: Request, res: Response) => {
       proposal_pda,
       dao_pda: dao.dao_pda,
       num_options: numOptions,
-      pools_cranked: validPools.length,
+      pools_cranked: poolsToCrank.length,
       results
     });
 
