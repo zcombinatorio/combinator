@@ -625,7 +625,7 @@ function deriveQuoteMint(poolInfo: PoolInfo, tokenMint: string): string {
 
 const daoLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 30, // 30 requests per window
+  max: 300, // 300 requests per window
   keyGenerator: (req) => {
     const cfIp = req.headers['cf-connecting-ip'];
     if (typeof cfIp === 'string') return ipKeyGenerator(cfIp);
