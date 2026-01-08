@@ -19,36 +19,13 @@
 import { Router, Request, Response } from 'express';
 import { Connection, PublicKey, Transaction, SystemProgram, VersionedTransaction, ComputeBudgetProgram } from '@solana/web3.js';
 import { AnchorProvider, Wallet, BN } from '@coral-xyz/anchor';
-import { getMint, getAccount, getAssociatedTokenAddress, NATIVE_MINT } from '@solana/spl-token';
-import * as nacl from 'tweetnacl';
-import * as crypto from 'crypto';
+import { NATIVE_MINT, getAssociatedTokenAddress } from '@solana/spl-token';
 import bs58 from 'bs58';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { futarchy } from '@zcomb/programs-sdk';
-import { CpAmm, feeNumeratorToBps, getFeeNumerator } from '@meteora-ag/cp-amm-sdk';
+import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import DLMM from '@meteora-ag/dlmm';
-import * as multisig from '@sqds/multisig';
 
-// Squads v4 program ID (same as used by @zcomb/programs-sdk)
-const SQUADS_PROGRAM_ID = new PublicKey('SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf');
-
-/**
- * Derive the Squads vault PDA from a multisig PDA.
- * The vault is where assets should be transferred to, NOT the multisig itself.
- * Sending to the multisig address instead of the vault leads to permanently lost funds!
- *
- * @param multisigPda - The Squads multisig PDA
- * @param index - Vault index (0 for default vault)
- * @returns The vault PDA
- */
-function deriveSquadsVaultPda(multisigPda: PublicKey, index: number = 0): PublicKey {
-  const [vaultPda] = multisig.getVaultPda({
-    multisigPda,
-    index,
-    programId: SQUADS_PROGRAM_ID,
-  });
-  return vaultPda;
-}
 import { getPool } from '../lib/db';
 import { getDaoById } from '../lib/db/daos';
 import {
@@ -62,562 +39,45 @@ import {
   getAllDaos,
   getDaosByOwner,
   getChildDaos,
-  isProposer,
   getProposersByDao,
   getDaoStats,
   addProposer,
   removeProposer,
   updateProposerThreshold,
-  getProposerThreshold,
   updateWithdrawalPercentage,
 } from '../lib/db/daos';
 import { allocateKey, fetchKeypair } from '../lib/keyService';
 import { isValidSolanaAddress, isValidTokenMintAddress } from '../lib/validation';
 import { uploadProposalMetadata, getIpfsUrl } from '../lib/ipfs';
 import { getTokenIcon, getTokenIcons } from '../lib/tokenMetadata';
+import { SimpleMutex } from '../lib/mutex';
+import {
+  requireSignedHash,
+  getCachedProposalCount,
+  setCachedProposalCount,
+  incrementProposalCount,
+  MOCK_MODE,
+  mockInitializeParentDAO,
+  mockInitializeChildDAO,
+  mockCreateProposal,
+  getPoolInfo,
+  deriveQuoteMint,
+  deriveSquadsVaultPda,
+  checkDaoProposerAuthorization,
+  checkMintAuthority,
+  checkTokenMatchesPoolBase,
+  checkAdminHoldsLP,
+  checkNoActiveProposal,
+  isDaoReadinessError,
+  type PoolInfo,
+} from '../lib/dao';
 
 const router = Router();
 
-// ============================================================================
-// In-memory proposal count cache
-// ============================================================================
-// Caches proposal counts per DAO to avoid expensive on-chain fetches on the
-// projects page. Populated lazily when proposals are fetched, updated on
-// proposal creation. No TTL needed since we control proposal creation.
-const proposalCountCache = new Map<string, number>();
-
-/**
- * Get cached proposal count for a DAO.
- * Returns undefined if not cached (needs to be fetched).
- */
-export function getCachedProposalCount(daoPda: string): number | undefined {
-  return proposalCountCache.get(daoPda);
-}
-
-/**
- * Set the proposal count cache for a DAO.
- * Called after fetching proposals from chain.
- */
-export function setCachedProposalCount(daoPda: string, count: number): void {
-  proposalCountCache.set(daoPda, count);
-}
-
-/**
- * Increment the proposal count cache for a DAO.
- * Called after successfully creating a proposal.
- */
-export function incrementProposalCount(daoPda: string): void {
-  const current = proposalCountCache.get(daoPda);
-  if (current !== undefined) {
-    proposalCountCache.set(daoPda, current + 1);
-  }
-  // If not cached, don't initialize - let it be populated on next fetch
-}
-
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
-
-// ============================================================================
-// Simple Mutex for DAO Operations
-// Prevents race conditions during key allocation and DAO creation
-// ============================================================================
-
-class SimpleMutex {
-  private locked = false;
-  private queue: (() => void)[] = [];
-
-  async acquire(): Promise<void> {
-    if (!this.locked) {
-      this.locked = true;
-      return;
-    }
-
-    return new Promise<void>((resolve) => {
-      this.queue.push(resolve);
-    });
-  }
-
-  release(): void {
-    const next = this.queue.shift();
-    if (next) {
-      next();
-    } else {
-      this.locked = false;
-    }
-  }
-}
 
 // Single mutex for all DAO creation operations (parent + child)
 const daoCreationMutex = new SimpleMutex();
-
-// ============================================================================
-// MOCK MODE CONFIGURATION
-// ============================================================================
-// When true: Skips Futarchy SDK on-chain calls, uses mock PDAs/transactions
-// When false: Makes real on-chain calls via FutarchyClient SDK
-//
-// TODO [POST-DEPLOYMENT]: After Futarchy contracts are deployed on mainnet:
-//   1. Set MOCK_MODE = false
-//   2. Test with a real token where you control mint authority
-//   3. Test with a Meteora pool where you hold LP positions
-//   4. Verify all 5 proposal validation checks pass:
-//      - Treasury has funds (SOL/USDC/token)
-//      - Mint authority set to mint_auth_multisig
-//      - Token matches pool base token (parent DAOs)
-//      - Admin wallet holds LP positions
-//      - No active proposal for moderator
-//   5. Create a test proposal end-to-end
-//   6. Remove this TODO block once verified
-// ============================================================================
-const MOCK_MODE = false;
-
-/**
- * Generate a deterministic mock public key based on a seed string
- */
-function mockPublicKey(seed: string): string {
-  const crypto = require('crypto');
-  const hash = crypto.createHash('sha256').update(seed).digest();
-  // Take first 32 bytes and encode as base58
-  return bs58.encode(hash.slice(0, 32));
-}
-
-/**
- * Generate a mock transaction signature
- */
-function mockTxSignature(): string {
-  const crypto = require('crypto');
-  const bytes = crypto.randomBytes(64);
-  return bs58.encode(bytes);
-}
-
-/**
- * Mock response for initializeParentDAO
- * Note: Returns vault PDAs, not multisig PDAs (vaults are where assets should go)
- */
-function mockInitializeParentDAO(name: string) {
-  return {
-    daoPda: mockPublicKey(`dao:parent:${name}`),
-    moderatorPda: mockPublicKey(`moderator:${name}`),
-    treasuryVault: mockPublicKey(`treasury-vault:${name}`),
-    mintVault: mockPublicKey(`mint-vault:${name}`),
-    tx: mockTxSignature(),
-  };
-}
-
-/**
- * Mock response for initializeChildDAO
- * Note: Returns vault PDAs, not multisig PDAs (vaults are where assets should go)
- */
-function mockInitializeChildDAO(parentName: string, childName: string) {
-  return {
-    daoPda: mockPublicKey(`dao:child:${parentName}:${childName}`),
-    treasuryVault: mockPublicKey(`treasury-vault:child:${childName}`),
-    mintVault: mockPublicKey(`mint-vault:child:${childName}`),
-    tx: mockTxSignature(),
-  };
-}
-
-/**
- * Mock response for createProposal
- */
-function mockCreateProposal(daoPda: string, title: string) {
-  return {
-    proposalPda: mockPublicKey(`proposal:${daoPda}:${title}`),
-    proposalId: Math.floor(Math.random() * 1000000),
-  };
-}
-
-// ============================================================================
-// Proposal Validation Helpers
-// ============================================================================
-
-interface ProposerAuthorizationResult {
-  isAuthorized: boolean;
-  authMethod: 'whitelist' | 'token_balance' | null;
-  reason?: string;
-}
-
-/**
- * Check if a wallet is authorized to propose for a specific DAO using DB settings.
- * Each DAO (parent or child) has independent whitelist and token threshold.
- *
- * Authorization flow:
- * 1. Check if wallet is in DAO's DB whitelist (fast, no RPC)
- * 2. If not whitelisted AND threshold is set, check token balance (RPC call)
- * 3. Otherwise deny (creator is always on whitelist by default)
- */
-async function checkDaoProposerAuthorization(
-  connection: Connection,
-  pool: ReturnType<typeof getPool>,
-  daoId: number,
-  wallet: string,
-  tokenMint: string
-): Promise<ProposerAuthorizationResult> {
-  // 1. Check DB whitelist first (fast, no RPC)
-  const onWhitelist = await isProposer(pool, daoId, wallet);
-  if (onWhitelist) {
-    return { isAuthorized: true, authMethod: 'whitelist' };
-  }
-
-  // 2. Get the DAO's token threshold setting
-  const threshold = await getProposerThreshold(pool, daoId);
-
-  // 3. If threshold is set, check token balance
-  if (threshold && threshold !== '0') {
-    const walletPubkey = new PublicKey(wallet);
-    const mintPubkey = new PublicKey(tokenMint);
-
-    try {
-      const ata = await getAssociatedTokenAddress(mintPubkey, walletPubkey);
-      const account = await getAccount(connection, ata);
-      const balance = account.amount;
-      const minBalanceRaw = BigInt(threshold);
-
-      if (balance >= minBalanceRaw) {
-        return { isAuthorized: true, authMethod: 'token_balance' };
-      }
-
-      // Has threshold requirement but balance too low
-      return {
-        isAuthorized: false,
-        authMethod: null,
-        reason: `Wallet not whitelisted and token balance (${balance.toString()}) is below required threshold (${threshold})`,
-      };
-    } catch {
-      // Token account doesn't exist = 0 balance
-      return {
-        isAuthorized: false,
-        authMethod: null,
-        reason: `Wallet not whitelisted and no token balance (required: ${threshold})`,
-      };
-    }
-  }
-
-  // 4. Not whitelisted and no token threshold set - deny
-  // (DAO creator is always added to whitelist on creation)
-  return {
-    isAuthorized: false,
-    authMethod: null,
-    reason: 'Wallet not on proposer whitelist for this DAO',
-  };
-}
-
-interface DaoReadinessError {
-  ready: false;
-  reason: string;
-}
-
-interface DaoReadinessOk {
-  ready: true;
-}
-
-type DaoReadinessResult = DaoReadinessOk | DaoReadinessError;
-
-/**
- * Check if mint_auth_multisig is the mint authority for token_mint
- */
-async function checkMintAuthority(
-  connection: Connection,
-  mintAuthMultisig: string,
-  tokenMint: string
-): Promise<DaoReadinessResult> {
-  const mintAuthPubkey = new PublicKey(mintAuthMultisig);
-  const tokenMintPubkey = new PublicKey(tokenMint);
-
-  try {
-    const mintInfo = await getMint(connection, tokenMintPubkey);
-
-    if (!mintInfo.mintAuthority) {
-      return {
-        ready: false,
-        reason: 'Token mint has no mint authority (authority is null)',
-      };
-    }
-
-    if (!mintInfo.mintAuthority.equals(mintAuthPubkey)) {
-      return {
-        ready: false,
-        reason: `Mint authority mismatch: expected ${mintAuthMultisig}, got ${mintInfo.mintAuthority.toBase58()}`,
-      };
-    }
-
-    return { ready: true };
-  } catch (error) {
-    return {
-      ready: false,
-      reason: `Failed to fetch mint info: ${String(error)}`,
-    };
-  }
-}
-
-/**
- * Check if token_mint matches the base token of the pool (parent DAOs only)
- */
-async function checkTokenMatchesPoolBase(
-  connection: Connection,
-  tokenMint: string,
-  poolAddress: string,
-  poolType: 'damm' | 'dlmm'
-): Promise<DaoReadinessResult> {
-  const poolPubkey = new PublicKey(poolAddress);
-
-  try {
-    let baseToken: string;
-
-    if (poolType === 'damm') {
-      const cpAmm = new CpAmm(connection);
-      const poolState = await cpAmm.fetchPoolState(poolPubkey);
-      // In DAMM, tokenA is typically the base token
-      baseToken = poolState.tokenAMint.toBase58();
-    } else {
-      const dlmmPool = await DLMM.create(connection, poolPubkey);
-      // In DLMM, tokenX is typically the base token
-      baseToken = dlmmPool.lbPair.tokenXMint.toBase58();
-    }
-
-    if (baseToken !== tokenMint) {
-      return {
-        ready: false,
-        reason: `Token mint does not match pool base token: expected ${baseToken}, got ${tokenMint}`,
-      };
-    }
-
-    return { ready: true };
-  } catch (error) {
-    return {
-      ready: false,
-      reason: `Failed to fetch pool info: ${String(error)}`,
-    };
-  }
-}
-
-/**
- * Check if admin wallet holds LP tokens for the pool
- * For child DAOs, checks the parent's admin wallet holds LP
- */
-async function checkAdminHoldsLP(
-  connection: Connection,
-  adminWallet: string,
-  poolAddress: string,
-  poolType: 'damm' | 'dlmm'
-): Promise<DaoReadinessResult> {
-  const adminPubkey = new PublicKey(adminWallet);
-  const poolPubkey = new PublicKey(poolAddress);
-
-  try {
-    if (poolType === 'damm') {
-      // For DAMM v2, check position accounts (not LP tokens)
-      const cpAmm = new CpAmm(connection);
-      const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, adminPubkey);
-
-      if (userPositions.length > 0) {
-        // Check if any position has liquidity
-        const hasLiquidity = userPositions.some(pos =>
-          !pos.positionState.unlockedLiquidity.isZero()
-        );
-
-        if (hasLiquidity) {
-          return { ready: true };
-        }
-      }
-
-      return {
-        ready: false,
-        reason: 'Admin wallet holds no LP positions for the DAMM pool',
-      };
-    } else {
-      // For DLMM, check positions
-      const dlmmPool = await DLMM.create(connection, poolPubkey);
-      const positions = await dlmmPool.getPositionsByUserAndLbPair(adminPubkey);
-
-      if (positions.userPositions.length > 0) {
-        // Check if any position has liquidity (amounts are strings, convert to BN)
-        const hasLiquidity = positions.userPositions.some(pos => {
-          const xAmount = new BN(pos.positionData.totalXAmount || 0);
-          const yAmount = new BN(pos.positionData.totalYAmount || 0);
-          return !xAmount.isZero() || !yAmount.isZero();
-        });
-
-        if (hasLiquidity) {
-          return { ready: true };
-        }
-      }
-
-      return {
-        ready: false,
-        reason: 'Admin wallet holds no LP positions for the DLMM pool',
-      };
-    }
-  } catch (error) {
-    return {
-      ready: false,
-      reason: `Failed to check LP holdings: ${String(error)}`,
-    };
-  }
-}
-
-/**
- * Check if there's already an active proposal for this moderator.
- *
- * IMPORTANT: Child DAOs share their parent's moderator_pda, so this check
- * naturally prevents sibling DAOs from creating proposals while one is active.
- * This is the desired behavior since they share liquidity from the parent's pool.
- */
-async function checkNoActiveProposal(
-  connection: Connection,
-  moderatorPda: string
-): Promise<DaoReadinessResult> {
-  if (MOCK_MODE) {
-    return { ready: true };
-  }
-
-  try {
-    // Create a read-only provider (no wallet needed for fetching)
-    const dummyWallet = {
-      publicKey: PublicKey.default,
-      signTransaction: async () => { throw new Error('Read-only'); },
-      signAllTransactions: async () => { throw new Error('Read-only'); },
-    } as unknown as Wallet;
-    const provider = new AnchorProvider(connection, dummyWallet, { commitment: 'confirmed' });
-    const client = new futarchy.FutarchyClient(provider);
-    const moderatorPubkey = new PublicKey(moderatorPda);
-
-    // Fetch moderator account to get proposal counter
-    const moderator = await client.fetchModerator(moderatorPubkey);
-
-    // No proposals ever created = ready to create first one
-    if (moderator.proposalIdCounter === 0) {
-      return { ready: true };
-    }
-
-    // Check the latest proposal (ID = counter - 1)
-    const latestProposalId = moderator.proposalIdCounter - 1;
-    const [proposalPda] = client.deriveProposalPDA(moderatorPubkey, latestProposalId);
-
-    let proposal;
-    try {
-      proposal = await client.fetchProposal(proposalPda);
-    } catch (fetchError) {
-      // Proposal account doesn't exist (maybe closed) - OK to proceed
-      console.log(`Could not fetch proposal ${latestProposalId}, proceeding:`, fetchError);
-      return { ready: true };
-    }
-
-    // Check proposal state - only block if Pending and not expired
-    // Setup state is allowed: each proposal has its own vault/pools (no shared state)
-    // ProposalState is an enum-like object: { setup: {} } | { pending: {} } | { resolved: {} }
-    const stateKey = Object.keys(proposal.state)[0];
-    const isPending = stateKey === 'pending';
-    const isExpired = client.isProposalExpired(proposal);
-
-    if (isPending && !isExpired) {
-      const timeRemaining = client.getTimeRemaining(proposal);
-      const hoursRemaining = Math.ceil(timeRemaining / 3600);
-      return {
-        ready: false,
-        reason: `Active proposal ${latestProposalId} in progress. ~${hoursRemaining}h remaining before it can be finalized.`,
-      };
-    }
-
-    // Proposal is resolved or expired - ready for new proposal
-    return { ready: true };
-  } catch (error) {
-    // If we can't check (RPC error, etc.), block proposal creation for safety
-    // This is "fail closed" - we prefer correctness over availability
-    console.error('Error checking for active proposal:', error);
-    return {
-      ready: false,
-      reason: `Failed to verify proposal state: ${error instanceof Error ? error.message : String(error)}. Please try again.`,
-    };
-  }
-}
-
-// Meteora program IDs for pool type detection
-const DAMM_PROGRAM_ID = new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG');
-const DLMM_PROGRAM_ID = new PublicKey('LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo');
-
-interface PoolInfo {
-  poolType: 'damm' | 'dlmm';
-  tokenAMint: string;
-  tokenBMint: string;
-  feeBps: number;  // Pool trading fee in basis points (e.g., 50 = 0.5%)
-}
-
-/**
- * Derive pool type and token mints from a Meteora pool address
- * Checks the account owner to determine if DAMM or DLMM, then fetches pool state
- */
-async function getPoolInfo(connection: Connection, poolAddress: PublicKey): Promise<PoolInfo> {
-  // Fetch account info to check the owner program
-  const accountInfo = await connection.getAccountInfo(poolAddress);
-  if (!accountInfo) {
-    throw new Error('Pool account not found');
-  }
-
-  const owner = accountInfo.owner;
-
-  if (owner.equals(DAMM_PROGRAM_ID)) {
-    // DAMM pool - use CpAmm SDK
-    const cpAmm = new CpAmm(connection);
-    const poolState = await cpAmm.fetchPoolState(poolAddress);
-
-    // Calculate STEADY STATE fee rate (after all decay periods complete)
-    // DAMM pools can have time-decaying fees, so we need to check what the
-    // minimum fee will be to ensure the DAO always receives sufficient fees.
-    // Compute a point far enough in the future that all periods have elapsed:
-    // steadyStatePoint = activationPoint + (numberOfPeriod + 1) * periodFrequency
-    const baseFee = poolState.poolFees.baseFee;
-    const steadyStatePoint = poolState.activationPoint
-      .add(baseFee.periodFrequency.muln(baseFee.numberOfPeriod + 1))
-      .toNumber();
-
-    const steadyStateFeeNumerator = getFeeNumerator(
-      steadyStatePoint,
-      poolState.activationPoint,
-      baseFee.numberOfPeriod,
-      baseFee.periodFrequency,
-      baseFee.feeSchedulerMode,
-      baseFee.cliffFeeNumerator,
-      baseFee.reductionFactor,
-    );
-
-    const feeBps = feeNumeratorToBps(steadyStateFeeNumerator);
-    return {
-      poolType: 'damm',
-      tokenAMint: poolState.tokenAMint.toBase58(),
-      tokenBMint: poolState.tokenBMint.toBase58(),
-      feeBps,
-    };
-  } else if (owner.equals(DLMM_PROGRAM_ID)) {
-    // DLMM pool - use DLMM SDK
-    const dlmmPool = await DLMM.create(connection, poolAddress);
-    // Use SDK's getFeeInfo() which correctly calculates:
-    // baseFee = baseFactor * binStep * 10 * 10^baseFeePowerFactor
-    // Returns baseFeeRatePercentage as a Decimal (0-100%), multiply by 100 to get bps
-    const feeInfo = dlmmPool.getFeeInfo();
-    const feeBps = feeInfo.baseFeeRatePercentage.mul(100).toNumber();
-    return {
-      poolType: 'dlmm',
-      tokenAMint: dlmmPool.lbPair.tokenXMint.toBase58(),
-      tokenBMint: dlmmPool.lbPair.tokenYMint.toBase58(),
-      feeBps,
-    };
-  } else {
-    throw new Error(`Unknown pool program: ${owner.toBase58()}. Expected DAMM or DLMM.`);
-  }
-}
-
-/**
- * Determine the quote mint given pool tokens and the base (governance) token
- */
-function deriveQuoteMint(poolInfo: PoolInfo, tokenMint: string): string {
-  if (poolInfo.tokenAMint === tokenMint) {
-    return poolInfo.tokenBMint;
-  } else if (poolInfo.tokenBMint === tokenMint) {
-    return poolInfo.tokenAMint;
-  } else {
-    throw new Error(`Token mint ${tokenMint} not found in pool. Pool contains: ${poolInfo.tokenAMint}, ${poolInfo.tokenBMint}`);
-  }
-}
 
 // ============================================================================
 // Rate Limiting
@@ -638,68 +98,6 @@ const daoLimiter = rateLimit({
 });
 
 router.use(daoLimiter);
-
-// ============================================================================
-// Signature Verification
-// ============================================================================
-
-/**
- * Verify a signed_hash for request authentication
- * The client signs SHA-256(JSON.stringify(bodyWithoutSignedHash))
- */
-function verifySignedHash(
-  body: Record<string, unknown>,
-  wallet: string,
-  signedHash: string
-): boolean {
-  try {
-    // Reconstruct body without signed_hash
-    const { signed_hash: _, ...bodyWithoutHash } = body;
-
-    // Hash the stringified body
-    const hash = crypto.createHash('sha256')
-      .update(JSON.stringify(bodyWithoutHash))
-      .digest();
-
-    // Decode signature and public key
-    const signature = bs58.decode(signedHash);
-    const publicKey = bs58.decode(wallet);
-
-    // Verify the signature
-    return nacl.sign.detached.verify(hash, signature, publicKey);
-  } catch (error) {
-    console.error('Signature verification error:', error);
-    return false;
-  }
-}
-
-/**
- * Middleware to validate request authentication via signed_hash
- */
-function requireSignedHash(
-  req: Request,
-  res: Response,
-  next: () => void
-): void {
-  const { wallet, signed_hash } = req.body;
-
-  if (!wallet || !signed_hash) {
-    res.status(400).json({ error: 'Missing wallet or signed_hash' });
-    return;
-  }
-
-  if (!isValidSolanaAddress(wallet)) {
-    res.status(400).json({ error: 'Invalid wallet address' });
-    return;
-  }
-
-  if (!verifySignedHash(req.body, wallet, signed_hash)) {
-    res.status(401).json({ error: 'Invalid signature' });
-    return;
-  }
-
-  next();
-}
 
 // ============================================================================
 // Helper Functions
@@ -2074,7 +1472,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
     // 1. Check mint authority - mint_auth_multisig must be authority for token_mint
     const mintAuthCheck = await checkMintAuthority(connection, dao.mint_auth_multisig, dao.token_mint);
-    if (!mintAuthCheck.ready) {
+    if (isDaoReadinessError(mintAuthCheck)) {
       return res.status(400).json({
         error: 'DAO not ready for proposals',
         reason: mintAuthCheck.reason,
@@ -2085,7 +1483,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // 2. For parent DAOs only: Check token matches pool base token
     if (dao.dao_type === 'parent') {
       const tokenPoolCheck = await checkTokenMatchesPoolBase(connection, dao.token_mint, dao.pool_address, dao.pool_type);
-      if (!tokenPoolCheck.ready) {
+      if (isDaoReadinessError(tokenPoolCheck)) {
         return res.status(400).json({
           error: 'DAO not ready for proposals',
           reason: tokenPoolCheck.reason,
@@ -2114,7 +1512,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     const lpCheck = await checkAdminHoldsLP(connection, lpCheckWallet, lpCheckPool, lpCheckPoolType);
-    if (!lpCheck.ready) {
+    if (isDaoReadinessError(lpCheck)) {
       return res.status(400).json({
         error: 'DAO not ready for proposals',
         reason: lpCheck.reason,
@@ -2123,8 +1521,8 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     // 4. Check no active proposal for this moderator
-    const activeProposalCheck = await checkNoActiveProposal(connection, dao.moderator_pda);
-    if (!activeProposalCheck.ready) {
+    const activeProposalCheck = await checkNoActiveProposal(connection, dao.moderator_pda, MOCK_MODE);
+    if (isDaoReadinessError(activeProposalCheck)) {
       return res.status(400).json({
         error: 'DAO not ready for proposals',
         reason: activeProposalCheck.reason,
