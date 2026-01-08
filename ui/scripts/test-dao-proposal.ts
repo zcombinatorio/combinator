@@ -123,7 +123,9 @@ async function main() {
     throw new Error('WARMUP_SECS environment variable is required');
   }
   const warmup_secs = parseInt(process.env.WARMUP_SECS, 10);
-  const options = ['Approve', 'Reject'];
+  const options = process.env.PROPOSAL_OPTIONS
+    ? process.env.PROPOSAL_OPTIONS.split(',').map(o => o.trim())
+    : ['Approve', 'Reject'];
 
   console.log(`\nCreating proposal:`);
   console.log(`  DAO PDA: ${dao_pda}`);

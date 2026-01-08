@@ -86,3 +86,20 @@ export async function uploadProposalMetadata(
 
   return uploadToIPFS(metadata, `proposal-${Date.now()}.json`);
 }
+
+/**
+ * Get the Pinata gateway URL for fetching IPFS content.
+ * Uses the dedicated gateway from PINATA_GATEWAY_URL env var for faster, more reliable access.
+ * Falls back to public gateway if not configured.
+ */
+export function getPinataGatewayUrl(): string {
+  return process.env.PINATA_GATEWAY_URL || 'https://gateway.pinata.cloud';
+}
+
+/**
+ * Build full IPFS URL for a given CID using the configured Pinata gateway.
+ */
+export function getIpfsUrl(cid: string): string {
+  const gateway = getPinataGatewayUrl();
+  return `${gateway}/ipfs/${cid}`;
+}

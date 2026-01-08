@@ -73,7 +73,7 @@ import {
 } from '../lib/db/daos';
 import { allocateKey, fetchKeypair } from '../lib/keyService';
 import { isValidSolanaAddress, isValidTokenMintAddress } from '../lib/validation';
-import { uploadProposalMetadata } from '../lib/ipfs';
+import { uploadProposalMetadata, getIpfsUrl } from '../lib/ipfs';
 import { getTokenIcon, getTokenIcons } from '../lib/tokenMetadata';
 
 const router = Router();
@@ -972,7 +972,7 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
         // Fetch IPFS metadata if available
         if (metadataCid) {
           try {
-            const metadataRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCid}`);
+            const metadataRes = await fetch(`${getIpfsUrl(metadataCid)}`);
             if (metadataRes.ok) {
               const metadata = await metadataRes.json();
               title = metadata.title || title;
@@ -1072,8 +1072,14 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
         try {
           const moderator = await readClient.fetchModerator(moderatorPubkey);
           proposalCount = moderator.proposalIdCounter;
-        } catch (err) {
-          console.warn(`Failed to fetch moderator ${moderatorPda} for DAO ${dao.dao_name}:`, err);
+        } catch (err: any) {
+          // Don't log full stack for expected "account does not exist" errors (test DAOs, failed creations)
+          const errMsg = err?.message || String(err);
+          if (errMsg.includes('Account does not exist')) {
+            // Expected for unverified/test DAOs - skip silently
+          } else {
+            console.warn(`Failed to fetch moderator ${moderatorPda} for DAO ${dao.dao_name}:`, err);
+          }
           return [];
         }
 
@@ -1124,23 +1130,27 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
             }
 
             // Fetch IPFS metadata
+            let metadataFetchSucceeded = false;
             if (metadataCid) {
               try {
-                const metadataRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCid}`);
+                const metadataRes = await fetch(`${getIpfsUrl(metadataCid)}`);
                 if (metadataRes.ok) {
                   const metadata = await metadataRes.json();
                   title = metadata.title || title;
                   description = metadata.description || description;
                   options = metadata.options || options;
                   metadataDaoPda = metadata.dao_pda || null;
+                  metadataFetchSucceeded = true;
                 }
               } catch (err) {
                 console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
               }
             }
 
-            // Only include proposals that belong to this DAO
-            if (metadataDaoPda !== dao.dao_pda) {
+            // Only filter out proposals if we successfully fetched metadata and it belongs to a different DAO.
+            // If metadata fetch failed, include the proposal (don't silently drop it due to IPFS issues).
+            // This check is important for child DAOs that share the parent's moderator.
+            if (metadataFetchSucceeded && metadataDaoPda !== dao.dao_pda) {
               return null;
             }
 
@@ -1250,7 +1260,7 @@ router.get('/proposal/:proposalPda', async (req: Request, res: Response) => {
     // Fetch IPFS metadata if available
     if (metadataCid) {
       try {
-        const metadataRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCid}`);
+        const metadataRes = await fetch(`${getIpfsUrl(metadataCid)}`);
         if (metadataRes.ok) {
           const metadata = await metadataRes.json();
           title = metadata.title || title;
