@@ -2283,8 +2283,6 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // For now, fetch from the DAO's token info
     const baseMintInfo = await getMint(connection, new PublicKey(dao.token_mint));
     const quoteMintInfo = await getMint(connection, new PublicKey(dao.quote_mint));
-    const baseDecimals = baseMintInfo.decimals;
-    const quoteDecimals = quoteMintInfo.decimals;
 
     // Calculate starting observation: (quoteAmount / baseAmount) * PRICE_SCALE * 10^(baseDecimals - quoteDecimals)
     let startingObservation: BN;
@@ -2292,14 +2290,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       // Fallback to 1:1 price if base amount is zero (shouldn't happen)
       startingObservation = PRICE_SCALE;
     } else {
-      const decimalDiff = baseDecimals - quoteDecimals;
-      if (decimalDiff >= 0) {
-        const multiplier = new BN(10).pow(new BN(decimalDiff));
-        startingObservation = quoteAmount.mul(multiplier).mul(PRICE_SCALE).div(baseAmount);
-      } else {
-        const divisor = new BN(10).pow(new BN(-decimalDiff));
-        startingObservation = quoteAmount.mul(PRICE_SCALE).div(baseAmount).div(divisor);
-      }
+      startingObservation = quoteAmount.mul(PRICE_SCALE).div(baseAmount);
     }
 
     // Calculate max observation delta as 5% of starting observation
