@@ -11,6 +11,7 @@ import bs58 from 'bs58';
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import { AnchorProvider, Wallet, BN } from '@coral-xyz/anchor';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
+import DLMM from '@meteora-ag/dlmm';
 import * as futarchy from '@zcomb/programs-sdk';
 import { getPool } from '../lib/db';
 import { getDaoByPda, getDaoById } from '../lib/db/daos';
@@ -146,15 +147,42 @@ async function main() {
   });
 
   // Verify LP exists (use lpAdminWallet - parent's admin for child DAOs)
-  const positions = await cpAmm.getUserPositionByPool(poolPubkey, lpAdminWallet);
-  const hasLP = positions.some(p => !p.positionState.unlockedLiquidity.isZero());
-  if (!hasLP) throw new Error('LP admin has no LP positions');
+  // Handle both DAMM and DLMM pool types
+  const poolType = dao.pool_type || 'damm';
+  let hasLP = false;
+  let lpInfo: { positionCount: number; totalLiquidity: string } = { positionCount: 0, totalLiquidity: '0' };
+
+  if (poolType === 'dlmm') {
+    // Check DLMM positions
+    const dlmmPool = await DLMM.create(connection, poolPubkey);
+    const { userPositions } = await dlmmPool.getPositionsByUserAndLbPair(lpAdminWallet);
+    hasLP = userPositions.some(p => {
+      const totalX = p.positionData.totalXAmount ? new BN(p.positionData.totalXAmount.toString()) : new BN(0);
+      const totalY = p.positionData.totalYAmount ? new BN(p.positionData.totalYAmount.toString()) : new BN(0);
+      return !totalX.isZero() || !totalY.isZero();
+    });
+    lpInfo = {
+      positionCount: userPositions.length,
+      totalLiquidity: userPositions.reduce((sum, p) => {
+        const x = p.positionData.totalXAmount ? new BN(p.positionData.totalXAmount.toString()) : new BN(0);
+        const y = p.positionData.totalYAmount ? new BN(p.positionData.totalYAmount.toString()) : new BN(0);
+        return sum.add(x).add(y);
+      }, new BN(0)).toString(),
+    };
+  } else {
+    // Check DAMM positions
+    const positions = await cpAmm.getUserPositionByPool(poolPubkey, lpAdminWallet);
+    hasLP = positions.some(p => !p.positionState.unlockedLiquidity.isZero());
+    lpInfo = {
+      positionCount: positions.length,
+      totalLiquidity: positions.reduce((sum, p) => sum.add(p.positionState.unlockedLiquidity), new BN(0)).toString(),
+    };
+  }
+
+  if (!hasLP) throw new Error(`LP admin has no LP positions (pool type: ${poolType})`);
 
   log('STEP 1', 'On-chain LP state:');
-  logState('Admin LP', {
-    positionCount: positions.length,
-    totalLiquidity: positions.reduce((sum, p) => sum.add(p.positionState.unlockedLiquidity), new BN(0)).toString(),
-  });
+  logState('Admin LP', lpInfo);
 
   // =========================================================================
   // STEP 2: Check Pre-Proposal State
@@ -174,6 +202,7 @@ async function main() {
   log('STEP 3', 'Creating proposal...');
 
   const proposalTitle = 'E2E Test Proposal ' + Date.now();
+  const warmupSecs = 60; // 60 second warmup
   const proposal = await signedPost('/dao/proposal', {
     dao_pda: DAO_PDA,
     title: proposalTitle,
@@ -187,6 +216,7 @@ async function main() {
       'Table',
     ],
     length_secs: PROPOSAL_DURATION_SECS,
+    warmup_secs: warmupSecs,
   }, testKeypair);
 
   const proposalPda = proposal.proposal_pda;
@@ -290,12 +320,27 @@ async function main() {
   });
 
   // Verify on-chain: LP admin has LP again
-  const finalPositions = await cpAmm.getUserPositionByPool(poolPubkey, lpAdminWallet);
+  let finalLpInfo: { positionCount: number; totalLiquidity: string };
+  if (poolType === 'dlmm') {
+    const dlmmPool = await DLMM.create(connection, poolPubkey);
+    const { userPositions: finalUserPositions } = await dlmmPool.getPositionsByUserAndLbPair(lpAdminWallet);
+    finalLpInfo = {
+      positionCount: finalUserPositions.length,
+      totalLiquidity: finalUserPositions.reduce((sum, p) => {
+        const x = p.positionData.totalXAmount ? new BN(p.positionData.totalXAmount.toString()) : new BN(0);
+        const y = p.positionData.totalYAmount ? new BN(p.positionData.totalYAmount.toString()) : new BN(0);
+        return sum.add(x).add(y);
+      }, new BN(0)).toString(),
+    };
+  } else {
+    const finalPositions = await cpAmm.getUserPositionByPool(poolPubkey, lpAdminWallet);
+    finalLpInfo = {
+      positionCount: finalPositions.length,
+      totalLiquidity: finalPositions.reduce((sum, p) => sum.add(p.positionState.unlockedLiquidity), new BN(0)).toString(),
+    };
+  }
   log('STEP 7', 'On-chain state after deposit-back:');
-  logState('Admin LP', {
-    positionCount: finalPositions.length,
-    totalLiquidity: finalPositions.reduce((sum, p) => sum.add(p.positionState.unlockedLiquidity), new BN(0)).toString(),
-  });
+  logState('Admin LP', finalLpInfo);
 
   // =========================================================================
   // SUMMARY

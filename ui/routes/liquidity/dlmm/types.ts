@@ -59,6 +59,9 @@ export interface DlmmDepositData extends BaseRequestData {
   // Pool price used for balancing
   activeBinPrice: number; // tokenY per tokenX
   positionAddress: string;
+  // If a new position was created, store the keypair secret for signing during confirm
+  newPositionKeypairSecret?: string;
+  isNewPosition?: boolean;
 }
 
 /**

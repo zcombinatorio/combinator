@@ -238,3 +238,109 @@ Legacy E2E Test Plan (with DBC pool migration):
   1. Create DBC pool - scripts/setup-test-token-damm.ts
   2. Buy tokens to trigger migration - Manual purchase of ~0.1 SOL
   3-12. Same as simplified flow above, starting from "Create parent DAO"
+
+
+================================================================================
+DLMM E2E TEST PLAN (TOKEN/USDC POOLS)
+================================================================================
+
+DLMM (Dynamic Liquidity Market Maker) pools use concentrated liquidity with
+discrete price bins. The DAO endpoints support both DAMM and DLMM pools - the
+pool type is auto-detected from the pool address.
+
+This test flow uses USDC as the quote token (instead of SOL like DAMM).
+
+Key differences from DAMM:
+  - DLMM uses concentrated liquidity with price bins (binStep parameter)
+  - Positions are account-based, not NFT-based
+  - LP "transfer" requires withdrawing and re-depositing liquidity
+  - Multiple transactions may be needed for large operations
+  - Uses USDC as quote token (DAMM uses SOL)
+
+Prerequisites (DLMM):
+  - Payer wallet must have USDC for pool liquidity (default: 100 USDC)
+  - Payer wallet must have SOL for transaction fees (~0.1 SOL)
+
+E2E Test Plan (DLMM):
+  1. Create token + DLMM pool - scripts/create-token-with-dlmm-pool.ts
+  2. Create parent DAO - scripts/test-dao-parent.ts (same as DAMM)
+  3. Transfer mint authority - scripts/transfer-mint-authority.ts (same as DAMM)
+  4. Transfer LP liquidity - scripts/e2e-transfer-dlmm-lp.ts
+  5. Fund admin wallet - scripts/fund-admin-wallet.ts (same as DAMM)
+  6. Verify DAO readiness - scripts/check-dao-db.ts (same as DAMM)
+  7. Check DLMM positions - scripts/check-dlmm-lp-positions.ts
+  8. Create proposal - scripts/test-proposal-e2e.ts (same as DAMM)
+  9. Wait for proposal duration
+  10. Finalize proposal - API: POST /dao/finalize-proposal
+  11. Redeem liquidity - API: POST /dao/redeem-liquidity
+  12. Deposit-back - API: POST /dao/deposit-back
+  13. Verify LP state - scripts/check-dlmm-lp-positions.ts
+
+
+Example Commands (DLMM E2E):
+
+  # Step 1: Create token + DLMM pool (TOKEN/USDC)
+  # NOTE: Payer must have USDC in their wallet
+  TOKEN_NAME="TestDAODLMM" TOKEN_SYMBOL="TDLMM" USDC_AMOUNT=100 TOKEN_PERCENT=10 \
+    BIN_STEP=25 SKIP_METADATA=true pnpm tsx scripts/create-token-with-dlmm-pool.ts
+  # Outputs: TOKEN_MINT, POOL_ADDRESS (pool), POSITION
+
+  # Step 2: Create parent DAO (pool type is auto-detected as 'dlmm')
+  API_URL=http://localhost:6770 PRIVATE_KEY="..." \
+    DAO_NAME="TestDAODLMM$(date +%s)" TOKEN_MINT="<from-step-1>" POOL_ADDRESS="<pool from step-1>" \
+    pnpm tsx scripts/test-dao-parent.ts
+  # Outputs: DAO_PDA, MODERATOR_PDA, ADMIN_WALLET
+
+  # Step 3: Get mint_vault from API, then transfer mint authority
+  DAO_PDA="<from-step-2>" pnpm tsx scripts/check-dao-db.ts
+  # Look for mint_vault in output, then:
+  TOKEN_MINT="<from-step-1>" NEW_AUTHORITY="<mint_vault from API>" \
+    pnpm tsx scripts/transfer-mint-authority.ts
+
+  # Step 4: Transfer LP liquidity to admin wallet (DLMM version)
+  # NOTE: Unlike DAMM, DLMM positions can't be directly transferred.
+  # This script withdraws liquidity and transfers tokens + USDC to admin.
+  POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
+    pnpm tsx scripts/e2e-transfer-dlmm-lp.ts
+
+  # Step 5: Fund admin wallet (needs SOL for transaction fees)
+  ADMIN_WALLET="<from-step-2>" SOL_AMOUNT=0.3 \
+    pnpm tsx scripts/fund-admin-wallet.ts
+  # NOTE: DLMM may need more SOL due to position creation costs
+
+  # Step 6-7: Verify DAO and check DLMM positions
+  DAO_PDA="<from-step-2>" pnpm tsx scripts/check-dao-db.ts
+  POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
+    pnpm tsx scripts/check-dlmm-lp-positions.ts
+
+  # Step 8: Create proposal (this also waits and finalizes)
+  API_URL=http://localhost:6770 DAO_PDA="<from-step-2>" PROPOSAL_DURATION_SECS=120 \
+    pnpm tsx scripts/test-proposal-e2e.ts
+
+  # Or do steps 8-12 manually (same as DAMM flow)
+
+  # Step 13: Check DLMM LP positions after deposit-back
+  POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
+    pnpm tsx scripts/check-dlmm-lp-positions.ts
+
+
+DLMM-Specific Notes:
+  - BIN_STEP controls price granularity: lower = more precise, higher = wider range
+    - 1 = 0.01% per bin (very precise, good for stablecoins)
+    - 25 = 0.25% per bin (default, good for most tokens)
+    - 100 = 1% per bin (wide range, less capital efficient)
+    - Max: 400 = 4% per bin
+  - The admin wallet will create positions during the first proposal if none exist
+  - DLMM withdrawal/deposit may use multiple transactions for large amounts
+  - Position bin range affects how much price movement the position can handle
+  - Quote token is USDC (EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
+
+
+Token-2022 Support:
+  - DLMM flow supports Token-2022 (Token Extensions) as the base token
+  - To create a Token-2022 base token, add USE_TOKEN_2022=true to create-token-with-dlmm-pool.ts
+  - Example:
+    USE_TOKEN_2022=true TOKEN_NAME="TestDAO22" TOKEN_SYMBOL="TD22" USDC_AMOUNT=100 \
+      pnpm tsx scripts/create-token-with-dlmm-pool.ts
+  - Token program is auto-detected in all downstream scripts
+  - Token-2022 tokens can use extensions like transfer fees, but basic tokens work out of the box

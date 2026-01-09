@@ -144,13 +144,25 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, managerWallet);
     const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, managerWallet);
 
-    // Fetch Jupiter market price
+    // Fetch Jupiter market price, fall back to pool price if not available
     console.log('  Fetching Jupiter market price...');
-    const jupiterPrice = await getJupiterPrice(tokenXMint.toBase58(), tokenYMint.toBase58());
+    let marketPrice: number;
+    try {
+      const jupiterPrice = await getJupiterPrice(tokenXMint.toBase58(), tokenYMint.toBase58());
+      marketPrice = jupiterPrice.tokenBPerTokenA;
+    } catch (jupiterError) {
+      // Jupiter doesn't have price data (common for new/test tokens)
+      // Use the pool's active bin price as fallback
+      console.log(`  Jupiter price not available: ${jupiterError instanceof Error ? jupiterError.message : String(jupiterError)}`);
+      console.log('  Using pool active bin price as fallback...');
+      const activeBin = await dlmmPool.getActiveBin();
+      // activeBin.price is in Y per X (quote per base)
+      marketPrice = Number(activeBin.price);
+      console.log(`  Pool active bin price: ${marketPrice} tokenY per tokenX`);
+    }
 
     const withdrawnXDecimal = Number(estimatedTokenXAmount.toString()) / Math.pow(10, tokenXMintInfo.decimals);
     const withdrawnYDecimal = Number(estimatedTokenYAmount.toString()) / Math.pow(10, tokenYMintInfo.decimals);
-    const marketPrice = jupiterPrice.tokenBPerTokenA;
 
     console.log(`  Withdrawn: ${withdrawnXDecimal} tokenX, ${withdrawnYDecimal} tokenY`);
     console.log(`  Market price: ${marketPrice} tokenY per tokenX`);
@@ -183,10 +195,15 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     const redepositTokenYAmount = new BN(Math.floor(redepositYDecimal * Math.pow(10, tokenYMintInfo.decimals)));
 
     // Build redeposit transactions if needed
+    // Skip redeposit if amounts are too small (less than 0.1% of withdrawn)
+    // because DLMM deposits require both tokens and may cause insufficient funds
     const redepositTxs: Transaction[] = [];
-    const hasRedeposit = !redepositTokenXAmount.isZero() || !redepositTokenYAmount.isZero();
+    const minRedepositThreshold = 0.001; // 0.1%
+    const redepositXRatio = withdrawnXDecimal > 0 ? redepositXDecimal / withdrawnXDecimal : 0;
+    const redepositYRatio = withdrawnYDecimal > 0 ? redepositYDecimal / withdrawnYDecimal : 0;
+    const hasSignificantRedeposit = redepositXRatio > minRedepositThreshold || redepositYRatio > minRedepositThreshold;
 
-    if (hasRedeposit) {
+    if (hasSignificantRedeposit) {
       console.log('  Building redeposit transactions...');
 
       const setupInstructions: TransactionInstruction[] = [];

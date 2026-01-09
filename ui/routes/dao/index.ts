@@ -378,14 +378,22 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     const withdrawConfirmData = await withdrawConfirmResponse.json() as {
       signature?: string;
       signatures?: string[];
-      // DAMM uses estimatedAmounts
+      // DAMM uses estimatedAmounts with tokenA/tokenB
       estimatedAmounts?: { tokenA: string; tokenB: string; liquidityDelta: string };
-      // DLMM uses transferred
-      transferred?: { tokenA: string; tokenB: string };
+      // DLMM uses transferred with tokenX/tokenY
+      transferred?: { tokenX: string; tokenY: string };
     };
 
-    // Normalize response format (DAMM uses estimatedAmounts, DLMM uses transferred)
-    const confirmAmounts = withdrawConfirmData.estimatedAmounts || withdrawConfirmData.transferred || buildAmounts;
+    // Normalize response format (DAMM uses estimatedAmounts with tokenA/tokenB, DLMM uses transferred with tokenX/tokenY)
+    let confirmAmounts: { tokenA: string; tokenB: string };
+    if (withdrawConfirmData.estimatedAmounts) {
+      confirmAmounts = withdrawConfirmData.estimatedAmounts;
+    } else if (withdrawConfirmData.transferred) {
+      // Map DLMM tokenX/tokenY to tokenA/tokenB
+      confirmAmounts = { tokenA: withdrawConfirmData.transferred.tokenX, tokenB: withdrawConfirmData.transferred.tokenY };
+    } else {
+      confirmAmounts = buildAmounts;
+    }
 
     console.log('Withdrawal confirmed:', {
       signature: withdrawConfirmData.signature || withdrawConfirmData.signatures,
@@ -1196,43 +1204,65 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
 
     // Build deposit (0, 0 = cleanup mode - uses LP owner balances)
     // Pass adminWallet to disambiguate when multiple DAOs share the same pool
+    // DAMM uses tokenA/tokenB, DLMM uses tokenX/tokenY
     let depositSignature = '';
+    const depositBuildBody = poolType === 'dlmm'
+      ? { poolAddress: liquidityDao.pool_address, tokenXAmount: 0, tokenYAmount: 0, adminWallet: liquidityDao.admin_wallet }
+      : { poolAddress: liquidityDao.pool_address, tokenAAmount: 0, tokenBAmount: 0, adminWallet: liquidityDao.admin_wallet };
     const depositBuildResponse = await fetch(`${baseUrl}/${poolType}/deposit/build`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        poolAddress: liquidityDao.pool_address,
-        tokenAAmount: 0,
-        tokenBAmount: 0,
-        adminWallet: liquidityDao.admin_wallet
-      })
+      body: JSON.stringify(depositBuildBody)
     });
 
     if (depositBuildResponse.ok) {
       const depositBuildData = await depositBuildResponse.json() as {
         requestId: string;
-        transaction: string;
+        // DAMM returns 'transaction' (singular), DLMM returns 'transactions' (array)
+        transaction?: string;
+        transactions?: string[];
       };
 
-      // Sign the deposit transaction
-      const depositTxBuffer = bs58.decode(depositBuildData.transaction);
-      const depositTx = Transaction.from(depositTxBuffer);
-      depositTx.partialSign(adminKeypair);
-      const signedDepositTx = bs58.encode(depositTx.serialize({ requireAllSignatures: false }));
+      // Handle both DAMM (singular) and DLMM (array) response formats
+      let depositConfirmResponse: Response;
+      if (poolType === 'dlmm' && depositBuildData.transactions) {
+        // DLMM: sign all transactions and submit as array
+        const signedTransactions: string[] = [];
+        for (const txBase58 of depositBuildData.transactions) {
+          const txBuffer = bs58.decode(txBase58);
+          const tx = Transaction.from(txBuffer);
+          tx.partialSign(adminKeypair);
+          signedTransactions.push(bs58.encode(tx.serialize({ requireAllSignatures: false })));
+        }
 
-      // Confirm deposit
-      const depositConfirmResponse = await fetch(`${baseUrl}/${poolType}/deposit/confirm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signedTransaction: signedDepositTx,
-          requestId: depositBuildData.requestId
-        })
-      });
+        depositConfirmResponse = await fetch(`${baseUrl}/dlmm/deposit/confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signedTransactions,
+            requestId: depositBuildData.requestId
+          })
+        });
+      } else {
+        // DAMM: sign single transaction
+        const depositTxBuffer = bs58.decode(depositBuildData.transaction!);
+        const depositTx = Transaction.from(depositTxBuffer);
+        depositTx.partialSign(adminKeypair);
+        const signedDepositTx = bs58.encode(depositTx.serialize({ requireAllSignatures: false }));
+
+        depositConfirmResponse = await fetch(`${baseUrl}/damm/deposit/confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signedTransaction: signedDepositTx,
+            requestId: depositBuildData.requestId
+          })
+        });
+      }
 
       if (depositConfirmResponse.ok) {
-        const depositConfirmData = await depositConfirmResponse.json() as { signature: string };
-        depositSignature = depositConfirmData.signature;
+        const depositConfirmData = await depositConfirmResponse.json() as { signature?: string; signatures?: string[] };
+        depositSignature = depositConfirmData.signature || (depositConfirmData.signatures && depositConfirmData.signatures[0]) || '';
         console.log(`  Deposit: ${depositSignature}`);
       } else {
         const depositError = await depositConfirmResponse.json().catch(() => ({}));
@@ -1265,6 +1295,143 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
       releaseLock();
       console.log(`Lock released for deposit-back ${req.body.proposal_pda}`);
     }
+  }
+});
+
+// ============================================================================
+// POST /dao/initialize-dlmm-position - Create initial DLMM position for admin
+// ============================================================================
+// Called after LP tokens have been transferred to admin wallet but before
+// any proposals. This is needed for DLMM pools where positions can't be
+// directly transferred - we transfer tokens, then create a new position.
+// ============================================================================
+
+router.post('/initialize-dlmm-position', async (req: Request, res: Response) => {
+  try {
+    const { dao_pda } = req.body;
+
+    // Validate required fields
+    if (!dao_pda) {
+      return res.status(400).json({ error: 'Missing required field: dao_pda' });
+    }
+
+    // Validate PDA is valid public key
+    if (!isValidTokenMintAddress(dao_pda)) {
+      return res.status(400).json({ error: 'Invalid dao_pda' });
+    }
+
+    const pool = getPool();
+    const connection = getConnection();
+
+    // Fetch DAO from database
+    const dao = await getDaoByPda(pool, dao_pda);
+    if (!dao) {
+      return res.status(404).json({ error: 'DAO not found' });
+    }
+
+    // Only works for DLMM pools
+    if (dao.pool_type !== 'dlmm') {
+      return res.status(400).json({
+        error: 'This endpoint is only for DLMM pools',
+        pool_type: dao.pool_type
+      });
+    }
+
+    console.log(`Initializing DLMM position for DAO ${dao_pda}`);
+    console.log(`  Pool: ${dao.pool_address}`);
+    console.log(`  Admin: ${dao.admin_wallet}`);
+
+    // Get admin keypair
+    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
+    if (!adminKeypair) {
+      return res.status(500).json({ error: 'Failed to derive admin keypair' });
+    }
+
+    // Call deposit/build endpoint (cleanup mode - uses LP owner balances)
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+    const depositBuildResponse = await fetch(`${baseUrl}/dlmm/deposit/build`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        poolAddress: dao.pool_address,
+        tokenXAmount: 0,
+        tokenYAmount: 0,
+        adminWallet: dao.admin_wallet
+      })
+    });
+
+    if (!depositBuildResponse.ok) {
+      const depositError = await depositBuildResponse.json().catch(() => ({}));
+      return res.status(400).json({
+        error: 'Failed to build deposit transaction',
+        details: (depositError as any).error || 'unknown'
+      });
+    }
+
+    const depositBuildData = await depositBuildResponse.json() as {
+      requestId: string;
+      transactions: string[];
+      transactionCount: number;
+      positionAddress: string;
+      isNewPosition: boolean;
+    };
+
+    console.log(`  Position: ${depositBuildData.positionAddress}`);
+    console.log(`  New position: ${depositBuildData.isNewPosition}`);
+    console.log(`  Transaction count: ${depositBuildData.transactionCount}`);
+
+    // Sign all transactions with admin keypair
+    const signedTransactions: string[] = [];
+    for (const txBase58 of depositBuildData.transactions) {
+      const txBuffer = bs58.decode(txBase58);
+      const tx = Transaction.from(txBuffer);
+      tx.partialSign(adminKeypair);
+      signedTransactions.push(bs58.encode(tx.serialize({ requireAllSignatures: false })));
+    }
+
+    // Confirm deposit
+    const depositConfirmResponse = await fetch(`${baseUrl}/dlmm/deposit/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        signedTransactions,
+        requestId: depositBuildData.requestId
+      })
+    });
+
+    if (!depositConfirmResponse.ok) {
+      const depositError = await depositConfirmResponse.json().catch(() => ({}));
+      return res.status(400).json({
+        error: 'Failed to confirm deposit',
+        details: (depositError as any).error || 'unknown'
+      });
+    }
+
+    const depositConfirmData = await depositConfirmResponse.json() as {
+      signatures: string[];
+      positionAddress: string;
+    };
+
+    console.log(`  Deposit signatures: ${depositConfirmData.signatures.join(', ')}`);
+    console.log(`Position initialized successfully`);
+
+    res.json({
+      success: true,
+      dao_pda,
+      pool_address: dao.pool_address,
+      admin_wallet: dao.admin_wallet,
+      position_address: depositConfirmData.positionAddress,
+      signatures: depositConfirmData.signatures,
+      is_new_position: depositBuildData.isNewPosition
+    });
+
+  } catch (error) {
+    console.error('Error initializing DLMM position:', error);
+    res.status(500).json({
+      error: 'Failed to initialize DLMM position',
+      details: String(error)
+    });
   }
 });
 

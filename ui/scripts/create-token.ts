@@ -2,6 +2,7 @@
  * Create a new SPL token with configurable mint authority
  *
  * Creates a new token mint and optionally transfers mint authority to a DAO admin.
+ * Supports both standard SPL Token and Token-2022 (Token Extensions).
  * Useful for testing DAO creation and proposal flows.
  *
  * Usage:
@@ -9,6 +10,9 @@
  *
  * With options:
  *   TOKEN_NAME="MyToken" TOKEN_SYMBOL="MTK" TOKEN_DECIMALS=6 TOTAL_SUPPLY=1000000 pnpm tsx scripts/create-token.ts
+ *
+ * Create Token-2022 token:
+ *   USE_TOKEN_2022=true TOKEN_NAME="MyToken22" pnpm tsx scripts/create-token.ts
  *
  * Transfer mint authority to DAO admin:
  *   DAO_ADMIN="<pubkey>" pnpm tsx scripts/create-token.ts
@@ -22,6 +26,7 @@
  *   - TOKEN_SYMBOL: Symbol of the token (default: "TEST")
  *   - TOKEN_DECIMALS: Number of decimals (default: 6)
  *   - TOTAL_SUPPLY: Total tokens to mint (default: 1000000)
+ *   - USE_TOKEN_2022: Set to "true" to create Token-2022 token (default: false)
  *   - DAO_ADMIN: Public key to transfer mint authority to (default: keep with protocol wallet)
  *   - TOKEN_URI: Metadata URI (default: empty)
  *   - SKIP_METADATA: Set to "true" to skip metadata creation (useful for test tokens)
@@ -43,8 +48,10 @@ import {
   getMinimumBalanceForRentExemptMint,
   MINT_SIZE,
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   AuthorityType,
   setAuthority,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
 import {
@@ -68,6 +75,7 @@ const TOKEN_NAME = process.env.TOKEN_NAME || 'TestToken';
 const TOKEN_SYMBOL = process.env.TOKEN_SYMBOL || 'TEST';
 const TOKEN_DECIMALS = parseInt(process.env.TOKEN_DECIMALS || '6');
 const TOTAL_SUPPLY = parseInt(process.env.TOTAL_SUPPLY || '1000000');
+const USE_TOKEN_2022 = process.env.USE_TOKEN_2022 === 'true';
 const DAO_ADMIN = process.env.DAO_ADMIN; // Optional: transfer mint authority to this address
 const TOKEN_URI = process.env.TOKEN_URI || '';
 
@@ -104,16 +112,20 @@ export interface CreateTokenResult {
   mintAuthority: string;
   tokenAccount: string;
   signature: string;
+  tokenProgram: string; // TOKEN_PROGRAM_ID or TOKEN_2022_PROGRAM_ID
+  isToken2022: boolean;
 }
 
 /**
  * Creates a new SPL token with metadata
+ * Supports both standard SPL Token and Token-2022
  */
 export async function createToken(options?: {
   name?: string;
   symbol?: string;
   decimals?: number;
   totalSupply?: number;
+  useToken2022?: boolean;
   daoAdmin?: string;
   uri?: string;
   payer?: Keypair;
@@ -124,13 +136,19 @@ export async function createToken(options?: {
     symbol: options?.symbol || TOKEN_SYMBOL,
     decimals: options?.decimals ?? TOKEN_DECIMALS,
     totalSupply: options?.totalSupply ?? TOTAL_SUPPLY,
+    useToken2022: options?.useToken2022 ?? USE_TOKEN_2022,
     daoAdmin: options?.daoAdmin || DAO_ADMIN,
     uri: options?.uri || TOKEN_URI,
     payer: options?.payer || getDefaultPayer(),
     connection: options?.connection || getDefaultConnection(),
   };
 
-  console.log('\n=== Creating New SPL Token ===\n');
+  // Select the appropriate token program
+  const tokenProgramId = opts.useToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+  const tokenProgramName = opts.useToken2022 ? 'Token-2022' : 'SPL Token';
+
+  console.log('\n=== Creating New Token ===\n');
+  console.log(`Program: ${tokenProgramName}`);
   console.log(`Name: ${opts.name}`);
   console.log(`Symbol: ${opts.symbol}`);
   console.log(`Decimals: ${opts.decimals}`);
@@ -150,23 +168,26 @@ export async function createToken(options?: {
   // Calculate raw amount with decimals
   const rawAmount = BigInt(opts.totalSupply) * BigInt(10 ** opts.decimals);
 
-  // Get associated token account for payer
+  // Get associated token account for payer (with correct program ID)
   const tokenAccount = getAssociatedTokenAddressSync(
     mintKeypair.publicKey,
-    opts.payer.publicKey
+    opts.payer.publicKey,
+    false, // allowOwnerOffCurve
+    tokenProgramId,
+    ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
   // Build transaction for mint creation and token minting
   const transaction = new Transaction();
 
-  // 1. Create mint account
+  // 1. Create mint account (with correct program ID)
   transaction.add(
     SystemProgram.createAccount({
       fromPubkey: opts.payer.publicKey,
       newAccountPubkey: mintKeypair.publicKey,
       space: MINT_SIZE,
       lamports,
-      programId: TOKEN_PROGRAM_ID,
+      programId: tokenProgramId,
     })
   );
 
@@ -177,27 +198,31 @@ export async function createToken(options?: {
       opts.decimals,
       opts.payer.publicKey, // mint authority
       opts.payer.publicKey, // freeze authority (can be null)
-      TOKEN_PROGRAM_ID
+      tokenProgramId
     )
   );
 
-  // 3. Create associated token account for payer
+  // 3. Create associated token account for payer (with correct program ID)
   transaction.add(
     createAssociatedTokenAccountInstruction(
       opts.payer.publicKey,
       tokenAccount,
       opts.payer.publicKey,
-      mintKeypair.publicKey
+      mintKeypair.publicKey,
+      tokenProgramId,
+      ASSOCIATED_TOKEN_PROGRAM_ID
     )
   );
 
-  // 4. Mint total supply to payer
+  // 4. Mint total supply to payer (with correct program ID)
   transaction.add(
     createMintToInstruction(
       mintKeypair.publicKey,
       tokenAccount,
       opts.payer.publicKey,
-      rawAmount
+      rawAmount,
+      [],
+      tokenProgramId
     )
   );
 
@@ -218,7 +243,9 @@ export async function createToken(options?: {
   console.log(`Token Account: ${tokenAccount.toBase58()}`);
 
   // 5. Create metadata using UMI (optional, can be skipped for test tokens)
-  const skipMetadata = process.env.SKIP_METADATA === 'true';
+  // Note: Metaplex metadata works best with standard SPL Token. Token-2022 tokens
+  // can use Token-2022's native metadata extension instead.
+  const skipMetadata = process.env.SKIP_METADATA === 'true' || opts.useToken2022;
 
   if (!skipMetadata) {
     try {
@@ -252,6 +279,9 @@ export async function createToken(options?: {
       console.log(`\n⚠️ Metadata creation failed (token still usable): ${metadataError.message}`);
       console.log(`Tip: Set SKIP_METADATA=true to skip metadata creation for test tokens.`);
     }
+  } else if (opts.useToken2022) {
+    console.log(`\nSkipping Metaplex metadata for Token-2022 (not fully compatible)`);
+    console.log(`Note: Token-2022 supports native metadata extension if needed.`);
   } else {
     console.log(`\nSkipping metadata creation (SKIP_METADATA=true)`);
   }
@@ -269,7 +299,10 @@ export async function createToken(options?: {
       mintKeypair.publicKey,
       opts.payer,
       AuthorityType.MintTokens,
-      newAuthority
+      newAuthority,
+      [],
+      undefined,
+      tokenProgramId
     );
 
     console.log(`Mint authority transferred to: ${opts.daoAdmin}`);
@@ -286,6 +319,8 @@ export async function createToken(options?: {
     mintAuthority: finalMintAuthority,
     tokenAccount: tokenAccount.toBase58(),
     signature,
+    tokenProgram: tokenProgramId.toBase58(),
+    isToken2022: opts.useToken2022,
   };
 
   console.log('\n=== Token Creation Complete ===\n');

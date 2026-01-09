@@ -7,7 +7,7 @@
 
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
-import { Connection, Transaction, TransactionInstruction, PublicKey, SystemProgram } from '@solana/web3.js';
+import { Connection, Transaction, TransactionInstruction, PublicKey, SystemProgram, Keypair } from '@solana/web3.js';
 import {
   createTransferInstruction,
   getAssociatedTokenAddress,
@@ -18,7 +18,7 @@ import {
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
-import DLMM from '@meteora-ag/dlmm';
+import DLMM, { StrategyType } from '@meteora-ag/dlmm';
 import rateLimit from 'express-rate-limit';
 
 import {
@@ -135,17 +135,36 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     }
 
     const { userPositions } = await dlmmPool.getPositionsByUserAndLbPair(lpOwner.publicKey);
-    if (userPositions.length === 0) {
-      return res.status(404).json({ error: 'No positions found for the LP owner. Create a position first.' });
-    }
-
-    const position = userPositions[0];
-    const positionData = position.positionData;
 
     // Get active bin price
     const activeBin = await dlmmPool.getActiveBin();
     const activeBinPrice = Number(activeBin.price);
     console.log(`  Active bin price: ${activeBinPrice} Y per X`);
+
+    // Determine if we need to create a new position
+    const isNewPosition = userPositions.length === 0;
+    let positionPubkey: PublicKey;
+    let positionKeypair: Keypair | null = null;
+    let minBinId: number;
+    let maxBinId: number;
+
+    if (isNewPosition) {
+      // Generate a new position keypair - we'll create the position during deposit
+      positionKeypair = Keypair.generate();
+      positionPubkey = positionKeypair.publicKey;
+      // Use a reasonable bin range around the active bin (+/- 34 bins = 69 bins total, max is 70)
+      const binRange = 34;
+      minBinId = activeBin.binId - binRange;
+      maxBinId = activeBin.binId + binRange;
+      console.log(`  Creating new position: ${positionPubkey.toBase58()}`);
+      console.log(`  Bin range: ${minBinId} to ${maxBinId}`);
+    } else {
+      const position = userPositions[0];
+      positionPubkey = position.publicKey;
+      minBinId = position.positionData.lowerBinId;
+      maxBinId = position.positionData.upperBinId;
+      console.log(`  Using existing position: ${positionPubkey.toBase58()}`);
+    }
 
     // Calculate balanced deposit using active bin price
     const tokenXDecimal = Number(tokenXAmountRaw.toString()) / Math.pow(10, tokenXMintInfo.decimals);
@@ -238,31 +257,59 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
       );
     }
 
-    const addLiquidityTxs = await dlmmPool.addLiquidityByStrategyChunkable({
-      positionPubKey: position.publicKey,
-      totalXAmount: depositTokenXAmount,
-      totalYAmount: depositTokenYAmount,
-      strategy: { maxBinId: positionData.upperBinId, minBinId: positionData.lowerBinId, strategyType: 0 },
-      user: lpOwner.publicKey,
-      slippage: 500,
-    });
+    // Build deposit transaction(s) - use different method depending on whether position exists
+    if (isNewPosition) {
+      // Create new position and add liquidity in one transaction
+      console.log(`  Creating new position with liquidity...`);
+      const initAndAddLiquidityTx = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
+        positionPubKey: positionPubkey,
+        totalXAmount: depositTokenXAmount,
+        totalYAmount: depositTokenYAmount,
+        strategy: {
+          maxBinId,
+          minBinId,
+          strategyType: StrategyType.Spot,
+        },
+        user: lpOwner.publicKey,
+        slippage: 500,
+      });
 
-    console.log(`  Deposit chunked into ${addLiquidityTxs.length} transaction(s)`);
+      const depositTx = new Transaction();
+      depositTx.recentBlockhash = blockhash;
+      depositTx.feePayer = manager;
+      if (setupInstructions.length > 0) depositTx.add(...setupInstructions);
+      depositTx.add(...initAndAddLiquidityTx.instructions);
+      allTransactions.push(depositTx);
 
-    if (addLiquidityTxs.length > 0) {
-      const firstTx = new Transaction();
-      firstTx.recentBlockhash = blockhash;
-      firstTx.feePayer = manager;
-      if (setupInstructions.length > 0) firstTx.add(...setupInstructions);
-      firstTx.add(...addLiquidityTxs[0].instructions);
-      allTransactions.push(firstTx);
+      console.log(`  Built 1 transaction (initialize position + add liquidity)`);
+    } else {
+      // Add to existing position using chunkable method
+      const addLiquidityTxs = await dlmmPool.addLiquidityByStrategyChunkable({
+        positionPubKey: positionPubkey,
+        totalXAmount: depositTokenXAmount,
+        totalYAmount: depositTokenYAmount,
+        strategy: { maxBinId, minBinId, strategyType: StrategyType.Spot },
+        user: lpOwner.publicKey,
+        slippage: 500,
+      });
 
-      for (let i = 1; i < addLiquidityTxs.length; i++) {
-        const chunkTx = new Transaction();
-        chunkTx.recentBlockhash = blockhash;
-        chunkTx.feePayer = manager;
-        chunkTx.add(...addLiquidityTxs[i].instructions);
-        allTransactions.push(chunkTx);
+      console.log(`  Deposit chunked into ${addLiquidityTxs.length} transaction(s)`);
+
+      if (addLiquidityTxs.length > 0) {
+        const firstTx = new Transaction();
+        firstTx.recentBlockhash = blockhash;
+        firstTx.feePayer = manager;
+        if (setupInstructions.length > 0) firstTx.add(...setupInstructions);
+        firstTx.add(...addLiquidityTxs[0].instructions);
+        allTransactions.push(firstTx);
+
+        for (let i = 1; i < addLiquidityTxs.length; i++) {
+          const chunkTx = new Transaction();
+          chunkTx.recentBlockhash = blockhash;
+          chunkTx.feePayer = manager;
+          chunkTx.add(...addLiquidityTxs[i].instructions);
+          allTransactions.push(chunkTx);
+        }
       }
     }
 
@@ -290,8 +337,11 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
       leftoverTokenXAmount: leftoverTokenXAmount.toString(),
       leftoverTokenYAmount: leftoverTokenYAmount.toString(),
       activeBinPrice,
-      positionAddress: position.publicKey.toBase58(),
+      positionAddress: positionPubkey.toBase58(),
       adminWallet,
+      // Store position keypair secret if we're creating a new position
+      isNewPosition,
+      newPositionKeypairSecret: positionKeypair ? bs58.encode(positionKeypair.secretKey) : undefined,
     });
 
     const hasLeftover = !leftoverTokenXAmount.isZero() || !leftoverTokenYAmount.isZero();
@@ -302,6 +352,7 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
       transactionCount: unsignedTransactions.length,
       requestId,
       poolAddress: poolAddress.toBase58(),
+      positionAddress: positionPubkey.toBase58(),
       tokenXMint: tokenXMint.toBase58(),
       tokenYMint: tokenYMint.toBase58(),
       tokenXDecimals: tokenXMintInfo.decimals,
@@ -309,10 +360,13 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
       cleanupMode: useCleanupMode,
       activeBinPrice,
       hasLeftover,
+      isNewPosition,
       transferred: { tokenX: tokenXAmountRaw.toString(), tokenY: tokenYAmountRaw.toString() },
       deposited: { tokenX: depositTokenXAmount.toString(), tokenY: depositTokenYAmount.toString() },
       leftover: { tokenX: leftoverTokenXAmount.toString(), tokenY: leftoverTokenYAmount.toString() },
-      message: 'Sign all transactions with the manager wallet and submit to /dlmm/deposit/confirm'
+      message: isNewPosition
+        ? 'Sign all transactions with the manager wallet and submit to /dlmm/deposit/confirm (new position will be created)'
+        : 'Sign all transactions with the manager wallet and submit to /dlmm/deposit/confirm'
     });
 
   } catch (error) {
@@ -371,6 +425,13 @@ router.post('/confirm', dlmmLiquidityLimiter, async (req: Request, res: Response
     const lpOwnerKeypair = poolConfig.lpOwnerKeypair;
     const managerWalletPubKey = new PublicKey(poolConfig.managerWallet);
 
+    // Reconstruct position keypair if this is a new position
+    let positionKeypair: Keypair | null = null;
+    if (depositData.isNewPosition && depositData.newPositionKeypairSecret) {
+      positionKeypair = Keypair.fromSecretKey(bs58.decode(depositData.newPositionKeypairSecret));
+      console.log(`  New position keypair reconstructed: ${positionKeypair.publicKey.toBase58()}`);
+    }
+
     const verifyResult = await verifySignedTransactionBatch(
       connection,
       signedTransactions,
@@ -389,6 +450,12 @@ router.post('/confirm', dlmmLiquidityLimiter, async (req: Request, res: Response
     for (let i = 0; i < transactions.length; i++) {
       const transaction = transactions[i];
       transaction.partialSign(lpOwnerKeypair);
+
+      // Also sign with position keypair if creating a new position (only needed for first tx)
+      if (positionKeypair && i === 0) {
+        transaction.partialSign(positionKeypair);
+        console.log(`  Signed with new position keypair`);
+      }
 
       console.log(`  Sending transaction ${i + 1}/${transactions.length}...`);
       const signature = await connection.sendRawTransaction(transaction.serialize(), {
@@ -417,6 +484,8 @@ router.post('/confirm', dlmmLiquidityLimiter, async (req: Request, res: Response
       success: true,
       signatures,
       poolAddress: depositData.poolAddress,
+      positionAddress: depositData.positionAddress,
+      isNewPosition: depositData.isNewPosition || false,
       tokenXMint: depositData.tokenXMint,
       tokenYMint: depositData.tokenYMint,
       tokenXDecimals: depositData.tokenXDecimals,
@@ -426,9 +495,11 @@ router.post('/confirm', dlmmLiquidityLimiter, async (req: Request, res: Response
       transferred: { tokenX: depositData.transferredTokenXAmount, tokenY: depositData.transferredTokenYAmount },
       deposited: { tokenX: depositData.depositedTokenXAmount, tokenY: depositData.depositedTokenYAmount },
       leftover: { tokenX: depositData.leftoverTokenXAmount, tokenY: depositData.leftoverTokenYAmount },
-      message: hasLeftover
-        ? 'Deposit transactions submitted successfully. Leftover tokens remain in LP owner wallet for cleanup.'
-        : 'Deposit transactions submitted successfully'
+      message: depositData.isNewPosition
+        ? 'New position created and liquidity deposited successfully'
+        : hasLeftover
+          ? 'Deposit transactions submitted successfully. Leftover tokens remain in LP owner wallet for cleanup.'
+          : 'Deposit transactions submitted successfully'
     });
 
   } catch (error) {
