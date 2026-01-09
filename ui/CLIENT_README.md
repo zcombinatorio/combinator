@@ -25,6 +25,45 @@ API Base URL: `https://api.zcombinator.io`
 
 ---
 
+## Quick Start: Create a Parent DAO (Recommended Flow)
+
+This is the fastest path to a working DAO using **USDC + DAMM + SPL Token** (the recommended configuration).
+
+**Prerequisites:** Your wallet needs ~10 USDC + 0.5 SOL
+
+```bash
+# 1. Create token + USDC pool in one command
+TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 SKIP_METADATA=true \
+  pnpm tsx scripts/create-token-with-pool.ts
+# → Save: TOKEN_MINT, POOL_ADDRESS
+
+# 2. Create the DAO
+API_URL=https://api.zcombinator.io DAO_NAME="MyDAO" \
+  TOKEN_MINT="<from-step-1>" POOL_ADDRESS="<from-step-1>" \
+  pnpm tsx scripts/test-dao-parent.ts
+# → Save: DAO_PDA, ADMIN_WALLET, MINT_VAULT
+
+# 3. Transfer mint authority to the DAO
+TOKEN_MINT="<from-step-1>" NEW_AUTHORITY="<MINT_VAULT>" \
+  pnpm tsx scripts/transfer-mint-authority.ts
+
+# 4. Transfer LP position to DAO admin
+POOL_ADDRESS="<from-step-1>" ADMIN_WALLET="<from-step-2>" \
+  pnpm tsx scripts/e2e-transfer-lp.ts
+
+# 5. Fund admin wallet for transaction fees
+ADMIN_WALLET="<from-step-2>" pnpm tsx scripts/fund-admin-wallet.ts
+```
+
+**Done!** Your DAO is ready for proposals. See [Flow 1](#flow-1-parent-dao-creation-usdc-pool---recommended) for detailed instructions.
+
+**Alternative Configurations:**
+- **SOL quote:** Add `QUOTE_MINT=SOL SOL_AMOUNT=1` to step 1
+- **DLMM pool:** Use `create-token-with-dlmm-pool.ts` instead (see [Flow 5](#flow-5-parent-dao-creation-dlmm-pool-with-usdc))
+- **Token-2022 base:** Not currently supported for DAOs (blocked at DAO creation)
+
+---
+
 ## Building Block Scripts
 
 ### 1. create-token.ts
@@ -64,11 +103,17 @@ TOKEN_MINT=<mint-address>
 
 ### 2. create-damm-pool.ts
 
-Creates a Meteora CP-AMM (DAMM) pool for an existing token.
+Creates a Meteora CP-AMM (DAMM) pool for an existing token. Supports both USDC and SOL as quote tokens.
 
-**Usage:**
+**Usage (USDC quote - default):**
 ```bash
-TOKEN_MINT="<mint-address>" SOL_AMOUNT=0.1 TOKEN_PERCENT=10 \
+TOKEN_MINT="<mint-address>" USDC_AMOUNT=10 TOKEN_PERCENT=10 \
+  pnpm tsx scripts/create-damm-pool.ts
+```
+
+**Usage (SOL quote):**
+```bash
+TOKEN_MINT="<mint-address>" QUOTE_MINT=SOL SOL_AMOUNT=0.1 TOKEN_PERCENT=10 \
   pnpm tsx scripts/create-damm-pool.ts
 ```
 
@@ -78,7 +123,9 @@ TOKEN_MINT="<mint-address>" SOL_AMOUNT=0.1 TOKEN_PERCENT=10 \
 | `RPC_URL` | Yes | - | Solana RPC endpoint |
 | `PRIVATE_KEY` | Yes | - | Your wallet private key |
 | `TOKEN_MINT` | Yes | - | Token mint address |
-| `SOL_AMOUNT` | No | 0.1 | SOL to provide as liquidity |
+| `QUOTE_MINT` | No | USDC | Quote token: "USDC" or "SOL" |
+| `USDC_AMOUNT` | No | 10 | USDC to provide as liquidity |
+| `SOL_AMOUNT` | No | 0.1 | SOL to provide (when QUOTE_MINT=SOL) |
 | `TOKEN_PERCENT` | No | 10 | Percentage of token balance to use |
 | `TOKEN_AMOUNT` | No | - | Exact token amount (overrides TOKEN_PERCENT) |
 | `FEE_BPS` | No | 100 | Pool fee in basis points (100 = 1%) |
@@ -93,11 +140,17 @@ POSITION_NFT=<nft-mint>
 
 ### 3. create-token-with-pool.ts
 
-Convenience script that creates a token AND a DAMM pool in one operation.
+Convenience script that creates a token AND a DAMM pool in one operation. Supports both USDC and SOL as quote tokens.
 
-**Usage:**
+**Usage (USDC quote - default):**
 ```bash
-TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" SOL_AMOUNT=0.5 TOKEN_PERCENT=10 SKIP_METADATA=true \
+TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 SKIP_METADATA=true \
+  pnpm tsx scripts/create-token-with-pool.ts
+```
+
+**Usage (SOL quote):**
+```bash
+TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" QUOTE_MINT=SOL SOL_AMOUNT=0.1 TOKEN_PERCENT=10 SKIP_METADATA=true \
   pnpm tsx scripts/create-token-with-pool.ts
 ```
 
@@ -110,7 +163,9 @@ TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" SOL_AMOUNT=0.5 TOKEN_PERCENT=10 SKIP_MET
 | `TOKEN_SYMBOL` | No | "TDAO" | Token symbol |
 | `TOKEN_DECIMALS` | No | 6 | Number of decimals |
 | `TOTAL_SUPPLY` | No | 1000000 | Total supply |
-| `SOL_AMOUNT` | No | 0.1 | SOL for pool liquidity |
+| `QUOTE_MINT` | No | USDC | Quote token: "USDC" or "SOL" |
+| `USDC_AMOUNT` | No | 10 | USDC for pool liquidity |
+| `SOL_AMOUNT` | No | 0.1 | SOL for pool (when QUOTE_MINT=SOL) |
 | `TOKEN_PERCENT` | No | 10 | % of tokens for pool |
 | `FEE_BPS` | No | 100 | Pool fee in bps |
 | `SKIP_METADATA` | No | false | Skip metadata creation |
@@ -126,16 +181,22 @@ POOL_ADDRESS=<pool-address>
 ### 3b. create-dlmm-pool.ts
 
 Creates a Meteora DLMM (Dynamic Liquidity Market Maker) pool for an existing token.
-DLMM uses concentrated liquidity with discrete price bins and USDC as the quote token.
+DLMM uses concentrated liquidity with discrete price bins. Supports both USDC and SOL as quote tokens.
 
-**Usage:**
+**Usage (USDC quote - default):**
 ```bash
-TOKEN_MINT="<mint-address>" USDC_AMOUNT=100 TOKEN_PERCENT=10 BIN_STEP=25 \
+TOKEN_MINT="<mint-address>" USDC_AMOUNT=10 TOKEN_PERCENT=10 BIN_STEP=25 \
+  pnpm tsx scripts/create-dlmm-pool.ts
+```
+
+**Usage (SOL quote):**
+```bash
+TOKEN_MINT="<mint-address>" QUOTE_MINT=SOL SOL_AMOUNT=0.1 TOKEN_PERCENT=10 BIN_STEP=25 \
   pnpm tsx scripts/create-dlmm-pool.ts
 ```
 
 **Prerequisites:**
-- Payer wallet must have USDC for pool liquidity
+- Payer wallet must have USDC or SOL for pool liquidity (depending on QUOTE_MINT)
 
 **Environment Variables:**
 | Variable | Required | Default | Description |
@@ -143,7 +204,9 @@ TOKEN_MINT="<mint-address>" USDC_AMOUNT=100 TOKEN_PERCENT=10 BIN_STEP=25 \
 | `RPC_URL` | Yes | - | Solana RPC endpoint |
 | `PRIVATE_KEY` | Yes | - | Your wallet private key |
 | `TOKEN_MINT` | Yes | - | Token mint address |
-| `USDC_AMOUNT` | No | 100 | USDC to provide as liquidity |
+| `QUOTE_MINT` | No | USDC | Quote token: "USDC" or "SOL" |
+| `USDC_AMOUNT` | No | 10 | USDC to provide as liquidity |
+| `SOL_AMOUNT` | No | 0.1 | SOL to provide (when QUOTE_MINT=SOL) |
 | `TOKEN_PERCENT` | No | 10 | Percentage of token balance to use |
 | `TOKEN_AMOUNT` | No | - | Exact token amount (overrides TOKEN_PERCENT) |
 | `BIN_STEP` | No | 25 | Price bin step (1-400, affects price granularity) |
@@ -159,23 +222,29 @@ POSITION=<position-address>
 
 ### 3c. create-token-with-dlmm-pool.ts
 
-Convenience script that creates a token AND a DLMM pool (TOKEN/USDC) in one operation.
-Supports both SPL Token and Token-2022 as the base token.
+Convenience script that creates a token AND a DLMM pool in one operation.
+Supports both USDC and SOL as quote tokens. Supports both SPL Token and Token-2022 as the base token.
 
-**Usage:**
+**Usage (USDC quote - default):**
 ```bash
-TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=100 TOKEN_PERCENT=10 BIN_STEP=25 \
+TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 BIN_STEP=25 \
+  pnpm tsx scripts/create-token-with-dlmm-pool.ts
+```
+
+**Usage (SOL quote):**
+```bash
+TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" QUOTE_MINT=SOL SOL_AMOUNT=0.1 TOKEN_PERCENT=10 BIN_STEP=25 \
   pnpm tsx scripts/create-token-with-dlmm-pool.ts
 ```
 
 **With Token-2022:**
 ```bash
-USE_TOKEN_2022=true TOKEN_NAME="MyDAO22" USDC_AMOUNT=100 \
+USE_TOKEN_2022=true TOKEN_NAME="MyDAO22" USDC_AMOUNT=10 \
   pnpm tsx scripts/create-token-with-dlmm-pool.ts
 ```
 
 **Prerequisites:**
-- Payer wallet must have USDC for pool liquidity
+- Payer wallet must have USDC or SOL for pool liquidity (depending on QUOTE_MINT)
 
 **Environment Variables:**
 | Variable | Required | Default | Description |
@@ -187,7 +256,9 @@ USE_TOKEN_2022=true TOKEN_NAME="MyDAO22" USDC_AMOUNT=100 \
 | `TOKEN_DECIMALS` | No | 6 | Number of decimals |
 | `TOTAL_SUPPLY` | No | 1000000 | Total supply |
 | `USE_TOKEN_2022` | No | false | Create Token-2022 token |
-| `USDC_AMOUNT` | No | 100 | USDC for pool liquidity |
+| `QUOTE_MINT` | No | USDC | Quote token: "USDC" or "SOL" |
+| `USDC_AMOUNT` | No | 10 | USDC for pool liquidity |
+| `SOL_AMOUNT` | No | 0.1 | SOL for pool (when QUOTE_MINT=SOL) |
 | `TOKEN_PERCENT` | No | 10 | % of tokens for pool |
 | `BIN_STEP` | No | 25 | Price bin step (1-400) |
 | `FEE_BPS` | No | 100 | Pool fee in bps |
@@ -439,13 +510,17 @@ position will be created automatically when the first proposal is created.
 
 ## End-to-End Flows
 
-### Flow 1: Parent DAO Creation
+### Flow 1: Parent DAO Creation (USDC Pool - Recommended)
 
-Complete setup for a new parent DAO with governance token and liquidity pool.
+Complete setup for a new parent DAO with governance token and USDC liquidity pool.
+
+**Prerequisites:**
+- Payer wallet must have USDC for pool liquidity (default 10 USDC)
+- Payer wallet must have SOL for transaction fees
 
 ```bash
-# 1. Create token + pool
-TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" SOL_AMOUNT=1 TOKEN_PERCENT=10 SKIP_METADATA=true \
+# 1. Create token + USDC pool (default)
+TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 SKIP_METADATA=true \
   pnpm tsx scripts/create-token-with-pool.ts
 # Save: TOKEN_MINT, POOL_ADDRESS
 
@@ -477,6 +552,13 @@ API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
 ```
 
 **DAO is now ready for proposals.**
+
+**Alternative: SOL Pool**
+To use SOL instead of USDC as the quote token, add `QUOTE_MINT=SOL` and use `SOL_AMOUNT`:
+```bash
+TOKEN_NAME="MyDAO" QUOTE_MINT=SOL SOL_AMOUNT=1 TOKEN_PERCENT=10 SKIP_METADATA=true \
+  pnpm tsx scripts/create-token-with-pool.ts
+```
 
 ---
 
@@ -628,18 +710,18 @@ The API auto-detects the pool type, so most steps are identical.
 Supports both SPL Token and Token-2022 as the base token.
 
 **Prerequisites:**
-- Payer wallet must have USDC for pool liquidity (default 100 USDC)
+- Payer wallet must have USDC for pool liquidity (default 10 USDC)
 - Payer wallet must have SOL for transaction fees
 
 ```bash
 # 1. Create token + DLMM pool (TOKEN/USDC)
 # NOTE: Payer must have USDC in their wallet
-TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=100 TOKEN_PERCENT=10 BIN_STEP=25 \
+TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 BIN_STEP=25 \
   pnpm tsx scripts/create-token-with-dlmm-pool.ts
 # Save: TOKEN_MINT, POOL_ADDRESS (pool field), POSITION
 
 # For Token-2022 base token, add USE_TOKEN_2022=true:
-# USE_TOKEN_2022=true TOKEN_NAME="MyDAO22" USDC_AMOUNT=100 BIN_STEP=25 \
+# USE_TOKEN_2022=true TOKEN_NAME="MyDAO22" USDC_AMOUNT=10 BIN_STEP=25 \
 #   pnpm tsx scripts/create-token-with-dlmm-pool.ts
 
 # 2. Create parent DAO (pool_type will be auto-detected as 'dlmm')
@@ -678,7 +760,7 @@ POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
 **DAO is now ready for proposals.**
 
 **Key Differences from DAMM Flow:**
-- DLMM uses USDC as quote token (DAMM uses SOL)
+- DLMM uses concentrated liquidity with price bins
 - Use `create-token-with-dlmm-pool.ts` instead of `create-token-with-pool.ts`
 - Use `e2e-transfer-dlmm-lp.ts` instead of `e2e-transfer-lp.ts`
 - Use `check-dlmm-lp-positions.ts` to verify LP state
@@ -691,24 +773,26 @@ POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
 
 The API supports two types of Meteora liquidity pools:
 
-### DAMM (Dynamic AMM / CP-AMM)
+### DAMM (Dynamic AMM / CP-AMM) - Recommended
 - Traditional AMM with virtual price curve
-- Uses SOL as quote token (TOKEN/SOL pairs)
+- **Supports both USDC (default) and SOL as quote tokens**
 - LP positions are represented as NFTs
 - Positions can be directly transferred
 - Lower transaction costs
-- Scripts: `create-damm-pool.ts`, `check-lp-positions.ts`, `e2e-transfer-lp.ts`
+- Simpler setup and operations
+- USDC Mint: `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
+- Scripts: `create-damm-pool.ts`, `create-token-with-pool.ts`, `check-lp-positions.ts`, `e2e-transfer-lp.ts`
 
 ### DLMM (Dynamic Liquidity Market Maker)
 - Concentrated liquidity with discrete price bins
-- Uses USDC as quote token (TOKEN/USDC pairs)
+- **Supports both USDC (default) and SOL as quote tokens**
 - LP positions are account-based (not NFTs)
 - Positions cannot be directly transferred (use withdraw + deposit)
 - More capital efficient but higher complexity
 - BIN_STEP parameter (1-400) controls price granularity
 - USDC Mint: `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
 - **Supports Token-2022 base tokens** (use `USE_TOKEN_2022=true`)
-- Scripts: `create-dlmm-pool.ts`, `check-dlmm-lp-positions.ts`, `e2e-transfer-dlmm-lp.ts`
+- Scripts: `create-dlmm-pool.ts`, `create-token-with-dlmm-pool.ts`, `check-dlmm-lp-positions.ts`, `e2e-transfer-dlmm-lp.ts`
 
 The pool type is **auto-detected** when creating a DAO - just provide any valid
 Meteora pool address and the API will determine whether it's DAMM or DLMM.

@@ -14,7 +14,8 @@ import {
   getMint,
   createAssociatedTokenAccountIdempotentInstruction,
   createSyncNativeInstruction,
-  NATIVE_MINT
+  NATIVE_MINT,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
@@ -27,6 +28,7 @@ import {
   verifySignedTransactionBatch,
   getJupiterPrice,
   REQUEST_EXPIRY,
+  getTokenProgramsForMints,
 } from '../shared';
 import { withdrawRequests } from './storage';
 
@@ -134,15 +136,23 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
       skipUnwrapSOL: false,
     });
 
-    const tokenXMintInfo = await getMint(connection, tokenXMint);
-    const tokenYMintInfo = await getMint(connection, tokenYMint);
+    // Detect token programs (Token-2022 vs SPL Token)
+    const tokenPrograms = await getTokenProgramsForMints(connection, [tokenXMint, tokenYMint]);
+    const tokenXProgram = tokenPrograms.get(tokenXMint.toBase58());
+    const tokenYProgram = tokenPrograms.get(tokenYMint.toBase58());
+    if (!tokenXProgram || !tokenYProgram) {
+      throw new Error('Failed to detect token program for pool mints');
+    }
+
+    const tokenXMintInfo = await getMint(connection, tokenXMint, undefined, tokenXProgram);
+    const tokenYMintInfo = await getMint(connection, tokenYMint, undefined, tokenYProgram);
     const isTokenXNativeSOL = tokenXMint.equals(NATIVE_MINT);
     const isTokenYNativeSOL = tokenYMint.equals(NATIVE_MINT);
 
-    const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey);
-    const lpOwnerTokenYAta = await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey);
-    const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, managerWallet);
-    const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, managerWallet);
+    const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey, false, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const lpOwnerTokenYAta = await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey, false, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, managerWallet, false, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, managerWallet, false, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
 
     // Fetch Jupiter market price, fall back to pool price if not available
     console.log('  Fetching Jupiter market price...');
@@ -259,17 +269,17 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
 
     // Build transfer transaction
     const transferTx = new Transaction();
-    transferTx.add(createAssociatedTokenAccountIdempotentInstruction(lpOwner.publicKey, managerTokenXAta, managerWallet, tokenXMint));
+    transferTx.add(createAssociatedTokenAccountIdempotentInstruction(lpOwner.publicKey, managerTokenXAta, managerWallet, tokenXMint, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID));
 
     if (!isTokenYNativeSOL) {
-      transferTx.add(createAssociatedTokenAccountIdempotentInstruction(lpOwner.publicKey, managerTokenYAta, managerWallet, tokenYMint));
+      transferTx.add(createAssociatedTokenAccountIdempotentInstruction(lpOwner.publicKey, managerTokenYAta, managerWallet, tokenYMint, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID));
     }
 
     if (!transferTokenXAmount.isZero()) {
       if (isTokenXNativeSOL) {
         transferTx.add(SystemProgram.transfer({ fromPubkey: lpOwner.publicKey, toPubkey: managerWallet, lamports: Number(transferTokenXAmount.toString()) }));
       } else {
-        transferTx.add(createTransferInstruction(lpOwnerTokenXAta, managerTokenXAta, lpOwner.publicKey, BigInt(transferTokenXAmount.toString())));
+        transferTx.add(createTransferInstruction(lpOwnerTokenXAta, managerTokenXAta, lpOwner.publicKey, BigInt(transferTokenXAmount.toString()), [], tokenXProgram));
       }
     }
 
@@ -277,7 +287,7 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
       if (isTokenYNativeSOL) {
         transferTx.add(SystemProgram.transfer({ fromPubkey: lpOwner.publicKey, toPubkey: managerWallet, lamports: Number(transferTokenYAmount.toString()) }));
       } else {
-        transferTx.add(createTransferInstruction(lpOwnerTokenYAta, managerTokenYAta, lpOwner.publicKey, BigInt(transferTokenYAmount.toString())));
+        transferTx.add(createTransferInstruction(lpOwnerTokenYAta, managerTokenYAta, lpOwner.publicKey, BigInt(transferTokenYAmount.toString()), [], tokenYProgram));
       }
     }
 

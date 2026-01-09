@@ -11,7 +11,7 @@ import { Connection, Transaction, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getMint, NATIVE_MINT } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
-import { CpAmm, getTokenProgram } from '@meteora-ag/cp-amm-sdk';
+import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import rateLimit from 'express-rate-limit';
 
 import {
@@ -21,6 +21,7 @@ import {
   isRestrictedLpOwner,
   getJupiterSwapTransaction,
   REQUEST_EXPIRY,
+  getTokenProgramsForMints,
 } from '../shared';
 import { cleanupSwapRequests } from './storage';
 
@@ -79,10 +80,14 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
 
     const tokenAMint = poolState.tokenAMint;
     const tokenBMint = poolState.tokenBMint;
-    const tokenAMintInfo = await getMint(connection, tokenAMint);
-    const tokenBMintInfo = await getMint(connection, tokenBMint);
-    const tokenAProgram = getTokenProgram(tokenAMintInfo.tlvData.length > 0 ? 1 : 0);
-    const tokenBProgram = getTokenProgram(tokenBMintInfo.tlvData.length > 0 ? 1 : 0);
+
+    // Detect token programs (Token-2022 vs SPL Token) before calling getMint
+    const tokenPrograms = await getTokenProgramsForMints(connection, [tokenAMint, tokenBMint]);
+    const tokenAProgram = tokenPrograms.get(tokenAMint.toBase58())!;
+    const tokenBProgram = tokenPrograms.get(tokenBMint.toBase58())!;
+
+    const tokenAMintInfo = await getMint(connection, tokenAMint, undefined, tokenAProgram);
+    const tokenBMintInfo = await getMint(connection, tokenBMint, undefined, tokenBProgram);
     const isTokenBNativeSOL = tokenBMint.equals(NATIVE_MINT);
 
     // Get LP owner token balances

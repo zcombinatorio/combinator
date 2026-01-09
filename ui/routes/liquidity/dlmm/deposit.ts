@@ -14,7 +14,8 @@ import {
   getMint,
   createAssociatedTokenAccountIdempotentInstruction,
   createSyncNativeInstruction,
-  NATIVE_MINT
+  NATIVE_MINT,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
@@ -27,6 +28,7 @@ import {
   verifySignedTransactionBatch,
   isRestrictedLpOwner,
   REQUEST_EXPIRY,
+  getTokenProgramsForMints,
 } from '../shared';
 import { depositRequests } from './storage';
 
@@ -84,13 +86,21 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     const tokenXMint = lbPair.tokenXMint;
     const tokenYMint = lbPair.tokenYMint;
 
-    const tokenXMintInfo = await getMint(connection, tokenXMint);
-    const tokenYMintInfo = await getMint(connection, tokenYMint);
+    // Detect token programs (Token-2022 vs SPL Token)
+    const tokenPrograms = await getTokenProgramsForMints(connection, [tokenXMint, tokenYMint]);
+    const tokenXProgram = tokenPrograms.get(tokenXMint.toBase58());
+    const tokenYProgram = tokenPrograms.get(tokenYMint.toBase58());
+    if (!tokenXProgram || !tokenYProgram) {
+      throw new Error('Failed to detect token program for pool mints');
+    }
+
+    const tokenXMintInfo = await getMint(connection, tokenXMint, undefined, tokenXProgram);
+    const tokenYMintInfo = await getMint(connection, tokenYMint, undefined, tokenYProgram);
     const isTokenXNativeSOL = tokenXMint.equals(NATIVE_MINT);
     const isTokenYNativeSOL = tokenYMint.equals(NATIVE_MINT);
 
-    const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey);
-    const lpOwnerTokenYAta = await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey);
+    const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey, false, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const lpOwnerTokenYAta = await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey, false, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
 
     let tokenXAmountRaw: BN;
     let tokenYAmountRaw: BN;
@@ -210,20 +220,20 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
       transferTx.recentBlockhash = blockhash;
       transferTx.feePayer = manager;
 
-      const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, manager);
-      const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, manager);
+      const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, manager, false, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, manager, false, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
 
-      transferTx.add(createAssociatedTokenAccountIdempotentInstruction(manager, lpOwnerTokenXAta, lpOwner.publicKey, tokenXMint));
+      transferTx.add(createAssociatedTokenAccountIdempotentInstruction(manager, lpOwnerTokenXAta, lpOwner.publicKey, tokenXMint, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID));
 
       if (!isTokenYNativeSOL) {
-        transferTx.add(createAssociatedTokenAccountIdempotentInstruction(manager, lpOwnerTokenYAta, lpOwner.publicKey, tokenYMint));
+        transferTx.add(createAssociatedTokenAccountIdempotentInstruction(manager, lpOwnerTokenYAta, lpOwner.publicKey, tokenYMint, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID));
       }
 
       if (!tokenXAmountRaw.isZero()) {
         if (isTokenXNativeSOL) {
           transferTx.add(SystemProgram.transfer({ fromPubkey: manager, toPubkey: lpOwner.publicKey, lamports: Number(tokenXAmountRaw.toString()) }));
         } else {
-          transferTx.add(createTransferInstruction(managerTokenXAta, lpOwnerTokenXAta, manager, BigInt(tokenXAmountRaw.toString())));
+          transferTx.add(createTransferInstruction(managerTokenXAta, lpOwnerTokenXAta, manager, BigInt(tokenXAmountRaw.toString()), [], tokenXProgram));
         }
       }
 
@@ -231,7 +241,7 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
         if (isTokenYNativeSOL) {
           transferTx.add(SystemProgram.transfer({ fromPubkey: manager, toPubkey: lpOwner.publicKey, lamports: Number(tokenYAmountRaw.toString()) }));
         } else {
-          transferTx.add(createTransferInstruction(managerTokenYAta, lpOwnerTokenYAta, manager, BigInt(tokenYAmountRaw.toString())));
+          transferTx.add(createTransferInstruction(managerTokenYAta, lpOwnerTokenYAta, manager, BigInt(tokenYAmountRaw.toString()), [], tokenYProgram));
         }
       }
 

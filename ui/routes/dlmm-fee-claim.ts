@@ -25,8 +25,10 @@ import {
   getAssociatedTokenAddress,
   getMint,
   createAssociatedTokenAccountIdempotentInstruction,
-  NATIVE_MINT
+  NATIVE_MINT,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
+import { getTokenProgramsForMints } from './liquidity/shared';
 import bs58 from 'bs58';
 import BN from 'bn.js';
 import DLMM from '@meteora-ag/dlmm';
@@ -362,9 +364,13 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       });
     }
 
-    // Get token programs for token X and Y
-    const tokenXMintInfo = await getMint(connection, tokenXMint);
-    const tokenYMintInfo = await getMint(connection, tokenYMint);
+    // Detect token programs (Token-2022 vs SPL Token) before calling getMint
+    const tokenPrograms = await getTokenProgramsForMints(connection, [tokenXMint, tokenYMint]);
+    const tokenXProgram = tokenPrograms.get(tokenXMint.toBase58())!;
+    const tokenYProgram = tokenPrograms.get(tokenYMint.toBase58())!;
+
+    const tokenXMintInfo = await getMint(connection, tokenXMint, undefined, tokenXProgram);
+    const tokenYMintInfo = await getMint(connection, tokenYMint, undefined, tokenYProgram);
 
     // Check if tokens are native SOL (wrapped SOL)
     const isTokenXNativeSOL = tokenXMint.equals(NATIVE_MINT);
@@ -396,14 +402,20 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
     transferTx.feePayer = payerPubKey;
     transferTx.recentBlockhash = blockhash;
 
-    // Get LP owner's token accounts
+    // Get LP owner's token accounts (with correct token programs)
     const tokenXAta = await getAssociatedTokenAddress(
       tokenXMint,
-      lpOwner.publicKey
+      lpOwner.publicKey,
+      false,
+      tokenXProgram,
+      ASSOCIATED_TOKEN_PROGRAM_ID
     );
     const tokenYAta = await getAssociatedTokenAddress(
       tokenYMint,
-      lpOwner.publicKey
+      lpOwner.publicKey,
+      false,
+      tokenYProgram,
+      ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
     // Add transfer instructions for each fee recipient based on their percentage
@@ -416,17 +428,21 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       const tokenXTransferAmount = totalTokenXFees.mul(new BN(basisPoints)).div(new BN(100000));
       const tokenYTransferAmount = totalTokenYFees.mul(new BN(basisPoints)).div(new BN(100000));
 
-      // Get destination token accounts
+      // Get destination token accounts (with correct token programs)
       // allowOwnerOffCurve: true allows PDAs as fee recipients
       const destTokenXAta = isTokenXNativeSOL ? destinationAddress : await getAssociatedTokenAddress(
         tokenXMint,
         destinationAddress,
-        true // allowOwnerOffCurve
+        true, // allowOwnerOffCurve
+        tokenXProgram,
+        ASSOCIATED_TOKEN_PROGRAM_ID
       );
       const destTokenYAta = isTokenYNativeSOL ? destinationAddress : await getAssociatedTokenAddress(
         tokenYMint,
         destinationAddress,
-        true // allowOwnerOffCurve
+        true, // allowOwnerOffCurve
+        tokenYProgram,
+        ASSOCIATED_TOKEN_PROGRAM_ID
       );
 
       // Add ATA creation instruction for Token X destination (if not native SOL)
@@ -436,7 +452,9 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
             payerPubKey,
             destTokenXAta,
             destinationAddress,
-            tokenXMint
+            tokenXMint,
+            tokenXProgram,
+            ASSOCIATED_TOKEN_PROGRAM_ID
           )
         );
       }
@@ -448,7 +466,9 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
             payerPubKey,
             destTokenYAta,
             destinationAddress,
-            tokenYMint
+            tokenYMint,
+            tokenYProgram,
+            ASSOCIATED_TOKEN_PROGRAM_ID
           )
         );
       }
@@ -471,7 +491,9 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
               tokenXAta,
               destTokenXAta,
               lpOwner.publicKey,
-              BigInt(tokenXTransferAmount.toString())
+              BigInt(tokenXTransferAmount.toString()),
+              [],
+              tokenXProgram
             )
           );
         }
@@ -495,7 +517,9 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
               tokenYAta,
               destTokenYAta,
               lpOwner.publicKey,
-              BigInt(tokenYTransferAmount.toString())
+              BigInt(tokenYTransferAmount.toString()),
+              [],
+              tokenYProgram
             )
           );
         }

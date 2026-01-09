@@ -2,14 +2,14 @@
  * Create a new token AND a DLMM pool in one operation
  *
  * Convenience script that combines create-token.ts and create-dlmm-pool.ts
- * for quick test environment setup with DLMM pools paired with USDC.
+ * for quick test environment setup. Supports both USDC (default) and SOL as quote tokens.
  * Supports both standard SPL Token and Token-2022 as the base token.
  *
- * Usage:
- *   pnpm tsx scripts/create-token-with-dlmm-pool.ts
+ * Usage (USDC quote - default):
+ *   TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 pnpm tsx scripts/create-token-with-dlmm-pool.ts
  *
- * With options:
- *   TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=100 TOKEN_PERCENT=10 pnpm tsx scripts/create-token-with-dlmm-pool.ts
+ * Usage (SOL quote):
+ *   TOKEN_NAME="MyDAO" QUOTE_MINT=SOL SOL_AMOUNT=0.5 pnpm tsx scripts/create-token-with-dlmm-pool.ts
  *
  * With Token-2022:
  *   USE_TOKEN_2022=true TOKEN_NAME="MyDAO22" pnpm tsx scripts/create-token-with-dlmm-pool.ts
@@ -17,7 +17,7 @@
  * Required ENV:
  *   - RPC_URL: Solana RPC endpoint
  *   - PROTOCOL_PRIVATE_KEY: Private key for protocol wallet
- *   - Payer must have USDC for pool liquidity
+ *   - Payer must have USDC or SOL for pool liquidity (depending on QUOTE_MINT)
  *
  * Optional ENV:
  *   - TOKEN_NAME: Name of the token (default: "TestDAOToken")
@@ -25,7 +25,9 @@
  *   - TOKEN_DECIMALS: Decimals (default: 6)
  *   - TOTAL_SUPPLY: Total tokens to mint (default: 1000000)
  *   - USE_TOKEN_2022: Create Token-2022 token (default: false)
- *   - USDC_AMOUNT: USDC for pool liquidity (default: 100)
+ *   - QUOTE_MINT: Quote token - "USDC" (default) or "SOL"
+ *   - USDC_AMOUNT: USDC for pool liquidity (default: 10, used when QUOTE_MINT=USDC)
+ *   - SOL_AMOUNT: SOL for pool liquidity (default: 0.5, used when QUOTE_MINT=SOL)
  *   - TOKEN_PERCENT: % of tokens for pool (default: 10)
  *   - BIN_STEP: DLMM bin step size (default: 25)
  *   - FEE_BPS: Pool fee in bps (default: 100 = 1%)
@@ -46,7 +48,9 @@ const TOKEN_SYMBOL = process.env.TOKEN_SYMBOL || 'TDAO';
 const TOKEN_DECIMALS = parseInt(process.env.TOKEN_DECIMALS || '6');
 const TOTAL_SUPPLY = parseInt(process.env.TOTAL_SUPPLY || '1000000');
 const USE_TOKEN_2022 = process.env.USE_TOKEN_2022 === 'true';
-const USDC_AMOUNT = parseFloat(process.env.USDC_AMOUNT || '100'); // Default 100 USDC
+const QUOTE_MINT = (process.env.QUOTE_MINT || 'USDC').toUpperCase() as 'SOL' | 'USDC';
+const USDC_AMOUNT = parseFloat(process.env.USDC_AMOUNT || '10'); // Default 10 USDC
+const SOL_AMOUNT = parseFloat(process.env.SOL_AMOUNT || '0.1'); // Default 0.1 SOL
 const TOKEN_PERCENT = parseInt(process.env.TOKEN_PERCENT || '10');
 const BIN_STEP = parseInt(process.env.BIN_STEP || '25');
 const FEE_BPS = parseInt(process.env.FEE_BPS || '100');
@@ -72,20 +76,29 @@ export async function createTokenWithDlmmPool(options?: {
   decimals?: number;
   totalSupply?: number;
   useToken2022?: boolean;
+  quoteMint?: 'SOL' | 'USDC';
+  quoteAmount?: number;
   usdcAmount?: number;
+  solAmount?: number;
   tokenPercent?: number;
   binStep?: number;
   feeBps?: number;
   payer?: Keypair;
   connection?: Connection;
 }): Promise<CreateTokenWithDlmmPoolResult> {
+  const quoteMintType = options?.quoteMint || QUOTE_MINT;
+  const quoteAmount = options?.quoteAmount ?? (quoteMintType === 'SOL'
+    ? (options?.solAmount ?? SOL_AMOUNT)
+    : (options?.usdcAmount ?? USDC_AMOUNT));
+
   const opts = {
     name: options?.name || TOKEN_NAME,
     symbol: options?.symbol || TOKEN_SYMBOL,
     decimals: options?.decimals ?? TOKEN_DECIMALS,
     totalSupply: options?.totalSupply ?? TOTAL_SUPPLY,
     useToken2022: options?.useToken2022 ?? USE_TOKEN_2022,
-    usdcAmount: options?.usdcAmount ?? USDC_AMOUNT,
+    quoteMint: quoteMintType,
+    quoteAmount,
     tokenPercent: options?.tokenPercent ?? TOKEN_PERCENT,
     binStep: options?.binStep ?? BIN_STEP,
     feeBps: options?.feeBps ?? FEE_BPS,
@@ -117,7 +130,8 @@ export async function createTokenWithDlmmPool(options?: {
 
   const poolResult = await createDlmmPool({
     tokenMint: tokenResult.tokenMint,
-    usdcAmount: opts.usdcAmount,
+    quoteMint: opts.quoteMint,
+    quoteAmount: opts.quoteAmount,
     tokenPercent: opts.tokenPercent,
     binStep: opts.binStep,
     feeBps: opts.feeBps,
@@ -132,6 +146,8 @@ export async function createTokenWithDlmmPool(options?: {
 }
 
 async function main() {
+  const quoteAmount = QUOTE_MINT === 'SOL' ? SOL_AMOUNT : USDC_AMOUNT;
+
   console.log('╔══════════════════════════════════════════════════════════════╗');
   console.log('║         Create Token with DLMM Pool                          ║');
   console.log('║         (For DAO Testing)                                    ║');
@@ -142,7 +158,8 @@ async function main() {
   console.log(`  Token Program: ${USE_TOKEN_2022 ? 'Token-2022' : 'SPL Token'}`);
   console.log(`  Decimals: ${TOKEN_DECIMALS}`);
   console.log(`  Total Supply: ${TOTAL_SUPPLY.toLocaleString()}`);
-  console.log(`  USDC Liquidity: ${USDC_AMOUNT} USDC`);
+  console.log(`  Quote Token: ${QUOTE_MINT}`);
+  console.log(`  Quote Liquidity: ${quoteAmount} ${QUOTE_MINT}`);
   console.log(`  Token % for Pool: ${TOKEN_PERCENT}%`);
   console.log(`  Bin Step: ${BIN_STEP} (${BIN_STEP / 100}% per bin)`);
   console.log(`  Pool Fee: ${FEE_BPS / 100}%`);
@@ -152,12 +169,13 @@ async function main() {
   console.log(`\nPayer: ${payer.publicKey.toBase58()}`);
   console.log(`SOL Balance: ${solBalance / LAMPORTS_PER_SOL} SOL`);
 
-  // Need at least 0.1 SOL for transaction fees
-  if (solBalance < 0.1 * LAMPORTS_PER_SOL) {
-    throw new Error(`Insufficient SOL for transaction fees. Need at least 0.1 SOL.`);
+  // Need at least 0.1 SOL for transaction fees (more if SOL is quote)
+  const minSol = QUOTE_MINT === 'SOL' ? SOL_AMOUNT + 0.1 : 0.1;
+  if (solBalance < minSol * LAMPORTS_PER_SOL) {
+    throw new Error(`Insufficient SOL. Need at least ${minSol} SOL.`);
   }
 
-  // Note: USDC balance check is done in createDlmmPool
+  // Note: Quote token balance check is done in createDlmmPool
 
   const result = await createTokenWithDlmmPool();
 
@@ -174,7 +192,7 @@ async function main() {
   console.log(`  Address: ${result.pool.pool}`);
   console.log(`  Position: ${result.pool.position}`);
   console.log(`  Token Amount: ${result.pool.tokenAmount}`);
-  console.log(`  USDC Amount: ${result.pool.quoteAmount}`);
+  console.log(`  Quote Amount: ${result.pool.quoteAmount} ${result.pool.quoteSymbol}`);
   console.log(`  Bin Step: ${result.pool.binStep}`);
   console.log(`  Active Bin ID: ${result.pool.activeBinId}`);
   console.log('\nUseful Links:');

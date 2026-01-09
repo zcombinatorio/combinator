@@ -17,7 +17,7 @@ import {
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
-import { CpAmm, getTokenProgram } from '@meteora-ag/cp-amm-sdk';
+import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import rateLimit from 'express-rate-limit';
 
 import {
@@ -25,6 +25,7 @@ import {
   acquireLiquidityLock,
   verifySignedTransaction,
   REQUEST_EXPIRY,
+  getTokenProgramsForMints,
 } from '../shared';
 import { withdrawRequests } from './storage';
 
@@ -110,11 +111,13 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
       return res.status(400).json({ error: 'Withdrawal amount too small' });
     }
 
-    // Get token info
-    const tokenAMint = await getMint(connection, poolState.tokenAMint);
-    const tokenBMint = await getMint(connection, poolState.tokenBMint);
-    const tokenAProgram = getTokenProgram(tokenAMint.tlvData.length > 0 ? 1 : 0);
-    const tokenBProgram = getTokenProgram(tokenBMint.tlvData.length > 0 ? 1 : 0);
+    // Get token info - detect token programs first (Token-2022 vs SPL Token)
+    const tokenPrograms = await getTokenProgramsForMints(connection, [poolState.tokenAMint, poolState.tokenBMint]);
+    const tokenAProgram = tokenPrograms.get(poolState.tokenAMint.toBase58())!;
+    const tokenBProgram = tokenPrograms.get(poolState.tokenBMint.toBase58())!;
+
+    const tokenAMint = await getMint(connection, poolState.tokenAMint, undefined, tokenAProgram);
+    const tokenBMint = await getMint(connection, poolState.tokenBMint, undefined, tokenBProgram);
 
     // Calculate withdrawal quote
     const withdrawQuote = cpAmm.getWithdrawQuote({

@@ -2,13 +2,13 @@
  * Create a new token AND a DAMM pool in one operation
  *
  * Convenience script that combines create-token.ts and create-damm-pool.ts
- * for quick test environment setup.
+ * for quick test environment setup. Supports both SOL and USDC as quote tokens.
  *
- * Usage:
- *   pnpm tsx scripts/create-token-with-pool.ts
+ * Usage (USDC quote - default):
+ *   TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 pnpm tsx scripts/create-token-with-pool.ts
  *
- * With options:
- *   TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" SOL_AMOUNT=0.1 TOKEN_PERCENT=10 pnpm tsx scripts/create-token-with-pool.ts
+ * Usage (SOL quote):
+ *   TOKEN_NAME="MyDAO" QUOTE_MINT=SOL SOL_AMOUNT=0.1 pnpm tsx scripts/create-token-with-pool.ts
  *
  * Transfer mint authority to DAO admin:
  *   DAO_ADMIN="<pubkey>" pnpm tsx scripts/create-token-with-pool.ts
@@ -23,7 +23,9 @@
  *   - TOKEN_DECIMALS: Decimals (default: 6)
  *   - TOTAL_SUPPLY: Total tokens to mint (default: 1000000)
  *   - DAO_ADMIN: Transfer mint authority to this address
- *   - SOL_AMOUNT: SOL for pool liquidity (default: 0.1)
+ *   - QUOTE_MINT: Quote token - "USDC" (default) or "SOL"
+ *   - USDC_AMOUNT: USDC for pool liquidity (default: 10, used when QUOTE_MINT=USDC)
+ *   - SOL_AMOUNT: SOL for pool liquidity (default: 0.1, used when QUOTE_MINT=SOL)
  *   - TOKEN_PERCENT: % of tokens for pool (default: 10)
  *   - FEE_BPS: Pool fee in bps (default: 100 = 1%)
  */
@@ -43,6 +45,8 @@ const TOKEN_SYMBOL = process.env.TOKEN_SYMBOL || 'TDAO';
 const TOKEN_DECIMALS = parseInt(process.env.TOKEN_DECIMALS || '6');
 const TOTAL_SUPPLY = parseInt(process.env.TOTAL_SUPPLY || '1000000');
 const DAO_ADMIN = process.env.DAO_ADMIN;
+const QUOTE_MINT = (process.env.QUOTE_MINT || 'USDC').toUpperCase() as 'SOL' | 'USDC';
+const USDC_AMOUNT = parseFloat(process.env.USDC_AMOUNT || '10');
 const SOL_AMOUNT = parseFloat(process.env.SOL_AMOUNT || '0.1');
 const TOKEN_PERCENT = parseInt(process.env.TOKEN_PERCENT || '10');
 const FEE_BPS = parseInt(process.env.FEE_BPS || '100');
@@ -68,19 +72,28 @@ export async function createTokenWithPool(options?: {
   decimals?: number;
   totalSupply?: number;
   daoAdmin?: string;
+  quoteMint?: 'SOL' | 'USDC';
+  quoteAmount?: number;
   solAmount?: number;
+  usdcAmount?: number;
   tokenPercent?: number;
   feeBps?: number;
   payer?: Keypair;
   connection?: Connection;
 }): Promise<CreateTokenWithPoolResult> {
+  const quoteMintType = options?.quoteMint || QUOTE_MINT;
+  const quoteAmount = options?.quoteAmount ?? (quoteMintType === 'SOL'
+    ? (options?.solAmount ?? SOL_AMOUNT)
+    : (options?.usdcAmount ?? USDC_AMOUNT));
+
   const opts = {
     name: options?.name || TOKEN_NAME,
     symbol: options?.symbol || TOKEN_SYMBOL,
     decimals: options?.decimals ?? TOKEN_DECIMALS,
     totalSupply: options?.totalSupply ?? TOTAL_SUPPLY,
     daoAdmin: options?.daoAdmin || DAO_ADMIN,
-    solAmount: options?.solAmount ?? SOL_AMOUNT,
+    quoteMint: quoteMintType,
+    quoteAmount,
     tokenPercent: options?.tokenPercent ?? TOKEN_PERCENT,
     feeBps: options?.feeBps ?? FEE_BPS,
     payer: options?.payer || payer,
@@ -111,7 +124,8 @@ export async function createTokenWithPool(options?: {
 
   const poolResult = await createDammPool({
     tokenMint: tokenResult.tokenMint,
-    solAmount: opts.solAmount,
+    quoteMint: opts.quoteMint,
+    quoteAmount: opts.quoteAmount,
     tokenPercent: opts.tokenPercent,
     feeBps: opts.feeBps,
     payer: opts.payer,
@@ -130,25 +144,35 @@ async function main() {
   console.log('║         (For DAO Testing)                                    ║');
   console.log('╚══════════════════════════════════════════════════════════════╝');
 
+  const quoteAmount = QUOTE_MINT === 'SOL' ? SOL_AMOUNT : USDC_AMOUNT;
+
   console.log(`\nConfiguration:`);
   console.log(`  Token: ${TOKEN_NAME} (${TOKEN_SYMBOL})`);
   console.log(`  Decimals: ${TOKEN_DECIMALS}`);
   console.log(`  Total Supply: ${TOTAL_SUPPLY.toLocaleString()}`);
-  console.log(`  SOL Liquidity: ${SOL_AMOUNT} SOL`);
+  console.log(`  Quote Token: ${QUOTE_MINT}`);
+  console.log(`  Quote Liquidity: ${quoteAmount} ${QUOTE_MINT}`);
   console.log(`  Token % for Pool: ${TOKEN_PERCENT}%`);
   console.log(`  Pool Fee: ${FEE_BPS / 100}%`);
   if (DAO_ADMIN) {
     console.log(`  DAO Admin: ${DAO_ADMIN}`);
   }
 
-  // Check balance
+  // Check SOL balance for fees
   const balance = await connection.getBalance(payer.publicKey);
   console.log(`\nPayer: ${payer.publicKey.toBase58()}`);
-  console.log(`Balance: ${balance / LAMPORTS_PER_SOL} SOL`);
+  console.log(`SOL Balance: ${balance / LAMPORTS_PER_SOL} SOL`);
 
-  const minRequired = SOL_AMOUNT + 0.05; // SOL for pool + transaction fees
-  if (balance < minRequired * LAMPORTS_PER_SOL) {
-    throw new Error(`Insufficient balance. Need at least ${minRequired} SOL.`);
+  if (QUOTE_MINT === 'SOL') {
+    const minRequired = SOL_AMOUNT + 0.05; // SOL for pool + transaction fees
+    if (balance < minRequired * LAMPORTS_PER_SOL) {
+      throw new Error(`Insufficient balance. Need at least ${minRequired} SOL.`);
+    }
+  } else {
+    // For USDC, just need SOL for fees
+    if (balance < 0.05 * LAMPORTS_PER_SOL) {
+      throw new Error(`Insufficient SOL for fees. Need at least 0.05 SOL.`);
+    }
   }
 
   const result = await createTokenWithPool();
@@ -164,7 +188,7 @@ async function main() {
   console.log('\nPool:');
   console.log(`  Address: ${result.pool.pool}`);
   console.log(`  Token Amount: ${result.pool.tokenAmount}`);
-  console.log(`  SOL Amount: ${result.pool.solAmount}`);
+  console.log(`  Quote Amount: ${result.pool.quoteAmount} ${result.pool.quoteSymbol}`);
   console.log(`  Position NFT: ${result.pool.positionNft}`);
   console.log('\nUseful Links:');
   console.log(`  Token: https://solscan.io/token/${result.token.tokenMint}`);

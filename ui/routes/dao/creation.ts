@@ -17,7 +17,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, Connection } from '@solana/web3.js';
+import { TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import { futarchy } from '@zcomb/programs-sdk';
 
 import { getPool } from '../../lib/db';
@@ -45,6 +46,19 @@ import {
 import { getConnection, createProvider, daoCreationMutex } from './shared';
 
 const router = Router();
+
+/**
+ * Check if a mint is a Token-2022 token.
+ * Token-2022 base mints are not currently supported by the Futarchy on-chain program.
+ * See /opt/spice/dev/programs/TOKEN22_SUPPORT.md for the roadmap to enable support.
+ */
+async function isToken2022Mint(connection: Connection, mint: PublicKey): Promise<boolean> {
+  const accountInfo = await connection.getAccountInfo(mint);
+  if (!accountInfo) {
+    throw new Error(`Mint account not found: ${mint.toBase58()}`);
+  }
+  return accountInfo.owner.equals(TOKEN_2022_PROGRAM_ID);
+}
 
 // ============================================================================
 // POST /dao/parent - Create a parent DAO
@@ -116,6 +130,24 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
     } catch (error) {
       return res.status(400).json({
         error: 'token_mint not found in pool',
+        details: String(error),
+      });
+    }
+
+    // Check if base token is Token-2022 (not currently supported)
+    try {
+      const isToken2022 = await isToken2022Mint(connection, new PublicKey(token_mint));
+      if (isToken2022) {
+        return res.status(400).json({
+          error: 'Token-2022 base mints are not currently supported',
+          details: 'The Futarchy on-chain program requires SPL Token base mints. Token-2022 support is planned for a future release. See TOKEN22_SUPPORT.md in the programs repository for the roadmap.',
+          token_mint,
+          token_program: 'Token-2022',
+        });
+      }
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Failed to validate token_mint',
         details: String(error),
       });
     }
@@ -292,6 +324,24 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
     // Verify parent is actually a parent DAO
     if (parentDao.dao_type !== 'parent') {
       return res.status(400).json({ error: 'Cannot create child of a child DAO' });
+    }
+
+    // Check if base token is Token-2022 (not currently supported)
+    try {
+      const isToken2022 = await isToken2022Mint(connection, new PublicKey(token_mint));
+      if (isToken2022) {
+        return res.status(400).json({
+          error: 'Token-2022 base mints are not currently supported',
+          details: 'The Futarchy on-chain program requires SPL Token base mints. Token-2022 support is planned for a future release. See TOKEN22_SUPPORT.md in the programs repository for the roadmap.',
+          token_mint,
+          token_program: 'Token-2022',
+        });
+      }
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Failed to validate token_mint',
+        details: String(error),
+      });
     }
 
     // Acquire lock for DAO creation

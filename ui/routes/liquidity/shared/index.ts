@@ -10,3 +10,4 @@ export * from './locks';
 export * from './request-storage';
 export * from './tx-verification';
 export * from './jupiter';
+export * from './token-utils';

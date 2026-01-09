@@ -1224,7 +1224,7 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
       };
 
       // Handle both DAMM (singular) and DLMM (array) response formats
-      let depositConfirmResponse: Response;
+      let depositConfirmResponse: globalThis.Response;
       if (poolType === 'dlmm' && depositBuildData.transactions) {
         // DLMM: sign all transactions and submit as array
         const signedTransactions: string[] = [];

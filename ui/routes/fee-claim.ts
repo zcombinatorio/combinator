@@ -25,11 +25,13 @@ import {
   getAssociatedTokenAddress,
   getMint,
   createAssociatedTokenAccountIdempotentInstruction,
-  NATIVE_MINT
+  NATIVE_MINT,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
-import { CpAmm, getTokenProgram, getUnClaimReward, feeNumeratorToBps, getFeeNumerator } from '@meteora-ag/cp-amm-sdk';
+import { CpAmm, getUnClaimReward, feeNumeratorToBps, getFeeNumerator } from '@meteora-ag/cp-amm-sdk';
+import { getTokenProgramsForMints } from './liquidity/shared';
 import rateLimit from 'express-rate-limit';
 import { getPool } from '../lib/db';
 import { getDaoByPoolAddress } from '../lib/db/daos';
@@ -368,11 +370,13 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       });
     }
 
-    // Get token programs for token A and B
-    const tokenAMintInfo = await getMint(connection, poolState.tokenAMint);
-    const tokenBMintInfo = await getMint(connection, poolState.tokenBMint);
-    const tokenAProgram = getTokenProgram(tokenAMintInfo.tlvData.length > 0 ? 1 : 0);
-    const tokenBProgram = getTokenProgram(tokenBMintInfo.tlvData.length > 0 ? 1 : 0);
+    // Detect token programs (Token-2022 vs SPL Token) before calling getMint
+    const tokenPrograms = await getTokenProgramsForMints(connection, [poolState.tokenAMint, poolState.tokenBMint]);
+    const tokenAProgram = tokenPrograms.get(poolState.tokenAMint.toBase58())!;
+    const tokenBProgram = tokenPrograms.get(poolState.tokenBMint.toBase58())!;
+
+    const tokenAMintInfo = await getMint(connection, poolState.tokenAMint, undefined, tokenAProgram);
+    const tokenBMintInfo = await getMint(connection, poolState.tokenBMint, undefined, tokenBProgram);
 
     // Check if Token B is native SOL (wrapped SOL)
     // When claiming wrapped SOL fees from Meteora, the SDK automatically unwraps them to native SOL
@@ -386,14 +390,20 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
     const { blockhash } = await connection.getLatestBlockhash();
     combinedTx.recentBlockhash = blockhash;
 
-    // Get LP owner's token accounts
+    // Get LP owner's token accounts (with correct token programs)
     const tokenAAta = await getAssociatedTokenAddress(
       poolState.tokenAMint,
-      lpOwner.publicKey
+      lpOwner.publicKey,
+      false,
+      tokenAProgram,
+      ASSOCIATED_TOKEN_PROGRAM_ID
     );
     const tokenBAta = await getAssociatedTokenAddress(
       poolState.tokenBMint,
-      lpOwner.publicKey
+      lpOwner.publicKey,
+      false,
+      tokenBProgram,
+      ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
     // Create LP owner's Token A ATA only if there are Token A fees to claim
@@ -405,7 +415,8 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
           tokenAAta,
           lpOwner.publicKey,
           poolState.tokenAMint,
-          tokenAProgram
+          tokenAProgram,
+          ASSOCIATED_TOKEN_PROGRAM_ID
         )
       );
     }
@@ -420,7 +431,8 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
           tokenBAta,
           lpOwner.publicKey,
           poolState.tokenBMint,
-          tokenBProgram
+          tokenBProgram,
+          ASSOCIATED_TOKEN_PROGRAM_ID
         )
       );
     }
@@ -453,17 +465,21 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
       const tokenATransferAmount = totalTokenAFees.mul(new BN(basisPoints)).div(new BN(100000));
       const tokenBTransferAmount = totalTokenBFees.mul(new BN(basisPoints)).div(new BN(100000));
 
-      // Get destination token accounts
+      // Get destination token accounts (with correct token programs)
       // allowOwnerOffCurve: true allows PDAs as fee recipients
       const destTokenAAta = await getAssociatedTokenAddress(
         poolState.tokenAMint,
         destinationAddress,
-        true // allowOwnerOffCurve
+        true, // allowOwnerOffCurve
+        tokenAProgram,
+        ASSOCIATED_TOKEN_PROGRAM_ID
       );
       const destTokenBAta = isTokenBNativeSOL ? destinationAddress : await getAssociatedTokenAddress(
         poolState.tokenBMint,
         destinationAddress,
-        true // allowOwnerOffCurve
+        true, // allowOwnerOffCurve
+        tokenBProgram,
+        ASSOCIATED_TOKEN_PROGRAM_ID
       );
 
       // Add ATA creation instruction for Token A destination (always SPL token)
@@ -474,7 +490,8 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
             destTokenAAta,
             destinationAddress,
             poolState.tokenAMint,
-            tokenAProgram
+            tokenAProgram,
+            ASSOCIATED_TOKEN_PROGRAM_ID
           )
         );
       }
@@ -487,7 +504,8 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
             destTokenBAta,
             destinationAddress,
             poolState.tokenBMint,
-            tokenBProgram
+            tokenBProgram,
+            ASSOCIATED_TOKEN_PROGRAM_ID
           )
         );
       }

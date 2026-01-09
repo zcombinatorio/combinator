@@ -8,7 +8,7 @@
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
 import { Connection, Transaction, PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddress, getMint, NATIVE_MINT } from '@solana/spl-token';
+import { getAssociatedTokenAddress, getMint, NATIVE_MINT, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
 import DLMM from '@meteora-ag/dlmm';
@@ -21,6 +21,7 @@ import {
   isRestrictedLpOwner,
   getJupiterSwapTransaction,
   REQUEST_EXPIRY,
+  getTokenProgramsForMints,
 } from '../shared';
 import { cleanupSwapRequests } from './storage';
 
@@ -79,12 +80,20 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     const tokenXMint = lbPair.tokenXMint;
     const tokenYMint = lbPair.tokenYMint;
 
-    const tokenXMintInfo = await getMint(connection, tokenXMint);
-    const tokenYMintInfo = await getMint(connection, tokenYMint);
+    // Detect token programs (Token-2022 vs SPL Token)
+    const tokenPrograms = await getTokenProgramsForMints(connection, [tokenXMint, tokenYMint]);
+    const tokenXProgram = tokenPrograms.get(tokenXMint.toBase58());
+    const tokenYProgram = tokenPrograms.get(tokenYMint.toBase58());
+    if (!tokenXProgram || !tokenYProgram) {
+      throw new Error('Failed to detect token program for pool mints');
+    }
+
+    const tokenXMintInfo = await getMint(connection, tokenXMint, undefined, tokenXProgram);
+    const tokenYMintInfo = await getMint(connection, tokenYMint, undefined, tokenYProgram);
     const isTokenYNativeSOL = tokenYMint.equals(NATIVE_MINT);
 
-    const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey);
-    const lpOwnerTokenYAta = isTokenYNativeSOL ? lpOwner.publicKey : await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey);
+    const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey, false, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const lpOwnerTokenYAta = isTokenYNativeSOL ? lpOwner.publicKey : await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey, false, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
 
     let tokenXBalance = new BN(0);
     let tokenYBalance = new BN(0);

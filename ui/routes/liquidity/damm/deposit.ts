@@ -17,7 +17,7 @@ import {
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
-import { CpAmm, getTokenProgram } from '@meteora-ag/cp-amm-sdk';
+import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import rateLimit from 'express-rate-limit';
 
 import {
@@ -26,6 +26,7 @@ import {
   verifySignedTransaction,
   isRestrictedLpOwner,
   REQUEST_EXPIRY,
+  getTokenProgramsForMints,
 } from '../shared';
 import { depositRequests } from './storage';
 
@@ -95,10 +96,13 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
     const cpAmm = new CpAmm(connection);
     const poolState = await cpAmm.fetchPoolState(poolAddress);
 
-    const tokenAMint = await getMint(connection, poolState.tokenAMint);
-    const tokenBMint = await getMint(connection, poolState.tokenBMint);
-    const tokenAProgram = getTokenProgram(tokenAMint.tlvData.length > 0 ? 1 : 0);
-    const tokenBProgram = getTokenProgram(tokenBMint.tlvData.length > 0 ? 1 : 0);
+    // Detect token programs (Token-2022 vs SPL Token) before calling getMint
+    const tokenPrograms = await getTokenProgramsForMints(connection, [poolState.tokenAMint, poolState.tokenBMint]);
+    const tokenAProgram = tokenPrograms.get(poolState.tokenAMint.toBase58())!;
+    const tokenBProgram = tokenPrograms.get(poolState.tokenBMint.toBase58())!;
+
+    const tokenAMint = await getMint(connection, poolState.tokenAMint, undefined, tokenAProgram);
+    const tokenBMint = await getMint(connection, poolState.tokenBMint, undefined, tokenBProgram);
     const isTokenBNativeSOL = poolState.tokenBMint.equals(NATIVE_MINT);
 
     let tokenAAmountRaw: BN;

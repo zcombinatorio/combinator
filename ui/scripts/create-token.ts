@@ -5,13 +5,17 @@
  * Supports both standard SPL Token and Token-2022 (Token Extensions).
  * Useful for testing DAO creation and proposal flows.
  *
+ * Token-2022 tokens are created with the MetadataPointer extension, which is required
+ * for compatibility with Meteora DLMM pools. Plain Token-2022 tokens without extensions
+ * are not supported by DLMM.
+ *
  * Usage:
  *   pnpm tsx scripts/create-token.ts
  *
  * With options:
  *   TOKEN_NAME="MyToken" TOKEN_SYMBOL="MTK" TOKEN_DECIMALS=6 TOTAL_SUPPLY=1000000 pnpm tsx scripts/create-token.ts
  *
- * Create Token-2022 token:
+ * Create Token-2022 token (with MetadataPointer for DLMM compatibility):
  *   USE_TOKEN_2022=true TOKEN_NAME="MyToken22" pnpm tsx scripts/create-token.ts
  *
  * Transfer mint authority to DAO admin:
@@ -26,7 +30,7 @@
  *   - TOKEN_SYMBOL: Symbol of the token (default: "TEST")
  *   - TOKEN_DECIMALS: Number of decimals (default: 6)
  *   - TOTAL_SUPPLY: Total tokens to mint (default: 1000000)
- *   - USE_TOKEN_2022: Set to "true" to create Token-2022 token (default: false)
+ *   - USE_TOKEN_2022: Set to "true" to create Token-2022 token with MetadataPointer (default: false)
  *   - DAO_ADMIN: Public key to transfer mint authority to (default: keep with protocol wallet)
  *   - TOKEN_URI: Metadata URI (default: empty)
  *   - SKIP_METADATA: Set to "true" to skip metadata creation (useful for test tokens)
@@ -42,10 +46,14 @@ import {
 } from '@solana/web3.js';
 import {
   createInitializeMint2Instruction,
+  createInitializeMintInstruction,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
   getAssociatedTokenAddressSync,
   getMinimumBalanceForRentExemptMint,
+  getMintLen,
+  ExtensionType,
+  createInitializeMetadataPointerInstruction,
   MINT_SIZE,
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
@@ -162,8 +170,12 @@ export async function createToken(options?: {
   const mintKeypair = Keypair.generate();
   console.log(`\nMint Address: ${mintKeypair.publicKey.toBase58()}`);
 
-  // Get rent exemption
-  const lamports = await getMinimumBalanceForRentExemptMint(opts.connection);
+  // Calculate mint size and rent exemption
+  // For Token-2022, include MetadataPointer extension (required for DLMM compatibility)
+  const mintSize = opts.useToken2022
+    ? getMintLen([ExtensionType.MetadataPointer])
+    : MINT_SIZE;
+  const lamports = await opts.connection.getMinimumBalanceForRentExemption(mintSize);
 
   // Calculate raw amount with decimals
   const rawAmount = BigInt(opts.totalSupply) * BigInt(10 ** opts.decimals);
@@ -180,29 +192,52 @@ export async function createToken(options?: {
   // Build transaction for mint creation and token minting
   const transaction = new Transaction();
 
-  // 1. Create mint account (with correct program ID)
+  // 1. Create mint account (with correct program ID and size for extensions)
   transaction.add(
     SystemProgram.createAccount({
       fromPubkey: opts.payer.publicKey,
       newAccountPubkey: mintKeypair.publicKey,
-      space: MINT_SIZE,
+      space: mintSize,
       lamports,
       programId: tokenProgramId,
     })
   );
 
-  // 2. Initialize mint (mint authority = payer initially)
+  // 2. For Token-2022: Initialize MetadataPointer extension (required for DLMM compatibility)
+  // This must be done BEFORE initializing the mint
+  if (opts.useToken2022) {
+    transaction.add(
+      createInitializeMetadataPointerInstruction(
+        mintKeypair.publicKey,
+        opts.payer.publicKey,  // metadata authority
+        mintKeypair.publicKey, // metadata address (points to self)
+        TOKEN_2022_PROGRAM_ID
+      )
+    );
+    console.log('Adding MetadataPointer extension (required for DLMM compatibility)');
+  }
+
+  // 3. Initialize mint (mint authority = payer initially)
+  // Use createInitializeMintInstruction for Token-2022 (after extensions are set up)
   transaction.add(
-    createInitializeMint2Instruction(
-      mintKeypair.publicKey,
-      opts.decimals,
-      opts.payer.publicKey, // mint authority
-      opts.payer.publicKey, // freeze authority (can be null)
-      tokenProgramId
-    )
+    opts.useToken2022
+      ? createInitializeMintInstruction(
+          mintKeypair.publicKey,
+          opts.decimals,
+          opts.payer.publicKey, // mint authority
+          null, // freeze authority
+          TOKEN_2022_PROGRAM_ID
+        )
+      : createInitializeMint2Instruction(
+          mintKeypair.publicKey,
+          opts.decimals,
+          opts.payer.publicKey, // mint authority
+          opts.payer.publicKey, // freeze authority
+          tokenProgramId
+        )
   );
 
-  // 3. Create associated token account for payer (with correct program ID)
+  // 4. Create associated token account for payer (with correct program ID)
   transaction.add(
     createAssociatedTokenAccountInstruction(
       opts.payer.publicKey,
@@ -214,7 +249,7 @@ export async function createToken(options?: {
     )
   );
 
-  // 4. Mint total supply to payer (with correct program ID)
+  // 5. Mint total supply to payer (with correct program ID)
   transaction.add(
     createMintToInstruction(
       mintKeypair.publicKey,

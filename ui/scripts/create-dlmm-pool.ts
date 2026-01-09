@@ -1,14 +1,14 @@
 /**
- * Create a DLMM (Dynamic Liquidity Market Maker) pool with USDC as quote token
+ * Create a DLMM (Dynamic Liquidity Market Maker) pool
  *
- * Creates a Meteora DLMM pool pairing your token with USDC.
+ * Creates a Meteora DLMM pool pairing your token with USDC (default) or SOL.
  * DLMM pools use concentrated liquidity with discrete price bins.
  *
- * Usage:
- *   TOKEN_MINT="<mint_address>" pnpm tsx scripts/create-dlmm-pool.ts
+ * Usage (USDC quote - default):
+ *   TOKEN_MINT="<mint_address>" USDC_AMOUNT=100 pnpm tsx scripts/create-dlmm-pool.ts
  *
- * With options:
- *   TOKEN_MINT="..." USDC_AMOUNT=100 TOKEN_PERCENT=10 BIN_STEP=25 pnpm tsx scripts/create-dlmm-pool.ts
+ * Usage (SOL quote):
+ *   TOKEN_MINT="..." QUOTE_MINT=SOL SOL_AMOUNT=0.5 pnpm tsx scripts/create-dlmm-pool.ts
  *
  * Required ENV:
  *   - RPC_URL: Solana RPC endpoint
@@ -16,7 +16,9 @@
  *   - TOKEN_MINT: The token mint address to create a pool for
  *
  * Optional ENV:
+ *   - QUOTE_MINT: Quote token - "USDC" (default) or "SOL"
  *   - USDC_AMOUNT: Amount of USDC to provide as liquidity (default: 100)
+ *   - SOL_AMOUNT: Amount of SOL to provide as liquidity (default: 0.5, used when QUOTE_MINT=SOL)
  *   - TOKEN_PERCENT: Percentage of token balance to use (default: 10)
  *   - TOKEN_AMOUNT: Exact token amount (overrides TOKEN_PERCENT)
  *   - BIN_STEP: Price bin step size (default: 25, range 1-400)
@@ -48,21 +50,34 @@ import DLMM, {
 import BN from 'bn.js';
 import bs58 from 'bs58';
 
-// USDC Mint (Mainnet)
+// Token mints (Mainnet)
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-const USDC_DECIMALS = 6;
+const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
 
 // Environment variables (read at module load, validated in functions/main)
 const RPC_URL = process.env.RPC_URL;
 const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
 const TOKEN_MINT = process.env.TOKEN_MINT;
 
+// Quote token configuration
+const QUOTE_MINT_ENV = (process.env.QUOTE_MINT || 'USDC').toUpperCase();
+
 // Pool configuration
-const USDC_AMOUNT = parseFloat(process.env.USDC_AMOUNT || '100'); // Default 100 USDC
+const USDC_AMOUNT = parseFloat(process.env.USDC_AMOUNT || '10'); // Default 10 USDC
+const SOL_AMOUNT = parseFloat(process.env.SOL_AMOUNT || '0.1'); // Default 0.1 SOL
 const TOKEN_PERCENT = parseInt(process.env.TOKEN_PERCENT || '10');
 const TOKEN_AMOUNT = process.env.TOKEN_AMOUNT ? parseInt(process.env.TOKEN_AMOUNT) : undefined;
 const BIN_STEP = parseInt(process.env.BIN_STEP || '25'); // Default 25 (0.25% per bin)
 const FEE_BPS = parseInt(process.env.FEE_BPS || '100'); // 1% default
+
+// Quote token settings
+type QuoteMintType = 'SOL' | 'USDC';
+function getQuoteMintConfig(quoteMintType: QuoteMintType): { mint: PublicKey; decimals: number; symbol: string } {
+  if (quoteMintType === 'SOL') {
+    return { mint: WSOL_MINT, decimals: 9, symbol: 'SOL' };
+  }
+  return { mint: USDC_MINT, decimals: 6, symbol: 'USDC' };
+}
 
 // DLMM Program ID
 const DLMM_PROGRAM_ID = new PublicKey('LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo');
@@ -96,6 +111,7 @@ export interface CreateDlmmPoolResult {
   position: string;
   tokenMint: string;
   quoteMint: string;
+  quoteSymbol: string;
   tokenAmount: string;
   quoteAmount: string;
   binStep: number;
@@ -139,11 +155,14 @@ function priceToActiveBinId(price: number, binStep: number): number {
 }
 
 /**
- * Creates a DLMM pool with the specified token and USDC amounts
+ * Creates a DLMM pool with the specified token and quote (USDC or SOL) amounts
  */
 export async function createDlmmPool(options?: {
   tokenMint?: string;
-  usdcAmount?: number;
+  quoteMint?: 'SOL' | 'USDC';
+  quoteAmount?: number;
+  usdcAmount?: number;  // Alias for quoteAmount when quoteMint=USDC
+  solAmount?: number;   // Alias for quoteAmount when quoteMint=SOL
   tokenPercent?: number;
   tokenAmount?: number;
   binStep?: number;
@@ -157,9 +176,28 @@ export async function createDlmmPool(options?: {
     throw new Error('tokenMint is required - provide via options or TOKEN_MINT env var');
   }
 
+  // Determine quote mint type
+  const quoteMintType: QuoteMintType = options?.quoteMint || (QUOTE_MINT_ENV as QuoteMintType) || 'USDC';
+  if (quoteMintType !== 'SOL' && quoteMintType !== 'USDC') {
+    throw new Error('QUOTE_MINT must be either "SOL" or "USDC"');
+  }
+  const quoteConfig = getQuoteMintConfig(quoteMintType);
+
+  // Determine quote amount based on quote type
+  let quoteAmount: number;
+  if (options?.quoteAmount !== undefined) {
+    quoteAmount = options.quoteAmount;
+  } else if (quoteMintType === 'SOL') {
+    quoteAmount = options?.solAmount ?? SOL_AMOUNT;
+  } else {
+    quoteAmount = options?.usdcAmount ?? USDC_AMOUNT;
+  }
+
   const opts = {
     tokenMint: tokenMintValue,
-    usdcAmount: options?.usdcAmount ?? USDC_AMOUNT,
+    quoteMintType,
+    quoteConfig,
+    quoteAmount,
     tokenPercent: options?.tokenPercent ?? TOKEN_PERCENT,
     tokenAmount: options?.tokenAmount ?? TOKEN_AMOUNT,
     binStep: options?.binStep ?? BIN_STEP,
@@ -181,10 +219,11 @@ export async function createDlmmPool(options?: {
     tokenMintPubkey
   );
 
-  console.log('\n=== Creating DLMM Pool (TOKEN/USDC) ===\n');
+  console.log(`\n=== Creating DLMM Pool (TOKEN/${opts.quoteConfig.symbol}) ===\n`);
   console.log(`Token Mint: ${opts.tokenMint}`);
   console.log(`Token Program: ${isToken2022 ? 'Token-2022' : 'SPL Token'}`);
-  console.log(`USDC Amount: ${opts.usdcAmount} USDC`);
+  console.log(`Quote Token: ${opts.quoteConfig.symbol}`);
+  console.log(`Quote Amount: ${opts.quoteAmount} ${opts.quoteConfig.symbol}`);
   console.log(`Bin Step: ${opts.binStep} (${opts.binStep / 100}% per bin)`);
   console.log(`Fee: ${opts.feeBps / 100}%`);
   console.log(`Payer: ${opts.payer.publicKey.toBase58()}`);
@@ -212,22 +251,45 @@ export async function createDlmmPool(options?: {
     throw new Error(`No token account found for ${opts.tokenMint}. Make sure you have tokens.`);
   }
 
-  // Get payer's USDC balance (USDC is standard SPL Token)
-  const usdcAccount = getAssociatedTokenAddressSync(
-    USDC_MINT,
-    opts.payer.publicKey,
-    false,
-    TOKEN_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
+  // Get quote token decimals
+  const quoteDecimals = opts.quoteConfig.decimals;
 
-  let usdcBalance: bigint;
-  try {
-    const accountInfo = await getAccount(opts.connection, usdcAccount);
-    usdcBalance = accountInfo.amount;
-    console.log(`USDC Balance: ${Number(usdcBalance) / 10 ** USDC_DECIMALS}`);
-  } catch {
-    throw new Error(`No USDC account found. Make sure you have USDC.`);
+  // Check quote token balance
+  if (opts.quoteMintType === 'SOL') {
+    // For SOL, check native balance
+    const solBalance = await opts.connection.getBalance(opts.payer.publicKey);
+    const requiredSol = opts.quoteAmount + 0.1; // Extra for fees and WSOL wrapping
+    console.log(`SOL Balance: ${solBalance / LAMPORTS_PER_SOL} SOL`);
+    if (solBalance < requiredSol * LAMPORTS_PER_SOL) {
+      throw new Error(`Insufficient SOL balance. Have: ${solBalance / LAMPORTS_PER_SOL}, Need: ${requiredSol}`);
+    }
+  } else {
+    // For USDC, check token balance
+    const quoteAccount = getAssociatedTokenAddressSync(
+      opts.quoteConfig.mint,
+      opts.payer.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    try {
+      const accountInfo = await getAccount(opts.connection, quoteAccount);
+      const quoteBalance = accountInfo.amount;
+      console.log(`${opts.quoteConfig.symbol} Balance: ${Number(quoteBalance) / 10 ** quoteDecimals}`);
+      if (BigInt(Math.floor(opts.quoteAmount * 10 ** quoteDecimals)) > quoteBalance) {
+        throw new Error(`Insufficient ${opts.quoteConfig.symbol} balance. Have: ${Number(quoteBalance) / 10 ** quoteDecimals}, Need: ${opts.quoteAmount}`);
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes('Insufficient')) throw e;
+      throw new Error(`No ${opts.quoteConfig.symbol} account found. Make sure you have ${opts.quoteConfig.symbol}.`);
+    }
+
+    // Check SOL balance for transaction fees
+    const solBalance = await opts.connection.getBalance(opts.payer.publicKey);
+    if (solBalance < 0.05 * LAMPORTS_PER_SOL) {
+      throw new Error(`Insufficient SOL for transaction fees. Have: ${solBalance / LAMPORTS_PER_SOL}, Need: ~0.05`);
+    }
   }
 
   // Calculate token amount
@@ -248,39 +310,28 @@ export async function createDlmmPool(options?: {
     throw new Error(`Insufficient token balance. Have: ${tokenBalance}, Need: ${rawTokenAmount.toString()}`);
   }
 
-  // Calculate USDC amount in raw units (6 decimals)
-  const rawUsdcAmount = new BN(Math.floor(opts.usdcAmount * 10 ** USDC_DECIMALS));
-  console.log(`USDC in raw units: ${rawUsdcAmount.toString()}`);
+  // Calculate quote amount in raw units
+  const rawQuoteAmount = new BN(Math.floor(opts.quoteAmount * 10 ** quoteDecimals));
+  console.log(`Quote amount in raw units: ${rawQuoteAmount.toString()}`);
 
-  // Check USDC balance
-  if (BigInt(rawUsdcAmount.toString()) > usdcBalance) {
-    throw new Error(`Insufficient USDC balance. Have: ${Number(usdcBalance) / 10 ** USDC_DECIMALS}, Need: ${opts.usdcAmount}`);
-  }
-
-  // Check SOL balance for transaction fees
-  const solBalance = await opts.connection.getBalance(opts.payer.publicKey);
-  if (solBalance < 0.05 * LAMPORTS_PER_SOL) {
-    throw new Error(`Insufficient SOL for transaction fees. Have: ${solBalance / LAMPORTS_PER_SOL}, Need: ~0.05`);
-  }
-
-  // Token X = governance token (base), Token Y = USDC (quote)
+  // Token X = governance token (base), Token Y = quote (USDC or SOL)
   // This is the standard convention for token pairs
   const tokenX = tokenMintPubkey;
-  const tokenY = USDC_MINT;
+  const tokenY = opts.quoteConfig.mint;
   const tokenXAmount = rawTokenAmount;
-  const tokenYAmount = rawUsdcAmount;
+  const tokenYAmount = rawQuoteAmount;
 
   console.log(`\nToken X (base): ${tokenX.toBase58()}`);
-  console.log(`Token Y (quote/USDC): ${tokenY.toBase58()}`);
+  console.log(`Token Y (quote/${opts.quoteConfig.symbol}): ${tokenY.toBase58()}`);
   console.log(`Token X amount: ${tokenXAmount.toString()}`);
   console.log(`Token Y amount: ${tokenYAmount.toString()}`);
 
-  // Calculate initial price: USDC per token
+  // Calculate initial price: quote per token
   // price = tokenYAmount / tokenXAmount (adjusted for decimals)
   const tokenXDecimalAmount = Number(tokenXAmount.toString()) / 10 ** tokenDecimals;
-  const tokenYDecimalAmount = Number(tokenYAmount.toString()) / 10 ** USDC_DECIMALS;
+  const tokenYDecimalAmount = Number(tokenYAmount.toString()) / 10 ** quoteDecimals;
   const initialPrice = tokenYDecimalAmount / tokenXDecimalAmount;
-  console.log(`\nInitial Price: ${initialPrice} USDC per token`);
+  console.log(`\nInitial Price: ${initialPrice} ${opts.quoteConfig.symbol} per token`);
 
   // Calculate active bin ID from initial price
   const activeBinId = priceToActiveBinId(initialPrice, opts.binStep);
@@ -325,10 +376,10 @@ export async function createDlmmPool(options?: {
     needsAtaCreation = true;
   }
 
-  // Check if Token Y (USDC) ATA exists
+  // Check if Token Y (quote) ATA exists
   const tokenYAtaInfo = await opts.connection.getAccountInfo(userTokenYAta);
   if (!tokenYAtaInfo) {
-    console.log('Creating ATA for Token Y (USDC)...');
+    console.log(`Creating ATA for Token Y (${opts.quoteConfig.symbol})...`);
     ensureAtasTx.add(
       createAssociatedTokenAccountIdempotentInstruction(
         opts.payer.publicKey,
@@ -356,20 +407,36 @@ export async function createDlmmPool(options?: {
   }
 
   // Step 1: Create the pool
+  // Use createCustomizablePermissionlessLbPair2 for Token-2022 tokens
   console.log('\nStep 1: Creating DLMM pool...');
-  const createPoolTx = await DLMM.createCustomizablePermissionlessLbPair(
-    opts.connection,
-    new BN(opts.binStep),
-    tokenX,
-    tokenY,
-    new BN(activeBinId),
-    new BN(opts.feeBps),
-    ActivationType.Timestamp,
-    false, // hasAlphaVault
-    opts.payer.publicKey,
-    undefined, // activationPoint - activate immediately
-    false, // creatorPoolOnOffControl
-  );
+  console.log(`  Using ${isToken2022 ? 'Token-2022 compatible' : 'standard'} pool creation method`);
+  const createPoolTx = isToken2022
+    ? await DLMM.createCustomizablePermissionlessLbPair2(
+        opts.connection,
+        new BN(opts.binStep),
+        tokenX,
+        tokenY,
+        new BN(activeBinId),
+        new BN(opts.feeBps),
+        ActivationType.Timestamp,
+        false, // hasAlphaVault
+        opts.payer.publicKey,
+        undefined, // activationPoint - activate immediately
+        false, // creatorPoolOnOffControl
+      )
+    : await DLMM.createCustomizablePermissionlessLbPair(
+        opts.connection,
+        new BN(opts.binStep),
+        tokenX,
+        tokenY,
+        new BN(activeBinId),
+        new BN(opts.feeBps),
+        ActivationType.Timestamp,
+        false, // hasAlphaVault
+        opts.payer.publicKey,
+        undefined, // activationPoint - activate immediately
+        false, // creatorPoolOnOffControl
+      );
 
   const { blockhash } = await opts.connection.getLatestBlockhash();
   createPoolTx.recentBlockhash = blockhash;
@@ -439,9 +506,10 @@ export async function createDlmmPool(options?: {
     pool: poolAddress.toBase58(),
     position: positionKeypair.publicKey.toBase58(),
     tokenMint: opts.tokenMint,
-    quoteMint: USDC_MINT.toBase58(),
+    quoteMint: opts.quoteConfig.mint.toBase58(),
+    quoteSymbol: opts.quoteConfig.symbol,
     tokenAmount: (Number(rawTokenAmount.toString()) / 10 ** tokenDecimals).toString(),
-    quoteAmount: opts.usdcAmount.toString(),
+    quoteAmount: opts.quoteAmount.toString(),
     binStep: opts.binStep,
     feeBps: opts.feeBps,
     activeBinId,
@@ -459,8 +527,13 @@ export async function createDlmmPool(options?: {
 
 // Main execution
 async function main() {
+  // Determine quote type for header
+  const quoteMintType: QuoteMintType = (QUOTE_MINT_ENV as QuoteMintType) || 'USDC';
+  const quoteConfig = getQuoteMintConfig(quoteMintType);
+  const quoteAmount = quoteMintType === 'SOL' ? SOL_AMOUNT : USDC_AMOUNT;
+
   console.log('╔══════════════════════════════════════════════════════════════╗');
-  console.log('║         Create DLMM Pool (TOKEN/USDC)                        ║');
+  console.log(`║      Create DLMM Pool (TOKEN/${quoteConfig.symbol.padEnd(4)})                        ║`);
   console.log('╚══════════════════════════════════════════════════════════════╝');
 
   // Validate TOKEN_MINT for direct execution
@@ -470,6 +543,9 @@ async function main() {
 
   const payer = getDefaultPayer();
   const connection = getDefaultConnection();
+
+  console.log(`\nQuote Token: ${quoteConfig.symbol}`);
+  console.log(`Quote Amount: ${quoteAmount} ${quoteConfig.symbol}`);
 
   // Check balances
   const solBalance = await connection.getBalance(payer.publicKey);

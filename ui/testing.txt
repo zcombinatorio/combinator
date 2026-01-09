@@ -39,7 +39,7 @@ WARNING: Do NOT:
 
 E2E Test Plan (Simplified with create-token-with-pool.ts):
   1. Create token + DAMM pool - scripts/create-token-with-pool.ts
-     (This replaces the old DBC pool creation + manual migration steps)
+     (Default: USDC quote. Use QUOTE_MINT=SOL for SOL quote)
   2. Create parent DAO - scripts/test-dao-parent.ts
   3. Transfer mint authority - scripts/transfer-mint-authority.ts
      (Use mint_vault from API - see CRITICAL section above)
@@ -56,10 +56,11 @@ E2E Test Plan (Simplified with create-token-with-pool.ts):
   13. Verify LP state - scripts/check-lp-positions.ts
 
 
-Example Commands (Full E2E):
+Example Commands (Full E2E with USDC - Recommended):
 
-  # Step 1: Create token + DAMM pool directly (no migration needed!)
-  TOKEN_NAME="TestDAO" TOKEN_SYMBOL="TDAO" SOL_AMOUNT=0.1 TOKEN_PERCENT=10 \
+  # Step 1: Create token + DAMM pool with USDC (default)
+  # NOTE: Payer must have USDC in their wallet
+  TOKEN_NAME="TestDAO" TOKEN_SYMBOL="TDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 \
     SKIP_METADATA=true pnpm tsx scripts/create-token-with-pool.ts
   # Outputs: TOKEN_MINT, POOL_ADDRESS
 
@@ -241,6 +242,18 @@ Legacy E2E Test Plan (with DBC pool migration):
 
 
 ================================================================================
+DAMM WITH SOL QUOTE (ALTERNATIVE)
+================================================================================
+
+To use SOL instead of USDC as the quote token in DAMM pools, add QUOTE_MINT=SOL:
+
+  TOKEN_NAME="TestDAO" TOKEN_SYMBOL="TDAO" QUOTE_MINT=SOL SOL_AMOUNT=0.1 TOKEN_PERCENT=10 \
+    SKIP_METADATA=true pnpm tsx scripts/create-token-with-pool.ts
+
+All other steps remain the same as the USDC flow above.
+
+
+================================================================================
 DLMM E2E TEST PLAN (TOKEN/USDC POOLS)
 ================================================================================
 
@@ -248,17 +261,21 @@ DLMM (Dynamic Liquidity Market Maker) pools use concentrated liquidity with
 discrete price bins. The DAO endpoints support both DAMM and DLMM pools - the
 pool type is auto-detected from the pool address.
 
-This test flow uses USDC as the quote token (instead of SOL like DAMM).
+NOTE: Both DAMM and DLMM support USDC (default) and SOL as quote tokens.
 
 Key differences from DAMM:
   - DLMM uses concentrated liquidity with price bins (binStep parameter)
   - Positions are account-based, not NFT-based
   - LP "transfer" requires withdrawing and re-depositing liquidity
   - Multiple transactions may be needed for large operations
-  - Uses USDC as quote token (DAMM uses SOL)
+  - Supports Token-2022 base tokens
+
+DLMM with SOL quote:
+  TOKEN_NAME="TestDAODLMM" TOKEN_SYMBOL="TDLMM" QUOTE_MINT=SOL SOL_AMOUNT=0.1 TOKEN_PERCENT=10 \
+    BIN_STEP=25 SKIP_METADATA=true pnpm tsx scripts/create-token-with-dlmm-pool.ts
 
 Prerequisites (DLMM):
-  - Payer wallet must have USDC for pool liquidity (default: 100 USDC)
+  - Payer wallet must have USDC or SOL for pool liquidity (default: 10 USDC or 0.1 SOL)
   - Payer wallet must have SOL for transaction fees (~0.1 SOL)
 
 E2E Test Plan (DLMM):
@@ -281,7 +298,7 @@ Example Commands (DLMM E2E):
 
   # Step 1: Create token + DLMM pool (TOKEN/USDC)
   # NOTE: Payer must have USDC in their wallet
-  TOKEN_NAME="TestDAODLMM" TOKEN_SYMBOL="TDLMM" USDC_AMOUNT=100 TOKEN_PERCENT=10 \
+  TOKEN_NAME="TestDAODLMM" TOKEN_SYMBOL="TDLMM" USDC_AMOUNT=10 TOKEN_PERCENT=10 \
     BIN_STEP=25 SKIP_METADATA=true pnpm tsx scripts/create-token-with-dlmm-pool.ts
   # Outputs: TOKEN_MINT, POOL_ADDRESS (pool), POSITION
 
@@ -340,7 +357,7 @@ Token-2022 Support:
   - DLMM flow supports Token-2022 (Token Extensions) as the base token
   - To create a Token-2022 base token, add USE_TOKEN_2022=true to create-token-with-dlmm-pool.ts
   - Example:
-    USE_TOKEN_2022=true TOKEN_NAME="TestDAO22" TOKEN_SYMBOL="TD22" USDC_AMOUNT=100 \
+    USE_TOKEN_2022=true TOKEN_NAME="TestDAO22" TOKEN_SYMBOL="TD22" USDC_AMOUNT=10 \
       pnpm tsx scripts/create-token-with-dlmm-pool.ts
   - Token program is auto-detected in all downstream scripts
   - Token-2022 tokens can use extensions like transfer fees, but basic tokens work out of the box
