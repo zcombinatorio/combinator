@@ -31,7 +31,7 @@ import {
   getDaoStats,
 } from '../../lib/db/daos';
 import { isValidTokenMintAddress } from '../../lib/validation';
-import { getIpfsUrl } from '../../lib/ipfs';
+import { fetchFromIPFS } from '../../lib/ipfs';
 import { getTokenIcon, getTokenIcons, getTokenDecimals, getTokenDecimalsBatch } from '../../lib/tokenMetadata';
 import {
   getCachedProposalCount,
@@ -288,14 +288,11 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
 
         if (metadataCid) {
           try {
-            const metadataRes = await fetch(`${getIpfsUrl(metadataCid)}`);
-            if (metadataRes.ok) {
-              const metadata = await metadataRes.json();
-              title = metadata.title || title;
-              description = metadata.description || description;
-              options = metadata.options || options;
-              metadataDaoPda = metadata.dao_pda || null;
-            }
+            const metadata = await fetchFromIPFS<{ title?: string; description?: string; options?: string[]; dao_pda?: string }>(metadataCid);
+            title = metadata.title || title;
+            description = metadata.description || description;
+            options = metadata.options || options;
+            metadataDaoPda = metadata.dao_pda || null;
           } catch (err) {
             console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
           }
@@ -406,14 +403,11 @@ router.get('/:daoPda/proposal/live', async (req: Request, res: Response) => {
 
         if (metadataCid) {
           try {
-            const metadataRes = await fetch(`${getIpfsUrl(metadataCid)}`);
-            if (metadataRes.ok) {
-              const metadata = await metadataRes.json();
-              title = metadata.title || title;
-              description = metadata.description || description;
-              options = metadata.options || options;
-              metadataDaoPda = metadata.dao_pda || null;
-            }
+            const metadata = await fetchFromIPFS<{ title?: string; description?: string; options?: string[]; dao_pda?: string }>(metadataCid);
+            title = metadata.title || title;
+            description = metadata.description || description;
+            options = metadata.options || options;
+            metadataDaoPda = metadata.dao_pda || null;
           } catch (err) {
             console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
           }
@@ -577,15 +571,12 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
             let metadataFetchSucceeded = false;
             if (metadataCid) {
               try {
-                const metadataRes = await fetch(`${getIpfsUrl(metadataCid)}`);
-                if (metadataRes.ok) {
-                  const metadata = await metadataRes.json();
-                  title = metadata.title || title;
-                  description = metadata.description || description;
-                  options = metadata.options || options;
-                  metadataDaoPda = metadata.dao_pda || null;
-                  metadataFetchSucceeded = true;
-                }
+                const metadata = await fetchFromIPFS<{ title?: string; description?: string; options?: string[]; dao_pda?: string }>(metadataCid);
+                title = metadata.title || title;
+                description = metadata.description || description;
+                options = metadata.options || options;
+                metadataDaoPda = metadata.dao_pda || null;
+                metadataFetchSucceeded = true;
               } catch (err) {
                 console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
               }
@@ -687,14 +678,11 @@ router.get('/proposal/:proposalPda', async (req: Request, res: Response) => {
 
     if (metadataCid) {
       try {
-        const metadataRes = await fetch(`${getIpfsUrl(metadataCid)}`);
-        if (metadataRes.ok) {
-          const metadata = await metadataRes.json();
-          title = metadata.title || title;
-          description = metadata.description || description;
-          options = metadata.options || options;
-          daoPda = metadata.dao_pda || null;
-        }
+        const metadata = await fetchFromIPFS<{ title?: string; description?: string; options?: string[]; dao_pda?: string }>(metadataCid);
+        title = metadata.title || title;
+        description = metadata.description || description;
+        options = metadata.options || options;
+        daoPda = metadata.dao_pda || null;
       } catch (err) {
         console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
       }

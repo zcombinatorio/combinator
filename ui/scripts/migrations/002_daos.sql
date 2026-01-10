@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS cmb_daos (
   dao_type TEXT NOT NULL CHECK (dao_type IN ('parent', 'child')),
 
   -- Metadata
-  verified BOOLEAN DEFAULT FALSE NOT NULL,
+  -- Visibility level: 0=hidden, 1=test, 2=production
+  visibility INTEGER DEFAULT 0 NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 

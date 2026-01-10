@@ -17,7 +17,16 @@
  */
 
 /**
- * IPFS utilities for uploading metadata via Pinata
+ * IPFS utilities for uploading metadata
+ * Supports both Kubo RPC API (self-hosted) and Pinata
+ *
+ * Environment variables:
+ *   IPFS_API_URL     - Kubo API base URL (e.g., https://web.hm.sivalik.com/cmb/ipfs)
+ *   IPFS_BASIC_AUTH  - Basic auth credentials for Kubo (e.g., user:password)
+ *   PINATA_JWT       - Pinata JWT token (fallback if Kubo not configured)
+ *   PINATA_GATEWAY_URL - Gateway URL for fetching (used with Pinata)
+ *
+ * Priority: Kubo > Pinata
  */
 
 const PINATA_API_URL = 'https://api.pinata.cloud/pinning/pinJSONToIPFS';
@@ -28,12 +37,72 @@ interface PinataResponse {
   Timestamp: string;
 }
 
+interface KuboAddResponse {
+  Name: string;
+  Hash: string;
+  Size: string;
+}
+
+export interface ProposalMetadata {
+  title: string;
+  description: string;
+  options: string[];
+  dao_pda: string;
+  created_at: string;
+}
+
+/**
+ * Check if Kubo IPFS is configured
+ */
+function isKuboConfigured(): boolean {
+  return !!(process.env.IPFS_API_URL && process.env.IPFS_BASIC_AUTH);
+}
+
+/**
+ * Get Basic Auth header value for Kubo
+ */
+function getKuboAuthHeader(): string {
+  const auth = process.env.IPFS_BASIC_AUTH || '';
+  return 'Basic ' + Buffer.from(auth).toString('base64');
+}
+
+/**
+ * Upload JSON metadata to IPFS via Kubo RPC API
+ */
+async function uploadToKubo(
+  content: object,
+  _name?: string
+): Promise<string> {
+  const apiUrl = process.env.IPFS_API_URL;
+  const jsonData = JSON.stringify(content);
+
+  // Kubo /api/v0/add expects multipart form-data
+  const formData = new FormData();
+  const blob = new Blob([jsonData], { type: 'application/json' });
+  formData.append('file', blob);
+
+  const response = await fetch(`${apiUrl}/api/v0/add`, {
+    method: 'POST',
+    headers: {
+      'Authorization': getKuboAuthHeader(),
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Kubo IPFS upload failed: ${response.status} - ${errorText}`);
+  }
+
+  const data: KuboAddResponse = await response.json();
+  return data.Hash;
+}
+
 /**
  * Upload JSON metadata to IPFS via Pinata
- * Returns the IPFS CID (hash)
  */
-export async function uploadToIPFS(
-  content: Record<string, unknown>,
+async function uploadToPinata(
+  content: object,
   name?: string
 ): Promise<string> {
   const pinataJwt = process.env.PINATA_JWT;
@@ -65,6 +134,21 @@ export async function uploadToIPFS(
 }
 
 /**
+ * Upload JSON metadata to IPFS
+ * Returns the IPFS CID (hash)
+ * Uses Kubo if configured, otherwise falls back to Pinata
+ */
+export async function uploadToIPFS(
+  content: object,
+  name?: string
+): Promise<string> {
+  if (isKuboConfigured()) {
+    return uploadToKubo(content, name);
+  }
+  return uploadToPinata(content, name);
+}
+
+/**
  * Upload proposal metadata to IPFS
  * Returns the IPFS CID
  *
@@ -76,11 +160,11 @@ export async function uploadProposalMetadata(
   options: string[],
   dao_pda: string
 ): Promise<string> {
-  const metadata = {
+  const metadata: ProposalMetadata = {
     title,
     description,
     options,
-    dao_pda,  // Include DAO PDA for proposal-to-DAO mapping
+    dao_pda,
     created_at: new Date().toISOString(),
   };
 
@@ -97,9 +181,72 @@ export function getPinataGatewayUrl(): string {
 }
 
 /**
- * Build full IPFS URL for a given CID using the configured Pinata gateway.
+ * Build full IPFS URL for a given CID.
+ * Note: For Kubo, use fetchFromIPFS() instead as it requires POST with auth.
+ * This function is kept for backward compatibility with Pinata gateway URLs.
  */
 export function getIpfsUrl(cid: string): string {
   const gateway = getPinataGatewayUrl();
   return `${gateway}/ipfs/${cid}`;
+}
+
+/**
+ * Fetch content from IPFS by CID.
+ * Uses Kubo /api/v0/cat if configured, otherwise fetches from Pinata gateway.
+ * Returns the parsed JSON content.
+ */
+export async function fetchFromIPFS<T = unknown>(cid: string): Promise<T> {
+  if (isKuboConfigured()) {
+    const apiUrl = process.env.IPFS_API_URL;
+    const response = await fetch(`${apiUrl}/api/v0/cat?arg=${cid}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': getKuboAuthHeader(),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Kubo IPFS fetch failed: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  // Fallback to Pinata gateway (simple GET)
+  const response = await fetch(getIpfsUrl(cid));
+  if (!response.ok) {
+    throw new Error(`IPFS gateway fetch failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch raw content from IPFS by CID (as text).
+ * Uses Kubo /api/v0/cat if configured, otherwise fetches from Pinata gateway.
+ */
+export async function fetchRawFromIPFS(cid: string): Promise<string> {
+  if (isKuboConfigured()) {
+    const apiUrl = process.env.IPFS_API_URL;
+    const response = await fetch(`${apiUrl}/api/v0/cat?arg=${cid}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': getKuboAuthHeader(),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Kubo IPFS fetch failed: ${response.status}`);
+    }
+
+    return response.text();
+  }
+
+  // Fallback to Pinata gateway (simple GET)
+  const response = await fetch(getIpfsUrl(cid));
+  if (!response.ok) {
+    throw new Error(`IPFS gateway fetch failed: ${response.status}`);
+  }
+
+  return response.text();
 }
