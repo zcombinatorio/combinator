@@ -45,7 +45,17 @@ CREATE TABLE IF NOT EXISTS cmb_daos (
   -- Metadata
   -- Visibility level: 0=hidden, 1=test, 2=production
   visibility INTEGER DEFAULT 0 NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+
+  -- Proposer threshold: minimum token balance required to be eligible as a proposer
+  -- NULL means no token holding requirement (only wallet whitelist applies)
+  proposer_token_threshold TEXT,
+
+  -- Withdrawal percentage (5-50%), default 12%
+  withdrawal_percentage INTEGER NOT NULL DEFAULT 12 CHECK (withdrawal_percentage >= 5 AND withdrawal_percentage <= 50),
+
+  -- Funding signature: SOL transfer tx that funded DAO creation (anti-replay protection)
+  funding_signature TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_cmb_daos_owner ON cmb_daos(owner_wallet);
@@ -54,6 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_cmb_daos_parent ON cmb_daos(parent_dao_id);
 CREATE INDEX IF NOT EXISTS idx_cmb_daos_token ON cmb_daos(token_mint);
 CREATE INDEX IF NOT EXISTS idx_cmb_daos_moderator ON cmb_daos(moderator_pda);
 CREATE INDEX IF NOT EXISTS idx_cmb_daos_type ON cmb_daos(dao_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cmb_daos_funding_signature ON cmb_daos(funding_signature) WHERE funding_signature IS NOT NULL;
 
 -- Proposer whitelist (off-chain enforcement)
 CREATE TABLE IF NOT EXISTS cmb_dao_proposers (
