@@ -15,7 +15,7 @@
  *
  * Required ENV:
  *   - RPC_URL: Solana RPC endpoint
- *   - PROTOCOL_PRIVATE_KEY: Private key for protocol wallet
+ *   - DAO_PRIVATE_KEY: Private key for DAO wallet
  *
  * Optional ENV:
  *   - TOKEN_NAME: Name of the token (default: "TestDAOToken")
@@ -37,7 +37,7 @@ import { createDammPool, CreatePoolResult } from './create-damm-pool';
 
 // Environment
 const RPC_URL = process.env.RPC_URL;
-const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 
 // Configuration with defaults for DAO testing
 const TOKEN_NAME = process.env.TOKEN_NAME || 'TestDAOToken';
@@ -52,7 +52,7 @@ const TOKEN_PERCENT = parseInt(process.env.TOKEN_PERCENT || '10');
 const FEE_BPS = parseInt(process.env.FEE_BPS || '100');
 
 if (!RPC_URL) throw new Error('RPC_URL not found');
-if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or PROTOCOL_PRIVATE_KEY not found');
+if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or DAO_PRIVATE_KEY not found');
 
 const payer = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const connection = new Connection(RPC_URL, 'confirmed');

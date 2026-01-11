@@ -37,6 +37,9 @@ All mutating operations require a `signed_hash` parameter for authentication and
 import { sha256 } from "@noble/hashes/sha256";
 import bs58 from "bs58";
 
+// 0. First, submit funding transaction (0.11 SOL to DAO funding address)
+// See "Create Parent DAO" example for funding transaction code
+
 // 1. Build request body (without signed_hash)
 const body = {
   wallet: wallet.publicKey.toBase58(),
@@ -44,6 +47,7 @@ const body = {
   token_mint: "So11111111111111111111111111111111111111112",
   treasury_cosigner: wallet.publicKey.toBase58(),
   pool_address: "7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2",
+  funding_signature: "FundingTxSignature...",  // from step 0
 };
 
 // 2. Hash the stringified body
@@ -190,9 +194,12 @@ Creates a new parent DAO with its own liquidity pool, treasury, and mint authori
 | `token_mint` | `string` | Yes | The SPL token mint for this DAO |
 | `treasury_cosigner` | `string` | Yes | Client wallet that co-signs treasury transactions |
 | `pool_address` | `string` | Yes | Meteora DAMM/DLMM pool address for liquidity |
+| `funding_signature` | `string` | Yes | Transaction signature of a recent SOL transfer (≥0.11 SOL) to the DAO funding address |
 | `signed_hash` | `string` | Yes | Base58-encoded signature of SHA-256 hash of body |
 
 **Note:** `pool_type` and `quote_mint` are automatically derived from `pool_address`. The server validates that `token_mint` exists in the pool and determines the quote mint from the other token in the pair.
+
+**Funding Requirement:** Before calling this endpoint, you must transfer at least 0.11 SOL to the DAO funding address (`83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE`) and include the transaction signature as `funding_signature`. The transaction must be confirmed and less than 120 seconds old.
 
 **Response:**
 
@@ -212,6 +219,9 @@ Creates a new parent DAO with its own liquidity pool, treasury, and mint authori
 **Example:**
 
 ```bash
+# First, submit 0.11 SOL to 83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE
+# Then use the transaction signature as funding_signature:
+
 curl -X POST https://api.zcombinator.io/dao/parent \
   -H "Content-Type: application/json" \
   -d '{
@@ -220,6 +230,7 @@ curl -X POST https://api.zcombinator.io/dao/parent \
     "token_mint": "TokenMintAddress...",
     "treasury_cosigner": "YourWalletAddress...",
     "pool_address": "PoolAddress...",
+    "funding_signature": "FundingTxSignature...",
     "signed_hash": "SignatureBase58..."
   }'
 ```
@@ -254,7 +265,10 @@ Creates a child DAO under an existing parent. Child DAOs share the parent's liqu
 | `parent_pda` | `string` | Yes | The parent DAO's on-chain address |
 | `token_mint` | `string` | Yes | The SPL token mint for this child DAO (different from parent) |
 | `treasury_cosigner` | `string` | Yes | Client wallet that co-signs treasury transactions |
+| `funding_signature` | `string` | Yes | Transaction signature of a recent SOL transfer (≥0.11 SOL) to the DAO funding address |
 | `signed_hash` | `string` | Yes | Base58-encoded signature of SHA-256 hash of body |
+
+**Funding Requirement:** Same as parent DAO creation - transfer at least 0.11 SOL to `83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE` before calling.
 
 **Response:**
 
@@ -337,16 +351,17 @@ Before creating a proposal, the server validates that the DAO is ready:
 ### Parent DAO Creation
 
 ```
-1. Call POST /dao/parent with name, token_mint, pool_address, treasury_cosigner
-2. Receive dao_pda, admin_wallet, treasury_vault, mint_vault, pool_type, quote_mint
+1. Submit 0.11 SOL to DAO funding address (83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE)
+2. Call POST /dao/parent with name, token_mint, pool_address, treasury_cosigner, funding_signature
+3. Receive dao_pda, admin_wallet, treasury_vault, mint_vault, pool_type, quote_mint
 ```
 
 **Post-Creation Setup (required before proposals):**
 
 ```
-6. Transfer LP tokens/positions to admin_wallet
-7. Transfer funds (SOL/USDC/token) to treasury_vault
-8. Transfer mint authority to mint_vault:
+4. Transfer LP tokens/positions to admin_wallet
+5. Transfer funds (SOL/USDC/token) to treasury_vault
+6. Transfer mint authority to mint_vault:
    spl-token authorize <token_mint> mint <mint_vault>
 ```
 
@@ -355,8 +370,9 @@ Before creating a proposal, the server validates that the DAO is ready:
 ### Child DAO Creation
 
 ```
-1. Call POST /dao/child with name, parent_pda, token_mint, treasury_cosigner
-2. Receive dao_pda, admin_wallet, treasury_vault, mint_vault
+1. Submit 0.11 SOL to DAO funding address (83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE)
+2. Call POST /dao/child with name, parent_pda, token_mint, treasury_cosigner, funding_signature
+3. Receive dao_pda, admin_wallet, treasury_vault, mint_vault
 ```
 
 **Post-Creation Setup (required before proposals):**
@@ -463,11 +479,28 @@ async function signedRequest<T>(
 ### Create Parent DAO
 
 ```typescript
+import { Connection, Transaction, SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from "@solana/web3.js";
+
+// 1. Submit funding transaction (0.11 SOL to DAO funding address)
+const DAO_FUNDING_ADDRESS = new PublicKey("83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE");
+const connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+
+const fundingTx = new Transaction().add(
+  SystemProgram.transfer({
+    fromPubkey: keypair.publicKey,
+    toPubkey: DAO_FUNDING_ADDRESS,
+    lamports: 0.11 * LAMPORTS_PER_SOL,
+  })
+);
+const funding_signature = await sendAndConfirmTransaction(connection, fundingTx, [keypair]);
+
+// 2. Create DAO with funding signature
 const dao = await signedRequest<DaoResponse>("/dao/parent", {
   name: "MyDAO",
   token_mint: "YourTokenMintAddress...",
   treasury_cosigner: keypair.publicKey.toBase58(),
   pool_address: "YourPoolAddress...",
+  funding_signature,
 }, keypair);
 
 console.log("DAO created:", dao.dao_pda);
@@ -482,10 +515,23 @@ console.log("Transfer mint authority to:", dao.mint_vault);
 ### Create Child DAO
 
 ```typescript
+// 1. Submit funding transaction (same as parent)
+const fundingTx = new Transaction().add(
+  SystemProgram.transfer({
+    fromPubkey: keypair.publicKey,
+    toPubkey: DAO_FUNDING_ADDRESS,
+    lamports: 0.11 * LAMPORTS_PER_SOL,
+  })
+);
+const funding_signature = await sendAndConfirmTransaction(connection, fundingTx, [keypair]);
+
+// 2. Create child DAO with funding signature
 const childDao = await signedRequest<ChildDaoResponse>("/dao/child", {
   name: "MyChildDAO",
   parent_pda: "ParentDaoPdaAddress...",
+  token_mint: "ChildTokenMintAddress...",
   treasury_cosigner: keypair.publicKey.toBase58(),
+  funding_signature,
 }, keypair); // keypair must be the parent DAO creator
 
 console.log("Child DAO created:", childDao.dao_pda);
@@ -518,6 +564,7 @@ interface CreateParentDaoRequest {
   token_mint: string;
   treasury_cosigner: string;
   pool_address: string;
+  funding_signature: string;  // Tx signature of SOL transfer to DAO funding address
   signed_hash: string;
 }
 
@@ -525,7 +572,9 @@ interface CreateChildDaoRequest {
   wallet: string;           // Must be the parent DAO creator
   name: string;
   parent_pda: string;
+  token_mint: string;
   treasury_cosigner: string;
+  funding_signature: string;  // Tx signature of SOL transfer to DAO funding address
   signed_hash: string;
 }
 

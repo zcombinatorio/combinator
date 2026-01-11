@@ -15,7 +15,7 @@
  *
  * Required ENV:
  *   - RPC_URL: Solana RPC endpoint
- *   - PROTOCOL_PRIVATE_KEY: Private key for protocol wallet (pays for transactions)
+ *   - DAO_PRIVATE_KEY: Private key for DAO wallet (pays for transactions)
  */
 
 import 'dotenv/config';
@@ -40,7 +40,7 @@ import bs58 from 'bs58';
 import BN from 'bn.js';
 
 const RPC_URL = process.env.RPC_URL;
-const PROTOCOL_PRIVATE_KEY = process.env.PROTOCOL_PRIVATE_KEY;
+const DAO_PRIVATE_KEY = process.env.DAO_PRIVATE_KEY;
 
 // Native SOL mint (WSOL)
 const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
@@ -48,11 +48,11 @@ const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
 if (!RPC_URL) {
   throw new Error('RPC_URL not found in environment variables');
 }
-if (!PROTOCOL_PRIVATE_KEY) {
-  throw new Error('PROTOCOL_PRIVATE_KEY not found in environment variables');
+if (!DAO_PRIVATE_KEY) {
+  throw new Error('DAO_PRIVATE_KEY not found in environment variables');
 }
 
-const payer = Keypair.fromSecretKey(bs58.decode(PROTOCOL_PRIVATE_KEY));
+const payer = Keypair.fromSecretKey(bs58.decode(DAO_PRIVATE_KEY));
 const connection = new Connection(RPC_URL, 'confirmed');
 const client = new DynamicBondingCurveClient(connection, 'confirmed');
 

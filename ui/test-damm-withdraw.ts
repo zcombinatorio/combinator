@@ -33,9 +33,9 @@ async function testDammWithdraw() {
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
     const LIQUIDITY_POOL_ADDRESS = process.env.LIQUIDITY_POOL_ADDRESS;
-    const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+    const LP_OWNER_PRIVATE_KEY = process.env.LP_OWNER_PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
     const MANAGER_WALLET = process.env.MANAGER_WALLET;
-    const FEE_PAYER_PRIVATE_KEY = process.env.PAYER_PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+    const FEE_PAYER_PRIVATE_KEY = process.env.PAYER_PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 
     if (!RPC_URL) {
       throw new Error('RPC_URL not set in environment');

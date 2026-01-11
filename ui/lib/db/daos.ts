@@ -137,8 +137,9 @@ export async function createDao(
       treasury_cosigner,
       parent_dao_id,
       dao_type,
-      withdrawal_percentage
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      withdrawal_percentage,
+      funding_signature
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     RETURNING *
   `;
 
@@ -158,7 +159,8 @@ export async function createDao(
     dao.treasury_cosigner,
     dao.parent_dao_id || null,
     dao.dao_type,
-    dao.withdrawal_percentage
+    dao.withdrawal_percentage,
+    dao.funding_signature || null
   ];
 
   try {
@@ -220,6 +222,28 @@ export async function getDaoByName(
     return result.rows.length > 0 ? result.rows[0] : null;
   } catch (error) {
     console.error('Error fetching DAO by name:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get a DAO by its funding signature.
+ * Used to prevent replay attacks where the same funding tx is used for multiple DAOs.
+ */
+export async function getDaoByFundingSignature(
+  pool: Pool,
+  fundingSignature: string
+): Promise<Dao | null> {
+  const query = `
+    SELECT * FROM cmb_daos
+    WHERE funding_signature = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [fundingSignature]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error fetching DAO by funding signature:', error);
     throw error;
   }
 }

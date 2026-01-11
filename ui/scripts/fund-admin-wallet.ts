@@ -13,7 +13,7 @@
  *
  * Required ENV:
  *   - RPC_URL: Solana RPC endpoint
- *   - PRIVATE_KEY (or PROTOCOL_PRIVATE_KEY): Your wallet private key
+ *   - PRIVATE_KEY (or DAO_PRIVATE_KEY): Your wallet private key
  *   - ADMIN_WALLET: The admin wallet address from DAO creation
  *
  * Optional ENV:
@@ -32,13 +32,13 @@ import {
 import bs58 from 'bs58';
 
 const RPC_URL = process.env.RPC_URL;
-const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 const ADMIN_WALLET = process.env.ADMIN_WALLET;
 const SOL_AMOUNT = parseFloat(process.env.SOL_AMOUNT || '0.2');
 const MIN_ADMIN_BALANCE_SOL = 0.1; // Minimum required for proposal creation
 
 if (!RPC_URL) throw new Error('RPC_URL is required');
-if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or PROTOCOL_PRIVATE_KEY is required');
+if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or DAO_PRIVATE_KEY is required');
 if (!ADMIN_WALLET) throw new Error('ADMIN_WALLET is required');
 
 async function main() {

@@ -52,10 +52,10 @@ async function findNftOwner(connection: Connection, nftMint: PublicKey): Promise
 
 async function main() {
   const RPC_URL = process.env.RPC_URL;
-  const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+  const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 
   if (!RPC_URL) throw new Error('RPC_URL required');
-  if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or PROTOCOL_PRIVATE_KEY required');
+  if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or DAO_PRIVATE_KEY required');
   if (!DAMM_POOL) throw new Error('DAMM_POOL or POOL_ADDRESS required');
   if (!ADMIN_WALLET) throw new Error('ADMIN_WALLET required');
 

@@ -25,6 +25,7 @@
  * Required environment variables:
  *   - PRIVATE_KEY: Base58-encoded private key for signing
  *   - API_URL: API base URL (defaults to http://localhost:3001)
+ *   - RPC_URL: Solana RPC URL (defaults to mainnet)
  *
  * Required arguments (via environment variables):
  *   - DAO_NAME: Name for the DAO (max 32 chars)
@@ -37,9 +38,33 @@ import 'dotenv/config';
 import * as crypto from 'crypto';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
-import { Keypair } from '@solana/web3.js';
+import {
+  Keypair,
+  Connection,
+  PublicKey,
+  Transaction,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
+  sendAndConfirmTransaction,
+} from '@solana/web3.js';
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
+const RPC_URL = process.env.RPC_URL;
+
+if (!RPC_URL) {
+  throw new Error('RPC_URL environment variable is required');
+}
+
+/**
+ * DAO Public Key - the protocol wallet that receives funding payments.
+ * Must match the value in lib/dao/funding.ts
+ */
+const DAO_PUBLIC_KEY = new PublicKey('83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE');
+
+/**
+ * Funding amount in SOL required to create a DAO.
+ */
+const FUNDING_AMOUNT_SOL = 0.11;
 
 interface CreateParentDaoResponse {
   dao_pda: string;
@@ -73,6 +98,33 @@ function signRequest(body: Record<string, unknown>, keypair: Keypair): string {
 }
 
 /**
+ * Submit a funding transaction to the DAO public key
+ * Returns the transaction signature
+ */
+async function submitFundingTransaction(
+  connection: Connection,
+  keypair: Keypair,
+  amountSol: number = FUNDING_AMOUNT_SOL
+): Promise<string> {
+  const transaction = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: keypair.publicKey,
+      toPubkey: DAO_PUBLIC_KEY,
+      lamports: Math.floor(amountSol * LAMPORTS_PER_SOL),
+    })
+  );
+
+  const signature = await sendAndConfirmTransaction(
+    connection,
+    transaction,
+    [keypair],
+    { commitment: 'confirmed' }
+  );
+
+  return signature;
+}
+
+/**
  * Make a signed request to the API
  */
 async function signedRequest<T>(
@@ -103,7 +155,7 @@ async function main() {
   console.log('=== Test POST /dao/parent ===\n');
 
   // Load test wallet
-  const privateKey = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+  const privateKey = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
   if (!privateKey) {
     throw new Error('PRIVATE_KEY environment variable is required');
   }
@@ -131,14 +183,24 @@ async function main() {
   console.log(`  Token mint: ${token_mint}`);
   console.log(`  Pool address: ${pool_address}`);
   console.log(`  Treasury cosigner: ${treasury_cosigner}`);
-  console.log(`  API URL: ${API_URL}\n`);
+  console.log(`  API URL: ${API_URL}`);
+  console.log(`  RPC URL: ${RPC_URL}\n`);
 
   try {
+    // Step 1: Submit funding transaction
+    console.log(`Submitting funding transaction (${FUNDING_AMOUNT_SOL} SOL to ${DAO_PUBLIC_KEY.toBase58()})...`);
+    const connection = new Connection(RPC_URL!, 'confirmed');
+    const funding_signature = await submitFundingTransaction(connection, keypair);
+    console.log(`✅ Funding transaction confirmed: ${funding_signature}\n`);
+
+    // Step 2: Create the DAO with the funding signature
+    console.log('Creating parent DAO...');
     const response = await signedRequest<CreateParentDaoResponse>('/dao/parent', {
       name,
       token_mint,
       pool_address,
       treasury_cosigner,
+      funding_signature,
     }, keypair);
 
     console.log('✅ Parent DAO created successfully!\n');

@@ -1,6 +1,7 @@
 Prerequisites:
   - API running locally: pnpm run api (runs on http://localhost:6770)
-  - Environment variables set in .env: RPC_URL, PROTOCOL_PRIVATE_KEY, DB_URL
+  - Environment variables set in .env: RPC_URL, DAO_PRIVATE_KEY, DB_URL
+  - DAO creation requires 0.11 SOL funding tx (auto-submitted by scripts)
 
 
 ================================================================================
@@ -41,19 +42,13 @@ E2E Test Plan (Simplified with create-token-with-pool.ts):
   1. Create token + DAMM pool - scripts/create-token-with-pool.ts
      (Default: USDC quote. Use QUOTE_MINT=SOL for SOL quote)
   2. Create parent DAO - scripts/test-dao-parent.ts
+     (Auto-submits 0.11 SOL funding tx and auto-funds admin wallet)
   3. Transfer mint authority - scripts/transfer-mint-authority.ts
      (Use mint_vault from API - see CRITICAL section above)
   4. Transfer LP position - scripts/e2e-transfer-lp.ts
-  5. Fund admin wallet - scripts/fund-admin-wallet.ts
-     (Admin wallet needs SOL for transaction fees - minimum 0.1 SOL, recommended 0.2 SOL)
-  6. Verify DAO readiness - scripts/check-dao-db.ts
-  7. Check moderator state - scripts/check-moderator.ts
-  8. Create proposal - scripts/test-proposal-e2e.ts (or API: POST /dao/proposal)
-  9. Wait ~185s - Warmup (60s) + duration (120s) + buffer (5s)
-  10. Finalize proposal - API: POST /dao/finalize-proposal
-  11. Redeem liquidity - API: POST /dao/redeem-liquidity
-  12. Deposit-back - API: POST /dao/deposit-back
-  13. Verify LP state - scripts/check-lp-positions.ts
+  5. Verify DAO readiness - scripts/check-dao-db.ts
+  6. Check moderator state - scripts/check-moderator.ts
+  7. Create proposal - scripts/test-dao-proposal.ts (or API: POST /dao/proposal)
 
 
 Example Commands (Full E2E with USDC - Recommended):
@@ -65,6 +60,7 @@ Example Commands (Full E2E with USDC - Recommended):
   # Outputs: TOKEN_MINT, POOL_ADDRESS
 
   # Step 2: Create parent DAO
+  # NOTE: Script auto-submits 0.11 SOL funding tx before calling API
   API_URL=http://localhost:6770 PRIVATE_KEY="..." \
     DAO_NAME="TestDAO$(date +%s)" TOKEN_MINT="<from-step-1>" POOL_ADDRESS="<from-step-1>" \
     pnpm tsx scripts/test-dao-parent.ts
@@ -80,110 +76,17 @@ Example Commands (Full E2E with USDC - Recommended):
   POOL_ADDRESS="<POOL_ADDRESS from step-1>" ADMIN_WALLET="<from-step-2>" \
     pnpm tsx scripts/e2e-transfer-lp.ts
 
-  # Step 5: Fund admin wallet (needs SOL for transaction fees)
-  ADMIN_WALLET="<from-step-2>" SOL_AMOUNT=0.2 \
-    pnpm tsx scripts/fund-admin-wallet.ts
-
-  # Step 6-7: Verify DAO and moderator state
+  # Step 5-6: Verify DAO and moderator state
   DAO_PDA="<from-step-2>" pnpm tsx scripts/check-dao-db.ts
   MODERATOR_PDA="<from-step-2>" pnpm tsx scripts/check-moderator.ts
 
-  # Step 8: Create proposal (this also waits and finalizes)
-  API_URL=http://localhost:6770 DAO_PDA="<from-step-2>" PROPOSAL_DURATION_SECS=120 \
-    pnpm tsx scripts/test-proposal-e2e.ts
+  # Step 7: Create proposal
+  API_URL=http://localhost:6770 DAO_PDA="<from-step-2>" WARMUP_SECS=60 PROPOSAL_LENGTH_SECS=300 \
+    pnpm tsx scripts/test-dao-proposal.ts
 
-  # Or do steps 8-12 manually:
-  # Create proposal via API
+  # Or create proposal via curl:
   curl -X POST http://localhost:6770/dao/proposal -H "Content-Type: application/json" \
-    -d '{"dao_pda": "...", "title": "Test", "description": "...", "options": ["Yes", "No"], "length_secs": 120, "wallet": "...", "signed_hash": "..."}'
-
-  # Wait 185 seconds (60s warmup + 120s duration + 5s buffer)
-  sleep 185
-
-  # Finalize
-  curl -X POST http://localhost:6770/dao/finalize-proposal -H "Content-Type: application/json" \
-    -d '{"proposal_pda": "..."}'
-
-  # Redeem liquidity
-  curl -X POST http://localhost:6770/dao/redeem-liquidity -H "Content-Type: application/json" \
-    -d '{"proposal_pda": "..."}'
-
-  # Deposit-back
-  curl -X POST http://localhost:6770/dao/deposit-back -H "Content-Type: application/json" \
-    -d '{"proposal_pda": "..."}'
-
-  # Step 13: Check LP positions
-  POOL_ADDRESS="<from-step-1>" ADMIN_WALLET="<from-step-2>" pnpm tsx scripts/check-lp-positions.ts
-
-
-Notes:
-  - Deposit-back may show "deposit_signature: null" with small test amounts due to
-    gas costs exceeding the redeemed liquidity. This is expected in testing.
-  - LP position is preserved even if deposit fails - admin wallet retains the position
-  - The withdrawal_percentage (default 12%) determines how much liquidity is used per proposal
-
-
-================================================================================
-TWAP CRANKING
-================================================================================
-
-The TWAP (Time-Weighted Average Price) oracle needs to be cranked periodically during
-a proposal's trading period to record price observations. This is used to determine
-the winning outcome when the proposal is finalized.
-
-Endpoint: POST /dao/crank-twap
-  - Permissionless (no wallet signature required)
-  - Takes a proposal_pda
-  - Cranks TWAP for all valid pools on the proposal
-
-Request:
-  {
-    "proposal_pda": "<proposal-pda>"
-  }
-
-Response:
-  {
-    "proposal_pda": "...",
-    "pools_cranked": 2,
-    "results": [
-      { "pool": "...", "signature": "..." },           // Successfully cranked
-      { "pool": "...", "skipped": true, "reason": "..." }  // Skipped (see below)
-    ]
-  }
-
-Skip reasons:
-  - "Warmup period not ended (X seconds remaining)" - TWAP oracle is still warming up
-  - "Too soon since last crank (X seconds remaining)" - Minimum 60s between cranks
-
-Timing constraints:
-  - Warmup period: First ~half of proposal duration (or max 5 min), no cranking allowed
-  - Rate limit: Must wait at least 60 seconds between cranks per pool
-  - Cranking before these thresholds wastes gas (tx succeeds but returns cached value)
-
-Test script:
-  # Full lifecycle test with TWAP cranking
-  API_URL=http://localhost:6770 \
-    TEST_WALLET_PRIVATE_KEY="<wallet-private-key>" \
-    DAO_PDA="<dao-pda>" \
-    PROPOSAL_DURATION_SECS=240 \
-    pnpm tsx scripts/test-crank-twap.ts
-
-  # Manual crank via curl
-  curl -X POST http://localhost:6770/dao/crank-twap \
-    -H "Content-Type: application/json" \
-    -d '{"proposal_pda": "..."}'
-
-Integration with proposal lifecycle:
-  1. Create proposal (POST /dao/proposal)
-  2. Wait for warmup to end (~half of proposal duration)
-  3. Crank TWAP every 60+ seconds during trading period (POST /dao/crank-twap)
-  4. Wait for proposal to end
-  5. Finalize proposal (POST /dao/finalize-proposal)
-  6. Redeem liquidity (POST /dao/redeem-liquidity)
-  7. Deposit back (POST /dao/deposit-back)
-
-Note: TWAP cranking is optional but recommended for accurate price discovery.
-If not cranked, the oracle uses cached/interpolated values.
+    -d '{"dao_pda": "...", "title": "Test", "description": "...", "options": ["Yes", "No"], "length_secs": 300, "warmup_secs": 60, "wallet": "...", "signed_hash": "..."}'
 
 
 ================================================================================
@@ -208,6 +111,7 @@ Steps to create a child DAO:
   # Outputs: TOKEN_MINT
 
   # Step 2: Create the child DAO
+  # NOTE: Script auto-submits 0.11 SOL funding tx before calling API
   API_URL=http://localhost:6770 \
     PRIVATE_KEY="<parent-dao-owner-private-key>" \
     CHILD_DAO_NAME="MyChildDAO$(date +%s)" \
@@ -280,18 +184,12 @@ Prerequisites (DLMM):
 
 E2E Test Plan (DLMM):
   1. Create token + DLMM pool - scripts/create-token-with-dlmm-pool.ts
-  2. Create parent DAO - scripts/test-dao-parent.ts (same as DAMM)
+  2. Create parent DAO - scripts/test-dao-parent.ts (auto-funds admin wallet)
   3. Transfer mint authority - scripts/transfer-mint-authority.ts (same as DAMM)
   4. Transfer LP liquidity - scripts/e2e-transfer-dlmm-lp.ts
-  5. Fund admin wallet - scripts/fund-admin-wallet.ts (same as DAMM)
-  6. Verify DAO readiness - scripts/check-dao-db.ts (same as DAMM)
-  7. Check DLMM positions - scripts/check-dlmm-lp-positions.ts
-  8. Create proposal - scripts/test-proposal-e2e.ts (same as DAMM)
-  9. Wait for proposal duration
-  10. Finalize proposal - API: POST /dao/finalize-proposal
-  11. Redeem liquidity - API: POST /dao/redeem-liquidity
-  12. Deposit-back - API: POST /dao/deposit-back
-  13. Verify LP state - scripts/check-dlmm-lp-positions.ts
+  5. Verify DAO readiness - scripts/check-dao-db.ts (same as DAMM)
+  6. Check DLMM positions - scripts/check-dlmm-lp-positions.ts
+  7. Create proposal - scripts/test-dao-proposal.ts (or API: POST /dao/proposal)
 
 
 Example Commands (DLMM E2E):
@@ -303,6 +201,7 @@ Example Commands (DLMM E2E):
   # Outputs: TOKEN_MINT, POOL_ADDRESS (pool), POSITION
 
   # Step 2: Create parent DAO (pool type is auto-detected as 'dlmm')
+  # NOTE: Script auto-submits 0.11 SOL funding tx before calling API
   API_URL=http://localhost:6770 PRIVATE_KEY="..." \
     DAO_NAME="TestDAODLMM$(date +%s)" TOKEN_MINT="<from-step-1>" POOL_ADDRESS="<pool from step-1>" \
     pnpm tsx scripts/test-dao-parent.ts
@@ -320,25 +219,18 @@ Example Commands (DLMM E2E):
   POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
     pnpm tsx scripts/e2e-transfer-dlmm-lp.ts
 
-  # Step 5: Fund admin wallet (needs SOL for transaction fees)
-  ADMIN_WALLET="<from-step-2>" SOL_AMOUNT=0.3 \
-    pnpm tsx scripts/fund-admin-wallet.ts
-  # NOTE: DLMM may need more SOL due to position creation costs
-
-  # Step 6-7: Verify DAO and check DLMM positions
+  # Step 5-6: Verify DAO and check DLMM positions
   DAO_PDA="<from-step-2>" pnpm tsx scripts/check-dao-db.ts
   POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
     pnpm tsx scripts/check-dlmm-lp-positions.ts
 
-  # Step 8: Create proposal (this also waits and finalizes)
-  API_URL=http://localhost:6770 DAO_PDA="<from-step-2>" PROPOSAL_DURATION_SECS=120 \
-    pnpm tsx scripts/test-proposal-e2e.ts
+  # Step 7: Create proposal
+  API_URL=http://localhost:6770 DAO_PDA="<from-step-2>" WARMUP_SECS=60 PROPOSAL_LENGTH_SECS=300 \
+    pnpm tsx scripts/test-dao-proposal.ts
 
-  # Or do steps 8-12 manually (same as DAMM flow)
-
-  # Step 13: Check DLMM LP positions after deposit-back
-  POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
-    pnpm tsx scripts/check-dlmm-lp-positions.ts
+  # Or create proposal via curl:
+  curl -X POST http://localhost:6770/dao/proposal -H "Content-Type: application/json" \
+    -d '{"dao_pda": "...", "title": "Test", "description": "...", "options": ["Yes", "No"], "length_secs": 300, "warmup_secs": 60, "wallet": "...", "signed_hash": "..."}'
 
 
 DLMM-Specific Notes:

@@ -33,9 +33,9 @@ async function testMeteoraFeeClaim() {
     // Validate environment variables
     const RPC_URL = process.env.RPC_URL;
     const DAMM_POOL_ADDRESS = process.env.DAMM_POOL_ADDRESS;
-    const LP_OWNER_PRIVATE_KEY = process.env.PROTOCOL_PRIVATE_KEY;
+    const LP_OWNER_PRIVATE_KEY = process.env.DAO_PRIVATE_KEY;
     const FEE_DESTINATION_ADDRESS = process.env.FEE_DESTINATION_ADDRESS;
-    const FEE_PAYER_PRIVATE_KEY = process.env.PROTOCOL_PRIVATE_KEY;
+    const FEE_PAYER_PRIVATE_KEY = process.env.DAO_PRIVATE_KEY;
 
     if (!RPC_URL) {
       throw new Error('RPC_URL not set in environment');

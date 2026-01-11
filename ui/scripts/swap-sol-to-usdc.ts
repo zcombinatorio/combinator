@@ -12,7 +12,7 @@
  *
  * Required ENV:
  *   - RPC_URL: Solana RPC endpoint
- *   - PRIVATE_KEY or PROTOCOL_PRIVATE_KEY: Wallet private key
+ *   - PRIVATE_KEY or DAO_PRIVATE_KEY: Wallet private key
  *
  * Optional ENV:
  *   - SOL_AMOUNT: Amount of SOL to swap (default: 0.02)
@@ -63,10 +63,10 @@ export async function swapSolToUsdc(options?: {
   connection?: Connection;
 }): Promise<SwapResult> {
   const RPC_URL = process.env.RPC_URL;
-  const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+  const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 
   if (!RPC_URL) throw new Error('RPC_URL not found');
-  if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or PROTOCOL_PRIVATE_KEY not found');
+  if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY or DAO_PRIVATE_KEY not found');
   if (!JUP_API_KEY) throw new Error('JUP_API_KEY not found in environment variables');
 
   const connection = options?.connection || new Connection(RPC_URL, 'confirmed');

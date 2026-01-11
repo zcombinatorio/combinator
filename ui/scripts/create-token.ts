@@ -23,7 +23,7 @@
  *
  * Required ENV:
  *   - RPC_URL: Solana RPC endpoint
- *   - PROTOCOL_PRIVATE_KEY: Private key for protocol wallet (pays for transactions)
+ *   - DAO_PRIVATE_KEY: Private key for DAO wallet (pays for transactions)
  *
  * Optional ENV:
  *   - TOKEN_NAME: Name of the token (default: "TestToken")
@@ -76,7 +76,7 @@ import bs58 from 'bs58';
 
 // Environment variables (read at module load, validated in functions/main)
 const RPC_URL = process.env.RPC_URL;
-const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 
 // Token configuration
 const TOKEN_NAME = process.env.TOKEN_NAME || 'TestToken';
@@ -94,7 +94,7 @@ let _connection: Connection | null = null;
 function getDefaultPayer(): Keypair {
   if (!_payer) {
     if (!PRIVATE_KEY) {
-      throw new Error('PRIVATE_KEY or PROTOCOL_PRIVATE_KEY not found in environment variables');
+      throw new Error('PRIVATE_KEY or DAO_PRIVATE_KEY not found in environment variables');
     }
     _payer = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
   }

@@ -14,7 +14,7 @@ import bs58 from 'bs58';
 import * as crypto from 'crypto';
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
-const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 const DAO_PDA = process.env.DAO_PDA;
 
 if (!PRIVATE_KEY) {

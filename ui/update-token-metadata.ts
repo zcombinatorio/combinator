@@ -28,7 +28,7 @@ const NEW_SYMBOL: string | null = 'ZC';      // e.g., 'NEW'
 const NEW_URI: string | null = 'https://olive-imaginative-aardvark-508.mypinata.cloud/ipfs/QmSULXToDvT2vtpvwyzV2fBpcXA7Cncz3WMFZ2v5Vnv1fC';         // e.g., 'https://arweave.net/...'
 
 async function updateTokenMetadata() {
-  const PAYER_PRIVATE_KEY = process.env.PROTOCOL_PRIVATE_KEY;
+  const PAYER_PRIVATE_KEY = process.env.DAO_PRIVATE_KEY;
   const RPC_URL = process.env.RPC_URL;
 
   if (!PAYER_PRIVATE_KEY) {

@@ -101,7 +101,7 @@ async function main() {
   console.log('=== Test POST /dao/proposal ===\n');
 
   // Load test wallet
-  const privateKey = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+  const privateKey = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
   if (!privateKey) {
     throw new Error('PRIVATE_KEY environment variable is required');
   }

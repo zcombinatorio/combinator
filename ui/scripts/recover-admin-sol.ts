@@ -1,8 +1,8 @@
 /**
- * Recover SOL from DAO admin wallets back to the protocol wallet
+ * Recover SOL from DAO admin wallets back to the DAO wallet
  *
  * This script iterates through all DAOs, fetches their admin keypairs from
- * the key service, and transfers their SOL balances back to the protocol wallet.
+ * the key service, and transfers their SOL balances back to the DAO wallet.
  *
  * Usage:
  *   pnpm tsx scripts/recover-admin-sol.ts
@@ -18,7 +18,7 @@
  *   - DB_URL: PostgreSQL connection string
  *   - KEY_SERVICE_URL: Key management service URL
  *   - SIV_KEY: Key service authentication
- *   - PROTOCOL_PRIVATE_KEY: Protocol wallet private key (destination)
+ *   - DAO_PRIVATE_KEY: DAO wallet private key (destination)
  */
 import 'dotenv/config';
 import {
@@ -31,7 +31,7 @@ import {
 } from '@solana/web3.js';
 import { getPool } from '../lib/db';
 import { getAllDaos } from '../lib/db/daos';
-import { fetchKeypair, getProtocolKeypair } from '../lib/keyService';
+import { fetchKeypair, getDaoKeypair } from '../lib/keyService';
 import type { Dao } from '../lib/db/types';
 
 // Configuration
@@ -58,19 +58,19 @@ async function main() {
 
   const connection = new Connection(RPC_URL, 'confirmed');
   const dbPool = getPool();
-  const protocolKeypair = getProtocolKeypair();
-  const protocolWallet = protocolKeypair.publicKey;
+  const daoKeypair = getDaoKeypair();
+  const daoWallet = daoKeypair.publicKey;
 
   console.log('=== Recover SOL from DAO Admin Wallets ===\n');
   console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no transactions)' : 'LIVE'}`);
-  console.log(`Destination: ${protocolWallet.toBase58()}`);
+  console.log(`Destination: ${daoWallet.toBase58()}`);
   console.log(`Min leave in wallets: ${MIN_LEAVE_SOL} SOL`);
   console.log(`Min to recover: ${MIN_RECOVER_SOL} SOL`);
   console.log('');
 
-  // Get protocol wallet balance
-  const protocolBalance = await connection.getBalance(protocolWallet);
-  console.log(`Protocol wallet balance: ${(protocolBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`);
+  // Get DAO wallet balance
+  const daoBalance = await connection.getBalance(daoWallet);
+  console.log(`DAO wallet balance: ${(daoBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`);
 
   // Fetch all DAOs
   const daos = await getAllDaos(dbPool);
@@ -83,7 +83,7 @@ async function main() {
   let failedCount = 0;
 
   for (const dao of daos) {
-    const result = await recoverFromDao(connection, dao, protocolWallet);
+    const result = await recoverFromDao(connection, dao, daoWallet);
     results.push(result);
 
     if (result.status === 'success') {
@@ -115,9 +115,9 @@ async function main() {
     console.log('Run without DRY_RUN=true to execute transfers.');
   }
 
-  // Final protocol wallet balance
-  const finalBalance = await connection.getBalance(protocolWallet);
-  console.log(`\nProtocol wallet final balance: ${(finalBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+  // Final DAO wallet balance
+  const finalBalance = await connection.getBalance(daoWallet);
+  console.log(`\nDAO wallet final balance: ${(finalBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
 
   await dbPool.end();
 }

@@ -41,6 +41,7 @@ import {
   getPoolInfo,
   deriveQuoteMint,
   deriveSquadsVaultPda,
+  verifyFundingTransaction,
   type PoolInfo,
 } from '../../lib/dao';
 import { getConnection, createProvider, daoCreationMutex } from './shared';
@@ -72,12 +73,13 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
       token_mint,
       treasury_cosigner,
       pool_address,
+      funding_signature,
     } = req.body;
 
     // Validate required fields
-    if (!name || !token_mint || !treasury_cosigner || !pool_address) {
+    if (!name || !token_mint || !treasury_cosigner || !pool_address || !funding_signature) {
       return res.status(400).json({
-        error: 'Missing required fields: name, token_mint, treasury_cosigner, pool_address'
+        error: 'Missing required fields: name, token_mint, treasury_cosigner, pool_address, funding_signature'
       });
     }
 
@@ -156,6 +158,17 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
     await daoCreationMutex.acquire();
 
     try {
+      // Verify funding transaction (inside lock to prevent race conditions)
+      const fundingResult = await verifyFundingTransaction(connection, pool, funding_signature, wallet);
+      if (!fundingResult.valid) {
+        return res.status(400).json({
+          error: 'Invalid funding transaction',
+          details: fundingResult.error,
+        });
+      }
+
+      console.log(`[DAO] Verified funding tx ${funding_signature}: ${fundingResult.amount} SOL from ${fundingResult.sender}`);
+
       // Check if DAO with this name already exists
       const existingDao = await getDaoByName(pool, name);
       if (existingDao) {
@@ -244,6 +257,7 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
         treasury_cosigner,
         dao_type: 'parent',
         withdrawal_percentage: 12,
+        funding_signature,
       });
 
       await updateKeyDaoId(pool, keyIdx, dao.id!);
@@ -255,7 +269,7 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
         added_by: wallet,
       });
 
-      console.log(`Created parent DAO: ${daoPda} (tx: ${tx})`);
+      console.log(`Created parent DAO: ${daoPda} (tx: ${tx}, funding: ${funding_signature})`);
 
       res.json({
         dao_pda: daoPda,
@@ -282,12 +296,12 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
 
 router.post('/child', requireSignedHash, async (req: Request, res: Response) => {
   try {
-    const { wallet, name, parent_pda, token_mint, treasury_cosigner } = req.body;
+    const { wallet, name, parent_pda, token_mint, treasury_cosigner, funding_signature } = req.body;
 
     // Validate required fields
-    if (!name || !parent_pda || !token_mint || !treasury_cosigner) {
+    if (!name || !parent_pda || !token_mint || !treasury_cosigner || !funding_signature) {
       return res.status(400).json({
-        error: 'Missing required fields: name, parent_pda, token_mint, treasury_cosigner'
+        error: 'Missing required fields: name, parent_pda, token_mint, treasury_cosigner, funding_signature'
       });
     }
 
@@ -348,6 +362,17 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
     await daoCreationMutex.acquire();
 
     try {
+      // Verify funding transaction (inside lock to prevent race conditions)
+      const fundingResult = await verifyFundingTransaction(connection, pool, funding_signature, wallet);
+      if (!fundingResult.valid) {
+        return res.status(400).json({
+          error: 'Invalid funding transaction',
+          details: fundingResult.error,
+        });
+      }
+
+      console.log(`[DAO] Verified funding tx ${funding_signature}: ${fundingResult.amount} SOL from ${fundingResult.sender}`);
+
       // Check if DAO with this name already exists
       const existingDao = await getDaoByName(pool, name);
       if (existingDao) {
@@ -429,6 +454,7 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
         parent_dao_id: parentDao.id,
         dao_type: 'child',
         withdrawal_percentage: 12,
+        funding_signature,
       });
 
       await updateKeyDaoId(pool, keyIdx, dao.id!);
@@ -440,7 +466,7 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
         added_by: wallet,
       });
 
-      console.log(`Created child DAO: ${daoPda} under parent ${parent_pda} (tx: ${tx})`);
+      console.log(`Created child DAO: ${daoPda} under parent ${parent_pda} (tx: ${tx}, funding: ${funding_signature})`);
 
       res.json({
         dao_pda: daoPda,

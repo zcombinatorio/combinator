@@ -13,7 +13,7 @@
  *   TOKEN_MINT="..." NEW_AUTHORITY="<mint_vault from API>" pnpm tsx scripts/transfer-mint-authority.ts
  *
  * Optional:
- *   OWNER_PRIVATE_KEY - If set, use this as the current authority (defaults to PROTOCOL_PRIVATE_KEY)
+ *   OWNER_PRIVATE_KEY - If set, use this as the current authority (defaults to DAO_PRIVATE_KEY)
  *
  * WARNING: Do NOT derive a vault PDA from the multisig - the API already returns the correct address.
  */
@@ -25,12 +25,12 @@ import bs58 from 'bs58';
 const RPC_URL = process.env.RPC_URL;
 const TOKEN_MINT = process.env.TOKEN_MINT;
 const NEW_AUTHORITY = process.env.NEW_AUTHORITY;
-const OWNER_KEY = process.env.OWNER_PRIVATE_KEY || process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+const OWNER_KEY = process.env.OWNER_PRIVATE_KEY || process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 
 if (!RPC_URL) throw new Error('RPC_URL is required');
 if (!TOKEN_MINT) throw new Error('TOKEN_MINT is required');
 if (!NEW_AUTHORITY) throw new Error('NEW_AUTHORITY is required');
-if (!OWNER_KEY) throw new Error('OWNER_PRIVATE_KEY or PROTOCOL_PRIVATE_KEY is required');
+if (!OWNER_KEY) throw new Error('OWNER_PRIVATE_KEY or DAO_PRIVATE_KEY is required');
 
 async function main() {
   const connection = new Connection(RPC_URL!, 'confirmed');

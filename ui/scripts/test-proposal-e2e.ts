@@ -17,7 +17,7 @@ import { getPool } from '../lib/db';
 import { getDaoByPda, getDaoById } from '../lib/db/daos';
 
 const API_URL = process.env.API_URL || 'http://localhost:6770';
-const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.PROTOCOL_PRIVATE_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.DAO_PRIVATE_KEY;
 const DAO_PDA = process.env.DAO_PDA;
 
 if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY is required');

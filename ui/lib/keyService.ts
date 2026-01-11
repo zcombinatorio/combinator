@@ -21,7 +21,8 @@ import bs58 from 'bs58';
 
 // Minimum SOL balance for a managed wallet to operate
 const MIN_WALLET_BALANCE_SOL = 0.05;
-const FUNDING_AMOUNT_SOL = 0.1;
+// Funding amount needs to cover proposal creation costs + buffer for rent-exempt reserves
+const FUNDING_AMOUNT_SOL = 0.11;
 
 // Minimum key index allowed for DAO operations (indices 0-8 are reserved)
 const MIN_KEY_INDEX = 9;
@@ -77,6 +78,7 @@ export async function getPublicKey(idx: number): Promise<string> {
 
 /**
  * Get the protocol keypair from environment
+ * Used for token minting/claims operations
  */
 export function getProtocolKeypair(): Keypair {
   const protocolKey = process.env.PROTOCOL_PRIVATE_KEY;
@@ -85,6 +87,20 @@ export function getProtocolKeypair(): Keypair {
   }
 
   const secretKey = bs58.decode(protocolKey);
+  return Keypair.fromSecretKey(secretKey);
+}
+
+/**
+ * Get the DAO keypair from environment
+ * Used for funding admin wallets and DAO testing operations
+ */
+export function getDaoKeypair(): Keypair {
+  const daoKey = process.env.DAO_PRIVATE_KEY;
+  if (!daoKey) {
+    throw new Error('DAO_PRIVATE_KEY environment variable is not set');
+  }
+
+  const secretKey = bs58.decode(daoKey);
   return Keypair.fromSecretKey(secretKey);
 }
 
@@ -113,7 +129,7 @@ export async function getKeypairBalance(
 }
 
 /**
- * Fund a managed wallet from the protocol wallet if needed
+ * Fund a managed wallet from the DAO wallet if needed
  * Returns true if funding was performed, false if wallet already had sufficient balance
  */
 export async function ensureWalletFunded(
@@ -126,18 +142,18 @@ export async function ensureWalletFunded(
     return { funded: false, balance: currentBalance };
   }
 
-  const protocolKeypair = getProtocolKeypair();
+  const daoKeypair = getDaoKeypair();
 
-  // Check protocol wallet has enough
-  const protocolBalance = await getKeypairBalance(connection, protocolKeypair);
-  if (protocolBalance < FUNDING_AMOUNT_SOL + 0.01) {
-    throw new Error(`Protocol wallet has insufficient balance: ${protocolBalance} SOL`);
+  // Check DAO wallet has enough
+  const daoBalance = await getKeypairBalance(connection, daoKeypair);
+  if (daoBalance < FUNDING_AMOUNT_SOL + 0.01) {
+    throw new Error(`DAO wallet has insufficient balance: ${daoBalance} SOL`);
   }
 
   // Create funding transaction
   const transaction = new Transaction().add(
     SystemProgram.transfer({
-      fromPubkey: protocolKeypair.publicKey,
+      fromPubkey: daoKeypair.publicKey,
       toPubkey: targetKeypair.publicKey,
       lamports: Math.floor(FUNDING_AMOUNT_SOL * LAMPORTS_PER_SOL),
     })
@@ -146,7 +162,7 @@ export async function ensureWalletFunded(
   const txSignature = await sendAndConfirmTransaction(
     connection,
     transaction,
-    [protocolKeypair],
+    [daoKeypair],
     { commitment: 'confirmed' }
   );
 

@@ -29,15 +29,19 @@ API Base URL: `https://api.zcombinator.io`
 
 This is the fastest path to a working DAO using **USDC + DAMM + SPL Token** (the recommended configuration).
 
-**Prerequisites:** Your wallet needs ~10 USDC + 0.5 SOL
+**Prerequisites:** Your wallet needs ~10 USDC + 0.5 SOL (for fees + DAO funding)
 
 ```bash
+# 0. (Optional) Swap SOL to USDC if you don't have USDC
+SOL_AMOUNT=0.1 pnpm tsx scripts/swap-sol-to-usdc.ts
+# Repeat as needed to get ~10 USDC
+
 # 1. Create token + USDC pool in one command
 TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 SKIP_METADATA=true \
   pnpm tsx scripts/create-token-with-pool.ts
 # → Save: TOKEN_MINT, POOL_ADDRESS
 
-# 2. Create the DAO
+# 2. Create the DAO (auto-funds admin wallet with 0.11 SOL)
 API_URL=https://api.zcombinator.io DAO_NAME="MyDAO" \
   TOKEN_MINT="<from-step-1>" POOL_ADDRESS="<from-step-1>" \
   pnpm tsx scripts/test-dao-parent.ts
@@ -51,15 +55,17 @@ TOKEN_MINT="<from-step-1>" NEW_AUTHORITY="<MINT_VAULT>" \
 POOL_ADDRESS="<from-step-1>" ADMIN_WALLET="<from-step-2>" \
   pnpm tsx scripts/e2e-transfer-lp.ts
 
-# 5. Fund admin wallet for transaction fees
-ADMIN_WALLET="<from-step-2>" pnpm tsx scripts/fund-admin-wallet.ts
+# 5. Create a proposal
+API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
+  WARMUP_SECS=60 PROPOSAL_LENGTH_SECS=300 \
+  pnpm tsx scripts/test-dao-proposal.ts
 ```
 
-**Done!** Your DAO is ready for proposals. See [Flow 1](#flow-1-parent-dao-creation-usdc-pool---recommended) for detailed instructions.
+See [Flow 1](#flow-1-parent-dao-creation-usdc-pool---recommended) for detailed instructions.
 
 **Alternative Configurations:**
 - **SOL quote:** Add `QUOTE_MINT=SOL SOL_AMOUNT=1` to step 1
-- **DLMM pool:** Use `create-token-with-dlmm-pool.ts` instead (see [Flow 5](#flow-5-parent-dao-creation-dlmm-pool-with-usdc))
+- **DLMM pool:** Use `create-token-with-dlmm-pool.ts` instead (see [Flow 3](#flow-3-parent-dao-creation-dlmm-pool-with-usdc))
 - **Token-2022 base:** Not currently supported for DAOs (blocked at DAO creation)
 
 ---
@@ -274,7 +280,7 @@ POSITION=<position-address>
 
 ### 4. test-dao-parent.ts
 
-Creates a parent DAO via the API.
+Creates a parent DAO via the API. **Automatically submits a 0.11 SOL funding transaction** before calling the API.
 
 **Usage:**
 ```bash
@@ -289,11 +295,14 @@ API_URL=https://api.zcombinator.io \
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `API_URL` | Yes | - | https://api.zcombinator.io |
+| `RPC_URL` | Yes | - | Solana RPC endpoint |
 | `PRIVATE_KEY` | Yes | - | Your wallet private key |
 | `DAO_NAME` | Yes | - | DAO name (max 32 chars) |
 | `TOKEN_MINT` | Yes | - | Governance token mint |
 | `POOL_ADDRESS` | Yes | - | Meteora DAMM pool address |
 | `TREASURY_COSIGNER` | No | Your wallet | Treasury co-signer |
+
+**Funding:** The script automatically transfers 0.11 SOL to `83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE` before calling the API.
 
 **Output:**
 ```
@@ -308,7 +317,7 @@ MINT_VAULT=<mint-vault>
 
 ### 5. test-dao-child.ts
 
-Creates a child DAO under an existing parent DAO.
+Creates a child DAO under an existing parent DAO. **Automatically submits a 0.11 SOL funding transaction** before calling the API.
 
 **Usage:**
 ```bash
@@ -323,6 +332,7 @@ API_URL=https://api.zcombinator.io \
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `API_URL` | Yes | - | https://api.zcombinator.io |
+| `RPC_URL` | Yes | - | Solana RPC endpoint |
 | `PRIVATE_KEY` | Yes | - | Parent DAO owner's private key |
 | `CHILD_DAO_NAME` | Yes | - | Child DAO name (max 32 chars) |
 | `PARENT_PDA` | Yes | - | Parent DAO PDA address |
@@ -330,6 +340,8 @@ API_URL=https://api.zcombinator.io \
 | `TREASURY_COSIGNER` | No | Your wallet | Treasury co-signer |
 
 **Note:** Child DAOs share the parent's liquidity pool and moderator. No LP transfer needed.
+
+**Funding:** Same as parent DAO - automatically transfers 0.11 SOL before calling the API.
 
 **Output:**
 ```
@@ -508,6 +520,35 @@ position will be created automatically when the first proposal is created.
 
 ---
 
+### 12. test-dao-proposal.ts
+
+Creates a proposal for a DAO via the API.
+
+**Usage:**
+```bash
+API_URL=https://api.zcombinator.io \
+  DAO_PDA="<dao-pda>" \
+  WARMUP_SECS=60 \
+  PROPOSAL_LENGTH_SECS=300 \
+  pnpm tsx scripts/test-dao-proposal.ts
+```
+
+**Environment Variables:**
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `API_URL` | Yes | - | https://api.zcombinator.io |
+| `PRIVATE_KEY` | Yes | - | Your wallet private key |
+| `DAO_PDA` | Yes | - | DAO PDA address |
+| `WARMUP_SECS` | No | 60 | Warmup period before voting starts |
+| `PROPOSAL_LENGTH_SECS` | No | 120 | Voting duration in seconds |
+
+**Output:**
+```
+PROPOSAL_PDA=<proposal-pda>
+```
+
+---
+
 ## End-to-End Flows
 
 ### Flow 1: Parent DAO Creation (USDC Pool - Recommended)
@@ -516,7 +557,7 @@ Complete setup for a new parent DAO with governance token and USDC liquidity poo
 
 **Prerequisites:**
 - Payer wallet must have USDC for pool liquidity (default 10 USDC)
-- Payer wallet must have SOL for transaction fees
+- Payer wallet must have SOL for transaction fees + 0.11 SOL for DAO funding
 
 ```bash
 # 1. Create token + USDC pool (default)
@@ -524,7 +565,7 @@ TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 SKIP_MET
   pnpm tsx scripts/create-token-with-pool.ts
 # Save: TOKEN_MINT, POOL_ADDRESS
 
-# 2. Create parent DAO
+# 2. Create parent DAO (auto-funds admin wallet with 0.11 SOL)
 API_URL=https://api.zcombinator.io \
   DAO_NAME="MyDAO" \
   TOKEN_MINT="<from-step-1>" \
@@ -542,16 +583,15 @@ POOL_ADDRESS="<from-step-1>" \
   ADMIN_WALLET="<from-step-2>" \
   pnpm tsx scripts/e2e-transfer-lp.ts
 
-# 5. Fund admin wallet
-ADMIN_WALLET="<from-step-2>" \
-  pnpm tsx scripts/fund-admin-wallet.ts
-
-# 6. Verify setup
+# 5. Verify setup
 API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
   pnpm tsx scripts/fetch-dao-info.ts
-```
 
-**DAO is now ready for proposals.**
+# 6. Create a proposal
+API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
+  WARMUP_SECS=60 PROPOSAL_LENGTH_SECS=300 \
+  pnpm tsx scripts/test-dao-proposal.ts
+```
 
 **Alternative: SOL Pool**
 To use SOL instead of USDC as the quote token, add `QUOTE_MINT=SOL` and use `SOL_AMOUNT`:
@@ -565,6 +605,8 @@ TOKEN_NAME="MyDAO" QUOTE_MINT=SOL SOL_AMOUNT=1 TOKEN_PERCENT=10 SKIP_METADATA=tr
 ### Flow 2: Child DAO Creation
 
 Create a child DAO under an existing parent. Child DAOs share the parent's liquidity pool.
+
+**Prerequisites:** 0.11 SOL for DAO funding (auto-submitted by script)
 
 ```bash
 # Prerequisites: Parent DAO must be fully set up (Flow 1 complete)
@@ -590,6 +632,11 @@ TOKEN_MINT="<from-step-1>" \
 # 4. Verify setup
 API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
   pnpm tsx scripts/fetch-dao-info.ts
+
+# 5. Create a proposal
+API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
+  WARMUP_SECS=60 PROPOSAL_LENGTH_SECS=300 \
+  pnpm tsx scripts/test-dao-proposal.ts
 ```
 
 **Notes:**
@@ -599,111 +646,7 @@ API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
 
 ---
 
-### Flow 3: Parent DAO Proposal (Create + Finalize)
-
-Create and finalize a proposal on a parent DAO.
-
-```bash
-# Prerequisites: Parent DAO fully set up (Flow 1 complete)
-
-# 1. Create proposal via API
-curl -X POST https://api.zcombinator.io/dao/proposal \
-  -H "Content-Type: application/json" \
-  -d '{
-    "dao_pda": "<dao-pda>",
-    "title": "My Proposal",
-    "description": "Description of the proposal",
-    "options": ["Approve", "Reject", "Abstain"],
-    "length_secs": 86400,
-    "wallet": "<your-wallet-pubkey>",
-    "signed_hash": "<signature>"
-  }'
-# Save: proposal_pda
-
-# 2. Wait for proposal to end
-# Warmup period: 60 seconds
-# Proposal duration: length_secs (e.g., 86400 = 24 hours)
-# Total wait: 60 + length_secs + buffer
-
-# 3. Finalize proposal
-curl -X POST https://api.zcombinator.io/dao/finalize-proposal \
-  -H "Content-Type: application/json" \
-  -d '{"proposal_pda": "<proposal-pda>"}'
-
-# 4. Redeem liquidity
-curl -X POST https://api.zcombinator.io/dao/redeem-liquidity \
-  -H "Content-Type: application/json" \
-  -d '{"proposal_pda": "<proposal-pda>"}'
-
-# 5. Deposit back to pool
-curl -X POST https://api.zcombinator.io/dao/deposit-back \
-  -H "Content-Type: application/json" \
-  -d '{"proposal_pda": "<proposal-pda>"}'
-
-# 6. Verify LP restored
-POOL_ADDRESS="<pool-address>" ADMIN_WALLET="<admin-wallet>" \
-  pnpm tsx scripts/check-lp-positions.ts
-```
-
-**Notes:**
-- Proposal creation requires a signed request (wallet + signed_hash)
-- Use `test-dao-parent.ts` signing logic as reference for generating signed_hash
-- Proposals support 2-6 options
-- Only one pending (non-expired) proposal per moderator at a time
-
----
-
-### Flow 4: Child DAO Proposal (Create + Finalize)
-
-Create and finalize a proposal on a child DAO. Uses the parent's liquidity pool.
-
-```bash
-# Prerequisites:
-# - Parent DAO fully set up (Flow 1 complete)
-# - Child DAO created (Flow 2 complete)
-
-# 1. Create proposal via API (same as parent, but with child DAO PDA)
-curl -X POST https://api.zcombinator.io/dao/proposal \
-  -H "Content-Type: application/json" \
-  -d '{
-    "dao_pda": "<child-dao-pda>",
-    "title": "Child DAO Proposal",
-    "description": "Description of the proposal",
-    "options": ["Yes", "No", "Abstain"],
-    "length_secs": 86400,
-    "wallet": "<your-wallet-pubkey>",
-    "signed_hash": "<signature>"
-  }'
-# Save: proposal_pda
-
-# 2. Wait for proposal to end (same timing as parent)
-
-# 3-5. Finalize, redeem, deposit-back (same as Flow 3)
-curl -X POST https://api.zcombinator.io/dao/finalize-proposal \
-  -H "Content-Type: application/json" \
-  -d '{"proposal_pda": "<proposal-pda>"}'
-
-curl -X POST https://api.zcombinator.io/dao/redeem-liquidity \
-  -H "Content-Type: application/json" \
-  -d '{"proposal_pda": "<proposal-pda>"}'
-
-curl -X POST https://api.zcombinator.io/dao/deposit-back \
-  -H "Content-Type: application/json" \
-  -d '{"proposal_pda": "<proposal-pda>"}'
-
-# 6. Verify LP restored (use PARENT's admin wallet and pool)
-POOL_ADDRESS="<parent-pool-address>" ADMIN_WALLET="<parent-admin-wallet>" \
-  pnpm tsx scripts/check-lp-positions.ts
-```
-
-**Key Differences from Parent DAO Proposals:**
-- Uses child DAO PDA for proposal creation
-- Liquidity operations use parent's pool and admin wallet
-- Parent and child share the same moderator (only one pending proposal across both)
-
----
-
-### Flow 5: Parent DAO Creation (DLMM Pool with USDC)
+### Flow 3: Parent DAO Creation (DLMM Pool with USDC)
 
 Complete setup for a new parent DAO using a DLMM pool (TOKEN/USDC) instead of DAMM.
 The API auto-detects the pool type, so most steps are identical.
@@ -711,7 +654,7 @@ Supports both SPL Token and Token-2022 as the base token.
 
 **Prerequisites:**
 - Payer wallet must have USDC for pool liquidity (default 10 USDC)
-- Payer wallet must have SOL for transaction fees
+- Payer wallet must have SOL for transaction fees + 0.11 SOL for DAO funding
 
 ```bash
 # 1. Create token + DLMM pool (TOKEN/USDC)
@@ -724,7 +667,7 @@ TOKEN_NAME="MyDAO" TOKEN_SYMBOL="MYDAO" USDC_AMOUNT=10 TOKEN_PERCENT=10 BIN_STEP
 # USE_TOKEN_2022=true TOKEN_NAME="MyDAO22" USDC_AMOUNT=10 BIN_STEP=25 \
 #   pnpm tsx scripts/create-token-with-dlmm-pool.ts
 
-# 2. Create parent DAO (pool_type will be auto-detected as 'dlmm')
+# 2. Create parent DAO (auto-funds admin wallet, pool_type auto-detected as 'dlmm')
 API_URL=https://api.zcombinator.io \
   DAO_NAME="MyDAO" \
   TOKEN_MINT="<from-step-1>" \
@@ -744,27 +687,25 @@ POOL_ADDRESS="<pool from step-1>" \
   ADMIN_WALLET="<from-step-2>" \
   pnpm tsx scripts/e2e-transfer-dlmm-lp.ts
 
-# 5. Fund admin wallet (may need more SOL for DLMM position creation)
-ADMIN_WALLET="<from-step-2>" SOL_AMOUNT=0.3 \
-  pnpm tsx scripts/fund-admin-wallet.ts
-
-# 6. Verify setup
+# 5. Verify setup
 API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
   pnpm tsx scripts/fetch-dao-info.ts
 
-# 7. Verify DLMM LP state
+# 6. Verify DLMM LP state
 POOL_ADDRESS="<pool from step-1>" ADMIN_WALLET="<from-step-2>" \
   pnpm tsx scripts/check-dlmm-lp-positions.ts
-```
 
-**DAO is now ready for proposals.**
+# 7. Create a proposal
+API_URL=https://api.zcombinator.io DAO_PDA="<from-step-2>" \
+  WARMUP_SECS=60 PROPOSAL_LENGTH_SECS=300 \
+  pnpm tsx scripts/test-dao-proposal.ts
+```
 
 **Key Differences from DAMM Flow:**
 - DLMM uses concentrated liquidity with price bins
 - Use `create-token-with-dlmm-pool.ts` instead of `create-token-with-pool.ts`
 - Use `e2e-transfer-dlmm-lp.ts` instead of `e2e-transfer-lp.ts`
 - Use `check-dlmm-lp-positions.ts` to verify LP state
-- DLMM may require more SOL for admin wallet (position creation costs)
 - BIN_STEP parameter controls price granularity (1-400, default 25)
 
 ---
