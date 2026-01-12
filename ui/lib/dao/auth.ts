@@ -23,8 +23,14 @@ import bs58 from 'bs58';
 import { isValidSolanaAddress } from '../validation';
 
 /**
- * Verify a signed_hash for request authentication
- * The client signs SHA-256(JSON.stringify(bodyWithoutSignedHash))
+ * Verify a signed_hash for request authentication.
+ * The client signs a human-readable message containing the SHA-256 hash of the request body.
+ *
+ * Message format:
+ * "Combinator Authentication\n\nSign this message to verify your request.\n\nRequest hash: <hex>"
+ *
+ * Note: We use a human-readable message instead of raw hash bytes because some wallets
+ * (like Phantom) reject signing raw binary data that could be mistaken for transactions.
  */
 export function verifySignedHash(
   body: Record<string, unknown>,
@@ -40,12 +46,19 @@ export function verifySignedHash(
       .update(JSON.stringify(bodyWithoutHash))
       .digest();
 
+    // Convert hash to hex for human-readable message
+    const hashHex = hash.toString('hex');
+
+    // Reconstruct the human-readable message that was signed
+    const message = `Combinator Authentication\n\nSign this message to verify your request.\n\nRequest hash: ${hashHex}`;
+    const messageBytes = Buffer.from(message, 'utf-8');
+
     // Decode signature and public key
     const signature = bs58.decode(signedHash);
     const publicKey = bs58.decode(wallet);
 
-    // Verify the signature
-    return nacl.sign.detached.verify(hash, signature, publicKey);
+    // Verify the signature against the human-readable message
+    return nacl.sign.detached.verify(messageBytes, signature, publicKey);
   } catch (error) {
     console.error('Signature verification error:', error);
     return false;

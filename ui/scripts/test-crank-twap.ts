@@ -38,7 +38,10 @@ function loadKeypair(privateKey: string): Keypair {
 
 function signRequest(body: Record<string, unknown>, keypair: Keypair): string {
   const hash = crypto.createHash('sha256').update(JSON.stringify(body)).digest();
-  const signature = nacl.sign.detached(hash, keypair.secretKey);
+  const hashHex = hash.toString('hex');
+  const message = `Combinator Authentication\n\nSign this message to verify your request.\n\nRequest hash: ${hashHex}`;
+  const messageBytes = Buffer.from(message, 'utf-8');
+  const signature = nacl.sign.detached(messageBytes, keypair.secretKey);
   return bs58.encode(signature);
 }
 

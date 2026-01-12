@@ -42,7 +42,14 @@ function signRequest(body: Record<string, unknown>, keypair: typeof testWallet):
     .update(JSON.stringify(body))
     .digest();
 
-  const signature = nacl.sign.detached(hash, keypair.secretKey);
+  // Convert hash to hex for human-readable message
+  const hashHex = hash.toString('hex');
+
+  // Create human-readable message (must match frontend and backend)
+  const message = `Combinator Authentication\n\nSign this message to verify your request.\n\nRequest hash: ${hashHex}`;
+  const messageBytes = Buffer.from(message, 'utf-8');
+
+  const signature = nacl.sign.detached(messageBytes, keypair.secretKey);
   return bs58.encode(signature);
 }
 

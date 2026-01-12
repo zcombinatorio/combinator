@@ -84,14 +84,22 @@ function loadKeypair(privateKey: string): Keypair {
 }
 
 /**
- * Sign a request body and return the signed_hash
+ * Sign a request body and return the signed_hash.
+ * Signs a human-readable message containing the SHA-256 hash of the request body.
  */
 function signRequest(body: Record<string, unknown>, keypair: Keypair): string {
   const hash = crypto.createHash('sha256')
     .update(JSON.stringify(body))
     .digest();
 
-  const signature = nacl.sign.detached(hash, keypair.secretKey);
+  // Convert hash to hex for human-readable message
+  const hashHex = hash.toString('hex');
+
+  // Create human-readable message (must match frontend and backend)
+  const message = `Combinator Authentication\n\nSign this message to verify your request.\n\nRequest hash: ${hashHex}`;
+  const messageBytes = Buffer.from(message, 'utf-8');
+
+  const signature = nacl.sign.detached(messageBytes, keypair.secretKey);
   return bs58.encode(signature);
 }
 
