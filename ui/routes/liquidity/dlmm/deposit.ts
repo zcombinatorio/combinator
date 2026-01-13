@@ -177,11 +177,13 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     }
 
     // Calculate balanced deposit using active bin price
+    // Convert raw price (raw_Y per raw_X) to decimal price (decimal_Y per decimal_X)
+    const decimalPrice = activeBinPrice * Math.pow(10, tokenXMintInfo.decimals - tokenYMintInfo.decimals);
     const tokenXDecimal = Number(tokenXAmountRaw.toString()) / Math.pow(10, tokenXMintInfo.decimals);
     const tokenYDecimal = Number(tokenYAmountRaw.toString()) / Math.pow(10, tokenYMintInfo.decimals);
 
-    const neededYForAllX = tokenXDecimal * activeBinPrice;
-    const neededXForAllY = tokenYDecimal / activeBinPrice;
+    const neededYForAllX = tokenXDecimal * decimalPrice;
+    const neededXForAllY = tokenYDecimal / decimalPrice;
 
     let depositXDecimal: number;
     let depositYDecimal: number;
@@ -249,23 +251,11 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     }
 
     // Build deposit transactions
+    // NOTE: We do NOT add SOL wrapping instructions here because the Meteora DLMM SDK
+    // handles SOL wrapping internally when tokenX or tokenY is NATIVE_MINT.
+    // Adding wrapping here would cause a double-wrap bug where both our code and the SDK
+    // try to transfer the same SOL amount, causing the second transfer to fail.
     const setupInstructions: TransactionInstruction[] = [];
-
-    if (isTokenXNativeSOL && !depositTokenXAmount.isZero()) {
-      setupInstructions.push(
-        createAssociatedTokenAccountIdempotentInstruction(lpOwner.publicKey, lpOwnerTokenXAta, lpOwner.publicKey, NATIVE_MINT),
-        SystemProgram.transfer({ fromPubkey: lpOwner.publicKey, toPubkey: lpOwnerTokenXAta, lamports: Number(depositTokenXAmount.toString()) }),
-        createSyncNativeInstruction(lpOwnerTokenXAta)
-      );
-    }
-
-    if (isTokenYNativeSOL && !depositTokenYAmount.isZero()) {
-      setupInstructions.push(
-        createAssociatedTokenAccountIdempotentInstruction(lpOwner.publicKey, lpOwnerTokenYAta, lpOwner.publicKey, NATIVE_MINT),
-        SystemProgram.transfer({ fromPubkey: lpOwner.publicKey, toPubkey: lpOwnerTokenYAta, lamports: Number(depositTokenYAmount.toString()) }),
-        createSyncNativeInstruction(lpOwnerTokenYAta)
-      );
-    }
 
     // Build deposit transaction(s) - use different method depending on whether position exists
     if (isNewPosition) {

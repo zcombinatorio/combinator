@@ -127,10 +127,12 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
     console.log(`  Pool Price: ${poolPrice} (B per A)`);
 
     // Determine swap direction
+    // Convert raw price (raw_B per raw_A) to decimal price (decimal_B per decimal_A)
+    const decimalPrice = poolPrice * Math.pow(10, tokenAMintInfo.decimals - tokenBMintInfo.decimals);
     const tokenADecimal = Number(tokenABalance.toString()) / Math.pow(10, tokenAMintInfo.decimals);
     const tokenBDecimal = Number(tokenBBalance.toString()) / Math.pow(10, tokenBMintInfo.decimals);
-    const neededBForAllA = tokenADecimal * poolPrice;
-    const neededAForAllB = tokenBDecimal / poolPrice;
+    const neededBForAllA = tokenADecimal * decimalPrice;
+    const neededAForAllB = tokenBDecimal / decimalPrice;
 
     let swapInputMint: PublicKey;
     let swapOutputMint: PublicKey;

@@ -127,10 +127,12 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     console.log(`  Active bin price: ${activeBinPrice} Y per X`);
 
     // Determine swap direction
+    // Convert raw price (raw_Y per raw_X) to decimal price (decimal_Y per decimal_X)
+    const decimalPrice = activeBinPrice * Math.pow(10, tokenXMintInfo.decimals - tokenYMintInfo.decimals);
     const tokenXDecimal = Number(tokenXBalance.toString()) / Math.pow(10, tokenXMintInfo.decimals);
     const tokenYDecimal = Number(tokenYBalance.toString()) / Math.pow(10, tokenYMintInfo.decimals);
-    const neededYForAllX = tokenXDecimal * activeBinPrice;
-    const neededXForAllY = tokenYDecimal / activeBinPrice;
+    const neededYForAllX = tokenXDecimal * decimalPrice;
+    const neededXForAllY = tokenYDecimal / decimalPrice;
 
     let swapInputMint: PublicKey;
     let swapOutputMint: PublicKey;
