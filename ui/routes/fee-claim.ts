@@ -82,7 +82,7 @@ const LEGACY_POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
   // SurfCash
   'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': [
     { address: 'BmfaxQCRqf4xZFmQa5GswShBZhRBf4bED7hadFkpgBC3', percent: 34.375 },
-    { address: 'HU65idnreBAe9gsLzSGTV7w7tVTzaSzXBw518F1aQrGv', percent: 34.375 },
+    { address: 'EtdhMR3yYHsUP3cm36X83SpvnL5jB48p5b653pqLC23C', percent: 34.375 },
     { address: PROTOCOL_FEE_WALLET, percent: 31.25 },
   ],
 };
