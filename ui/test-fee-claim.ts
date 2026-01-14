@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Connection, Keypair, Transaction, PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 import bs58 from 'bs58';
 import 'dotenv/config';
 
@@ -119,18 +120,44 @@ async function testFeeClaim() {
       // Get fee recipients to check their balance changes
       const feeRecipients = claimResponse.data.feeRecipients as { address: string; percent: number }[];
       const recipientAddresses = feeRecipients.map(r => new PublicKey(r.address));
+      const isTokenBNativeSOL = claimResponse.data.isTokenBNativeSOL as boolean;
+      const tokenBMint = new PublicKey(claimResponse.data.tokenBMint);
+
+      // Determine decimals and symbol based on quote token type
+      const decimals = isTokenBNativeSOL ? 9 : 6; // SOL = 9, USDC = 6
+      const divisor = Math.pow(10, decimals);
+      const symbol = isTokenBNativeSOL ? 'SOL' : 'USDC';
+
+      // Get addresses to track - for SOL it's the wallet addresses, for USDC it's token accounts
+      const addressesToTrack = isTokenBNativeSOL
+        ? recipientAddresses
+        : recipientAddresses.map(wallet =>
+            // allowOwnerOffCurve: true to support PDAs as token owners
+            getAssociatedTokenAddressSync(tokenBMint, wallet, true)
+          );
 
       // Get pre-simulation balances
       const preBalances: Record<string, number> = {};
-      for (const addr of recipientAddresses) {
-        preBalances[addr.toBase58()] = await connection.getBalance(addr);
+      for (let i = 0; i < recipientAddresses.length; i++) {
+        const trackAddr = addressesToTrack[i];
+        if (isTokenBNativeSOL) {
+          preBalances[trackAddr.toBase58()] = await connection.getBalance(trackAddr);
+        } else {
+          try {
+            const tokenBalance = await connection.getTokenAccountBalance(trackAddr);
+            preBalances[trackAddr.toBase58()] = Number(tokenBalance.value.amount);
+          } catch {
+            // Token account may not exist yet
+            preBalances[trackAddr.toBase58()] = 0;
+          }
+        }
       }
 
       // Simulate (legacy API - pass addresses as third param)
       const simulation = await connection.simulateTransaction(
         transaction,
         undefined,
-        recipientAddresses
+        addressesToTrack
       );
 
       if (simulation.value.err) {
@@ -141,19 +168,35 @@ async function testFeeClaim() {
         console.log(`  Compute units: ${simulation.value.unitsConsumed}`);
 
         // Show balance changes
-        console.log('\nBalance changes:');
+        console.log(`\nBalance changes (${symbol}):`);
         if (simulation.value.accounts) {
           for (let i = 0; i < recipientAddresses.length; i++) {
-            const addr = recipientAddresses[i].toBase58();
+            const walletAddr = recipientAddresses[i].toBase58();
+            const trackAddr = addressesToTrack[i].toBase58();
             const account = simulation.value.accounts[i];
             if (account) {
-              const preBal = preBalances[addr] / 1e9;
-              const postBal = account.lamports / 1e9;
+              let postBalance: number;
+              if (isTokenBNativeSOL) {
+                postBalance = account.lamports;
+              } else {
+                // Parse SPL token account data to get balance
+                // Token account data: first 64 bytes are mint + owner, bytes 64-72 are amount (u64 LE)
+                try {
+                  const rawData = Array.isArray(account.data) ? account.data[0] : account.data;
+                  const data = Buffer.from(rawData as string, 'base64');
+                  postBalance = Number(data.readBigUInt64LE(64));
+                } catch (e) {
+                  console.log(`  ${walletAddr}: Could not parse token account data`);
+                  continue;
+                }
+              }
+              const preBal = preBalances[trackAddr] / divisor;
+              const postBal = postBalance / divisor;
               const change = postBal - preBal;
-              console.log(`  ${addr}:`);
-              console.log(`    Before: ${preBal.toFixed(4)} SOL`);
-              console.log(`    After:  ${postBal.toFixed(4)} SOL`);
-              console.log(`    Change: +${change.toFixed(4)} SOL`);
+              console.log(`  ${walletAddr}:`);
+              console.log(`    Before: ${preBal.toFixed(decimals === 9 ? 4 : 2)} ${symbol}`);
+              console.log(`    After:  ${postBal.toFixed(decimals === 9 ? 4 : 2)} ${symbol}`);
+              console.log(`    Change: +${change.toFixed(decimals === 9 ? 4 : 2)} ${symbol}`);
             }
           }
         }
