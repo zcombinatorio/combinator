@@ -17,7 +17,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { PublicKey, Connection } from '@solana/web3.js';
+import { PublicKey, Connection, Transaction, ComputeBudgetProgram } from '@solana/web3.js';
 import { TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import { futarchy } from '@zcomb/programs-sdk';
 
@@ -224,7 +224,27 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
           { [pool_type]: {} } as any,
         );
 
-        tx = await result.builder.rpc();
+        // Build and send manually for robust confirmation
+        const instruction = await result.builder.instruction();
+        const createTx = new Transaction().add(
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+          instruction
+        );
+        const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
+        createTx.recentBlockhash = blockhash;
+        createTx.feePayer = adminKeypair.publicKey;
+        createTx.sign(adminKeypair);
+
+        tx = await provider.connection.sendRawTransaction(createTx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        });
+        await provider.connection.confirmTransaction({
+          signature: tx,
+          blockhash,
+          lastValidBlockHeight,
+        }, 'confirmed');
+
         daoPda = result.daoPda.toBase58();
         moderatorPda = result.moderatorPda.toBase58();
 
@@ -421,7 +441,27 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
           cosignerPubkey,
         );
 
-        tx = await result.builder.signers([parentKeypair]).rpc();
+        // Build and send manually for robust confirmation
+        const instruction = await result.builder.instruction();
+        const createTx = new Transaction().add(
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+          instruction
+        );
+        const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
+        createTx.recentBlockhash = blockhash;
+        createTx.feePayer = childKeypair.publicKey;
+        createTx.sign(childKeypair, parentKeypair);
+
+        tx = await provider.connection.sendRawTransaction(createTx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        });
+        await provider.connection.confirmTransaction({
+          signature: tx,
+          blockhash,
+          lastValidBlockHeight,
+        }, 'confirmed');
+
         daoPda = result.daoPda.toBase58();
 
         const treasuryMultisigPda = result.treasuryMultisig;

@@ -558,10 +558,28 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         }
       } else {
         try {
-          const initSig = await initResult.builder.rpc();
+          // Build and send manually for robust confirmation
+          const initInstruction = await initResult.builder.instruction();
+          const initTx = new Transaction().add(
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+            initInstruction
+          );
+          const { blockhash: initBlockhash, lastValidBlockHeight: initLastValidBlockHeight } =
+            await provider.connection.getLatestBlockhash('confirmed');
+          initTx.recentBlockhash = initBlockhash;
+          initTx.feePayer = adminKeypair.publicKey;
+          initTx.sign(adminKeypair);
+
+          const initSig = await provider.connection.sendRawTransaction(initTx.serialize(), {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          });
           console.log(`  ✓ Initialize tx: ${initSig}`);
-          // Wait for confirmation before proceeding to addOption
-          await provider.connection.confirmTransaction(initSig, 'confirmed');
+          await provider.connection.confirmTransaction({
+            signature: initSig,
+            blockhash: initBlockhash,
+            lastValidBlockHeight: initLastValidBlockHeight,
+          }, 'confirmed');
         } catch (e) {
           console.error('  ✗ Initialize failed:', e);
           throw e;
@@ -573,10 +591,28 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         console.log(`Step 2.${i-1}: Adding option ${i}...`);
         try {
           const addResult = await client.addOption(adminKeypair.publicKey, initResult.proposalPda);
-          const optSig = await addResult.builder.rpc();
+          // Build and send manually for robust confirmation
+          const addInstruction = await addResult.builder.instruction();
+          const addTx = new Transaction().add(
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+            addInstruction
+          );
+          const { blockhash: addBlockhash, lastValidBlockHeight: addLastValidBlockHeight } =
+            await provider.connection.getLatestBlockhash('confirmed');
+          addTx.recentBlockhash = addBlockhash;
+          addTx.feePayer = adminKeypair.publicKey;
+          addTx.sign(adminKeypair);
+
+          const optSig = await provider.connection.sendRawTransaction(addTx.serialize(), {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          });
           console.log(`  ✓ AddOption ${i} tx: ${optSig}`);
-          // Wait for confirmation before next iteration
-          await provider.connection.confirmTransaction(optSig, 'confirmed');
+          await provider.connection.confirmTransaction({
+            signature: optSig,
+            blockhash: addBlockhash,
+            lastValidBlockHeight: addLastValidBlockHeight,
+          }, 'confirmed');
         } catch (e) {
           console.error(`  ✗ AddOption ${i} failed:`, e);
           throw e;
@@ -644,7 +680,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 });
 
         // Build versioned transaction using the ALT
-        const versionedTx = await client.buildVersionedTx(
+        const { versionedTx, blockhash, lastValidBlockHeight } = await client.buildVersionedTx(
           adminKeypair.publicKey,
           [computeBudgetIx, launchInstruction],
           altAddress,
@@ -653,14 +689,18 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         // Sign the versioned transaction
         versionedTx.sign([adminKeypair]);
 
-        // Send and confirm
+        // Send and confirm with proper blockhash-based expiration detection
         const launchSig = await provider.connection.sendTransaction(versionedTx, {
           skipPreflight: false,
           preflightCommitment: 'confirmed',
         });
 
-        // Wait for confirmation
-        await provider.connection.confirmTransaction(launchSig, 'confirmed');
+        // Wait for confirmation using blockhash expiration
+        await provider.connection.confirmTransaction({
+          signature: launchSig,
+          blockhash,
+          lastValidBlockHeight,
+        }, 'confirmed');
 
         console.log(`  ✓ Launch tx: ${launchSig}`);
       } catch (e) {
@@ -824,7 +864,26 @@ router.post('/finalize-proposal', async (req: Request, res: Response) => {
       proposalPubkey
     );
 
-    const tx = await builder.rpc();
+    // Build and send manually for robust confirmation
+    const finalizeInstruction = await builder.instruction();
+    const finalizeTx = new Transaction().add(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+      finalizeInstruction
+    );
+    const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
+    finalizeTx.recentBlockhash = blockhash;
+    finalizeTx.feePayer = adminKeypair.publicKey;
+    finalizeTx.sign(adminKeypair);
+
+    const tx = await provider.connection.sendRawTransaction(finalizeTx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    await provider.connection.confirmTransaction({
+      signature: tx,
+      blockhash,
+      lastValidBlockHeight,
+    }, 'confirmed');
     console.log(`Proposal finalized: ${tx}`);
 
     // Fetch result
@@ -960,18 +1019,46 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
       // Sign the versioned transaction with admin keypair
       result.versionedTx.sign([adminKeypair]);
 
-      // Send the signed transaction
-      tx = await client.sendVersionedTransaction(result.versionedTx);
+      // Send the signed transaction with blockhash info for proper confirmation
+      tx = await client.sendVersionedTransaction(result.versionedTx, {
+        blockhash: result.blockhash,
+        lastValidBlockHeight: result.lastValidBlockHeight,
+      });
     } else {
       // Standard transaction for 2-option proposals
+      // Build and send manually for robust confirmation (builder.rpc() has timeout issues)
       const { builder } = await client.redeemLiquidity(
         adminKeypair.publicKey,
         proposalPubkey
       );
-      tx = await builder.rpc();
+
+      const instruction = await builder.instruction();
+      const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 });
+
+      const redeemTx = new Transaction();
+      redeemTx.add(computeBudgetIx, instruction);
+
+      const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
+      redeemTx.recentBlockhash = blockhash;
+      redeemTx.feePayer = adminKeypair.publicKey;
+      redeemTx.sign(adminKeypair);
+
+      tx = await provider.connection.sendRawTransaction(redeemTx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+
+      console.log(`  Transaction sent: ${tx}`);
+
+      // Confirm with proper blockhash-based expiration detection
+      await provider.connection.confirmTransaction({
+        signature: tx,
+        blockhash,
+        lastValidBlockHeight,
+      }, 'confirmed');
     }
 
-    console.log(`Liquidity redeemed successfully: ${tx}`);
+    console.log(`✓ Liquidity redeemed: ${tx}`);
 
     res.json({
       success: true,
@@ -1582,12 +1669,16 @@ router.post('/crank-twap', async (req: Request, res: Response) => {
           tx.add(ix);
         }
 
-        const { blockhash } = await provider.connection.getLatestBlockhash();
+        const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
         tx.recentBlockhash = blockhash;
         tx.feePayer = adminKeypair.publicKey;
 
         const signature = await provider.connection.sendTransaction(tx, [adminKeypair]);
-        await provider.connection.confirmTransaction(signature, 'confirmed');
+        await provider.connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight,
+        }, 'confirmed');
 
         console.log(`  Cranked ${poolsToCrank.length} pools in single tx: ${signature}`);
 
