@@ -240,6 +240,36 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
       }
     }
 
+    // Calculate max amounts with 5% slippage buffer
+    let maxAmountTokenA = depositTokenAAmount.muln(105).divn(100);
+    let maxAmountTokenB = depositTokenBAmount.muln(105).divn(100);
+
+    // Cap maxAmount at available native balance when token is NATIVE_MINT
+    // The SDK wraps maxAmount upfront via SystemProgram.transfer, so it must not exceed available lamports
+    const ATA_RENT = 2039280; // rent-exempt minimum for token account
+    const TX_FEE_RESERVE = 10_000; // buffer for transaction fees
+    const isTokenANativeSOL = poolState.tokenAMint.equals(NATIVE_MINT);
+
+    if (isTokenANativeSOL) {
+      let nativeBalance = await connection.getBalance(lpOwner.publicKey);
+      // Account for SOL being transferred in same tx from manager
+      if (!isSameWallet && !useCleanupMode && !tokenAAmountRaw.isZero()) {
+        nativeBalance += Number(tokenAAmountRaw.toString());
+      }
+      const availableForWrap = Math.max(0, nativeBalance - ATA_RENT - TX_FEE_RESERVE);
+      maxAmountTokenA = BN.min(maxAmountTokenA, new BN(availableForWrap));
+    }
+
+    if (isTokenBNativeSOL) {
+      let nativeBalance = await connection.getBalance(lpOwner.publicKey);
+      // Account for SOL being transferred in same tx from manager
+      if (!isSameWallet && !useCleanupMode && !tokenBAmountRaw.isZero()) {
+        nativeBalance += Number(tokenBAmountRaw.toString());
+      }
+      const availableForWrap = Math.max(0, nativeBalance - ATA_RENT - TX_FEE_RESERVE);
+      maxAmountTokenB = BN.min(maxAmountTokenB, new BN(availableForWrap));
+    }
+
     // Add liquidity
     const addLiquidityTx = await cpAmm.addLiquidity({
       owner: lpOwner.publicKey,
@@ -247,10 +277,10 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
       pool: poolAddress,
       positionNftAccount,
       liquidityDelta,
-      maxAmountTokenA: depositTokenAAmount.muln(105).divn(100),
-      maxAmountTokenB: depositTokenBAmount.muln(105).divn(100),
-      tokenAAmountThreshold: depositTokenAAmount.muln(105).divn(100),
-      tokenBAmountThreshold: depositTokenBAmount.muln(105).divn(100),
+      maxAmountTokenA,
+      maxAmountTokenB,
+      tokenAAmountThreshold: maxAmountTokenA,
+      tokenBAmountThreshold: maxAmountTokenB,
       tokenAMint: poolState.tokenAMint,
       tokenBMint: poolState.tokenBMint,
       tokenAVault: poolState.tokenAVault,
