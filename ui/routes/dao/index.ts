@@ -49,6 +49,7 @@ import {
 import queriesRouter from './queries';
 import creationRouter from './creation';
 import proposersRouter from './proposers';
+import tradingRouter from './trading';
 import { daoLimiter, getConnection, createProvider } from './shared';
 
 const router = Router();
@@ -61,6 +62,7 @@ router.use(daoLimiter);
 router.use('/', queriesRouter);
 router.use('/', creationRouter);
 router.use('/', proposersRouter);
+router.use('/proposal', tradingRouter);
 
 // ============================================================================
 // Proposal Lifecycle Routes
