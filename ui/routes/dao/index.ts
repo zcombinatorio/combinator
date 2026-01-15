@@ -62,7 +62,8 @@ router.use(daoLimiter);
 router.use('/', queriesRouter);
 router.use('/', creationRouter);
 router.use('/', proposersRouter);
-router.use('/proposal', tradingRouter);
+// NOTE: tradingRouter is mounted AFTER POST /proposal to prevent route interception
+// See end of POST /proposal handler
 
 // ============================================================================
 // Proposal Lifecycle Routes
@@ -691,6 +692,10 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     res.status(500).json({ error: 'Failed to create proposal', details: String(error) });
   }
 });
+
+// Mount trading router AFTER POST /proposal to prevent route interception
+// If tradingRouter had a POST / or POST /:something, it would intercept proposal creation
+router.use('/proposal', tradingRouter);
 
 // ============================================================================
 // ============================================================================

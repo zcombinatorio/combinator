@@ -438,6 +438,19 @@ router.post('/:proposalPda/swap/execute', async (req: Request, res: Response) =>
     }
 
     const connection = getConnection();
+
+    // Verify proposal is still pending before executing swap
+    const readClient = createReadOnlyClient(connection);
+    const proposal = await readClient.fetchProposal(new PublicKey(storedData.proposalPda));
+    const { state } = futarchy.parseProposalState(proposal.state);
+    if (state !== 'pending') {
+      tradingStorage.delete(requestId);
+      return res.status(400).json({
+        error: 'Proposal is no longer pending',
+        currentState: state
+      });
+    }
+
     const userPublicKey = new PublicKey(storedData.wallet);
 
     // Deserialize and verify transaction
@@ -472,14 +485,21 @@ router.post('/:proposalPda/swap/execute', async (req: Request, res: Response) =>
       return res.status(400).json({ error: blockhashResult.error });
     }
 
+    // Get blockhash info for robust confirmation (prevents hanging)
+    const blockhash = transaction.recentBlockhash!;
+    const { lastValidBlockHeight } = await connection.getLatestBlockhash();
+
     // Send transaction
     const signature = await connection.sendRawTransaction(transaction.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
     });
 
-    // Wait for confirmation
-    await connection.confirmTransaction(signature, 'confirmed');
+    // Wait for confirmation with blockhash-based timeout (prevents indefinite hang)
+    await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      'confirmed'
+    );
 
     // Clean up
     tradingStorage.delete(requestId);
@@ -657,6 +677,19 @@ router.post('/:proposalPda/deposit/execute', async (req: Request, res: Response)
     }
 
     const connection = getConnection();
+
+    // Verify proposal is still pending before executing deposit
+    const readClient = createReadOnlyClient(connection);
+    const proposal = await readClient.fetchProposal(new PublicKey(storedData.proposalPda));
+    const { state } = futarchy.parseProposalState(proposal.state);
+    if (state !== 'pending') {
+      tradingStorage.delete(requestId);
+      return res.status(400).json({
+        error: 'Proposal is no longer pending',
+        currentState: state
+      });
+    }
+
     const userPublicKey = new PublicKey(storedData.wallet);
 
     let transaction: Transaction;
@@ -686,12 +719,20 @@ router.post('/:proposalPda/deposit/execute', async (req: Request, res: Response)
       return res.status(400).json({ error: blockhashResult.error });
     }
 
+    // Get blockhash info for robust confirmation (prevents hanging)
+    const blockhash = transaction.recentBlockhash!;
+    const { lastValidBlockHeight } = await connection.getLatestBlockhash();
+
     const signature = await connection.sendRawTransaction(transaction.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
     });
 
-    await connection.confirmTransaction(signature, 'confirmed');
+    // Wait for confirmation with blockhash-based timeout (prevents indefinite hang)
+    await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      'confirmed'
+    );
     tradingStorage.delete(requestId);
 
     console.log(`Deposit executed for proposal ${proposalPda}: ${signature}`);
@@ -862,6 +903,19 @@ router.post('/:proposalPda/withdraw/execute', async (req: Request, res: Response
     }
 
     const connection = getConnection();
+
+    // Verify proposal is still pending before executing withdraw
+    const readClient = createReadOnlyClient(connection);
+    const proposal = await readClient.fetchProposal(new PublicKey(storedData.proposalPda));
+    const { state } = futarchy.parseProposalState(proposal.state);
+    if (state !== 'pending') {
+      tradingStorage.delete(requestId);
+      return res.status(400).json({
+        error: 'Proposal is no longer pending',
+        currentState: state
+      });
+    }
+
     const userPublicKey = new PublicKey(storedData.wallet);
 
     let transaction: Transaction;
@@ -891,12 +945,20 @@ router.post('/:proposalPda/withdraw/execute', async (req: Request, res: Response
       return res.status(400).json({ error: blockhashResult.error });
     }
 
+    // Get blockhash info for robust confirmation (prevents hanging)
+    const blockhash = transaction.recentBlockhash!;
+    const { lastValidBlockHeight } = await connection.getLatestBlockhash();
+
     const signature = await connection.sendRawTransaction(transaction.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
     });
 
-    await connection.confirmTransaction(signature, 'confirmed');
+    // Wait for confirmation with blockhash-based timeout (prevents indefinite hang)
+    await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      'confirmed'
+    );
     tradingStorage.delete(requestId);
 
     console.log(`Withdraw executed for proposal ${proposalPda}: ${signature}`);
@@ -1062,6 +1124,19 @@ router.post('/:proposalPda/redeem/execute', async (req: Request, res: Response) 
     }
 
     const connection = getConnection();
+
+    // Verify proposal is resolved before executing redeem
+    const readClient = createReadOnlyClient(connection);
+    const proposal = await readClient.fetchProposal(new PublicKey(storedData.proposalPda));
+    const { state } = futarchy.parseProposalState(proposal.state);
+    if (state !== 'resolved') {
+      tradingStorage.delete(requestId);
+      return res.status(400).json({
+        error: 'Proposal is not resolved',
+        currentState: state
+      });
+    }
+
     const userPublicKey = new PublicKey(storedData.wallet);
 
     let transaction: Transaction;
@@ -1091,12 +1166,20 @@ router.post('/:proposalPda/redeem/execute', async (req: Request, res: Response) 
       return res.status(400).json({ error: blockhashResult.error });
     }
 
+    // Get blockhash info for robust confirmation (prevents hanging)
+    const blockhash = transaction.recentBlockhash!;
+    const { lastValidBlockHeight } = await connection.getLatestBlockhash();
+
     const signature = await connection.sendRawTransaction(transaction.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
     });
 
-    await connection.confirmTransaction(signature, 'confirmed');
+    // Wait for confirmation with blockhash-based timeout (prevents indefinite hang)
+    await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      'confirmed'
+    );
     tradingStorage.delete(requestId);
 
     console.log(`Redeem executed for proposal ${proposalPda}: ${signature}`);
