@@ -196,7 +196,7 @@ async function getPoolFeeConfig(
 // Rate limiter for fee claim endpoints
 const feeClaimLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 10, // 10 requests per 5 minutes
+  max: 100, // 100 requests per 5 minutes
   standardHeaders: true,
   legacyHeaders: false,
   message: 'Too many fee claim requests, please wait a moment.'
