@@ -36,6 +36,14 @@ import rateLimit from 'express-rate-limit';
 import { getPool } from '../lib/db';
 import { getDaoByPoolAddress } from '../lib/db/daos';
 import { fetchKeypair } from '../lib/keyService';
+import {
+  PROTOCOL_FEE_WALLET,
+  PARTNER_DAO_PDA,
+  PARTNER_TREASURY,
+  PARTNER_REFERRED_DAO_PDAS,
+  calculateProtocolFeePercent,
+  FeeRecipient,
+} from './fee-config';
 
 /**
  * Fee Claim Routes
@@ -44,26 +52,6 @@ import { fetchKeypair } from '../lib/keyService';
  */
 
 const router = Router();
-
-// ============================================================================
-// Pool Fee Configuration
-// ============================================================================
-// Maps pool address to list of fee recipients with their percentage share
-// Percentages must sum to 100 for each pool
-
-// Protocol fee wallet - receives protocol's share of trading fees
-const PROTOCOL_FEE_WALLET = 'FEEnkcCNE2623LYCPtLf63LFzXpCFigBLTu4qZovRGZC';
-
-// Protocol target fee rate: 0.5% of swap volume
-// Meteora takes 20% of pool fees, so LP owner only receives 80%
-// Formula: protocol_percent = (0.5 / (pool_fee_rate * 0.8)) * 100
-const PROTOCOL_TARGET_FEE_PERCENT = 0.5;
-const METEORA_FEE_PERCENT = 0.20;  // Meteora takes 20% of collected fees
-
-interface FeeRecipient {
-  address: string;  // Solana wallet address
-  percent: number;  // Percentage of fees (0-100)
-}
 
 interface PoolFeeConfigResult {
   feeRecipients: FeeRecipient[];
@@ -86,32 +74,6 @@ const LEGACY_POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
     { address: PROTOCOL_FEE_WALLET, percent: 31.25 },
   ],
 };
-
-/**
- * Calculate protocol fee percentage based on pool fee rate.
- * Protocol targets 0.5% of swap volume.
- * Meteora takes 20% of pool fees, so LP only receives 80%.
- * Formula: protocol_percent = (0.5 / (pool_fee_rate * 0.8)) * 100
- *
- * Example with 2% pool fee:
- * - Pool collects 2% of swap volume
- * - Meteora takes 20% → 0.4% goes to Meteora
- * - LP receives 80% → 1.6% of swap volume
- * - Protocol wants 0.5% → needs 0.5/1.6 = 31.25% of LP's share
- *
- * @param poolFeeBps - Pool fee rate in basis points
- * @returns Protocol fee percentage (0-100)
- */
-function calculateProtocolFeePercent(poolFeeBps: number): number {
-  if (poolFeeBps <= 0) {
-    throw new Error(`Invalid pool fee: ${poolFeeBps}bps. Pool fee must be positive.`);
-  }
-  const poolFeePercent = poolFeeBps / 100;  // Convert bps to percent
-  const lpSharePercent = poolFeePercent * (1 - METEORA_FEE_PERCENT);  // LP gets 80%
-  const protocolPercent = (PROTOCOL_TARGET_FEE_PERCENT / lpSharePercent) * 100;
-  // Cap at 100% (for pools where LP share equals or is less than 0.5%)
-  return Math.min(protocolPercent, 100);
-}
 
 /**
  * Get fee configuration for a pool.
@@ -144,6 +106,57 @@ async function getPoolFeeConfig(
   const dao = await getDaoByPoolAddress(pool, poolAddress);
 
   if (dao && dao.pool_type === 'damm') {
+    // Get LP owner keypair from key service
+    const lpOwnerKeypair = await fetchKeypair(dao.admin_key_idx);
+
+    // Check for special partner fee configurations
+    if (dao.dao_pda === PARTNER_DAO_PDA) {
+      // Special partner: 0% protocol, 100% to their treasury
+      if (!dao.treasury_multisig) {
+        throw new Error(`Partner DAO "${dao.dao_name}" has no treasury configured. The DAO must set up a treasury before fees can be claimed.`);
+      }
+
+      console.log(`[Fee Claim] Partner DAO ${dao.dao_name}: 0% protocol, 100% DAO treasury`);
+
+      return {
+        feeRecipients: [
+          { address: dao.treasury_multisig, percent: 100 },
+        ],
+        lpOwnerKeypair,
+        source: 'dao',
+        daoName: dao.dao_name,
+      };
+    }
+
+    if (PARTNER_REFERRED_DAO_PDAS.has(dao.dao_pda)) {
+      // Referred DAO: 1/7 protocol, 3/7 partner, 3/7 DAO treasury
+      if (!dao.treasury_multisig) {
+        throw new Error(`Referred DAO "${dao.dao_name}" has no treasury configured. The DAO must set up a treasury before fees can be claimed.`);
+      }
+      if (!PARTNER_TREASURY) {
+        throw new Error(`Partner treasury not configured. Cannot process fee claim for referred DAO "${dao.dao_name}".`);
+      }
+
+      // 1/7 ≈ 14.285714%, 3/7 ≈ 42.857143%
+      const protocolPercent = 100 / 7;      // 1/7
+      const partnerPercent = 300 / 7;       // 3/7
+      const daoPercent = 300 / 7;           // 3/7
+
+      console.log(`[Fee Claim] Referred DAO ${dao.dao_name}: ${protocolPercent.toFixed(2)}% protocol, ${partnerPercent.toFixed(2)}% partner, ${daoPercent.toFixed(2)}% DAO`);
+
+      return {
+        feeRecipients: [
+          { address: PROTOCOL_FEE_WALLET, percent: protocolPercent },
+          { address: PARTNER_TREASURY, percent: partnerPercent },
+          { address: dao.treasury_multisig, percent: daoPercent },
+        ],
+        lpOwnerKeypair,
+        source: 'dao',
+        daoName: dao.dao_name,
+      };
+    }
+
+    // Standard DAO: Calculate dynamic protocol fee based on pool fee rate
     // Fetch pool state to get fee rate
     const cpAmm = new CpAmm(connection);
     const poolState = await cpAmm.fetchPoolState(new PublicKey(poolAddress));
@@ -170,9 +183,6 @@ async function getPoolFeeConfig(
     // Calculate dynamic protocol fee percentage
     const protocolPercent = calculateProtocolFeePercent(poolFeeBps);
     const daoPercent = 100 - protocolPercent;
-
-    // Get LP owner keypair from key service
-    const lpOwnerKeypair = await fetchKeypair(dao.admin_key_idx);
 
     // Build fee recipients: protocol + DAO treasury
     const feeRecipients: FeeRecipient[] = [
