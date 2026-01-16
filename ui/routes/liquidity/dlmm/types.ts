@@ -1,6 +1,6 @@
 /*
  * Z Combinator - Solana Token Launchpad
- * Copyright (C) 2025 Spice Finance Inc.
+ * Copyright (C) 2026 Spice Finance Inc.
  *
  * Type definitions for DLMM liquidity operations
  */

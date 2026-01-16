@@ -1,6 +1,6 @@
 /*
  * Z Combinator - Solana Token Launchpad
- * Copyright (C) 2025 Spice Finance Inc.
+ * Copyright (C) 2026 Spice Finance Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
