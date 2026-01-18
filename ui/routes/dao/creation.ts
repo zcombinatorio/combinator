@@ -31,7 +31,7 @@ import {
   getDaoByName,
   addProposer,
 } from '../../lib/db/daos';
-import { allocateKey, fetchKeypair } from '../../lib/keyService';
+import { allocateKey, fetchKeypair, fetchAdminKeypair, AdminKeyError } from '../../lib/keyService';
 import { isValidSolanaAddress, isValidTokenMintAddress } from '../../lib/validation';
 import {
   requireSignedHash,
@@ -424,7 +424,8 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
         tx = mockResult.tx;
       } else {
         const childKeypair = await fetchKeypair(keyIdx);
-        const parentKeypair = await fetchKeypair(parentDao.admin_key_idx);
+        // Parent DAO may be historical (NULL admin_key_idx), so use fetchAdminKeypair
+        const parentKeypair = await fetchAdminKeypair(parentDao.admin_key_idx, parentDao.dao_name);
 
         const provider = createProvider(childKeypair);
         const client = new futarchy.FutarchyClient(provider);
@@ -521,6 +522,10 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
     }
   } catch (error) {
     console.error('Error creating child DAO:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({ error: 'Failed to create child DAO', details: String(error) });
   }
 });

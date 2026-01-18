@@ -27,6 +27,10 @@ const FUNDING_AMOUNT_SOL = 0.11;
 // Minimum key index allowed for DAO operations (indices 0-8 are reserved)
 const MIN_KEY_INDEX = 9;
 
+// Historical DAO admin keys (migrated DAOs use env-based keys instead of key service)
+// Format: HISTORICAL_ADMIN_KEY_<DAO_NAME>=<base58 private key>
+const HISTORICAL_KEY_PREFIX = 'HISTORICAL_ADMIN_KEY_';
+
 interface KeyServiceResponse {
   idx: number;
   keypair: string;  // Base58 encoded secret key
@@ -102,6 +106,73 @@ export function getDaoKeypair(): Keypair {
 
   const secretKey = bs58.decode(daoKey);
   return Keypair.fromSecretKey(secretKey);
+}
+
+/**
+ * Custom error class for admin key configuration issues
+ * Provides both a client-friendly message and internal details for logging
+ */
+export class AdminKeyError extends Error {
+  public readonly clientMessage: string;
+  public readonly internalDetails: string;
+
+  constructor(clientMessage: string, internalDetails: string) {
+    super(clientMessage);
+    this.name = 'AdminKeyError';
+    this.clientMessage = clientMessage;
+    this.internalDetails = internalDetails;
+  }
+}
+
+/**
+ * Get the admin keypair for a historical/migrated DAO from environment
+ * Historical DAOs have admin_key_idx = NULL and use env-based keys instead.
+ *
+ * Environment variable format: HISTORICAL_ADMIN_KEY_<DAO_NAME>=<base58 private key>
+ * Example: HISTORICAL_ADMIN_KEY_ZC=5abc...xyz
+ *
+ * @param daoName - The DAO name (e.g., 'ZC', 'SURF', 'SURFTEST', 'TESTSURF')
+ */
+export function getHistoricalAdminKeypair(daoName: string): Keypair {
+  const envKey = `${HISTORICAL_KEY_PREFIX}${daoName.toUpperCase()}`;
+  const privateKey = process.env[envKey];
+
+  if (!privateKey) {
+    throw new AdminKeyError(
+      'This DAO is temporarily unavailable for administrative operations. Please try again later or contact support.',
+      `Historical admin key not configured for DAO "${daoName}". Set environment variable: ${envKey}`
+    );
+  }
+
+  const secretKey = bs58.decode(privateKey);
+  return Keypair.fromSecretKey(secretKey);
+}
+
+/**
+ * Fetch admin keypair for a DAO, handling both key-service and historical DAOs
+ *
+ * @param adminKeyIdx - Key index from cmb_daos.admin_key_idx (NULL for historical)
+ * @param daoName - DAO name (required for historical DAOs with NULL key index)
+ *
+ * TODO: Replace daoName lookup with DAO PDA verification for more robust key mapping
+ */
+export async function fetchAdminKeypair(
+  adminKeyIdx: number | null,
+  daoName?: string
+): Promise<Keypair> {
+  // Historical DAO - use environment-based key
+  if (adminKeyIdx === null || adminKeyIdx === undefined) {
+    if (!daoName) {
+      throw new AdminKeyError(
+        'Unable to process request for this DAO. Please contact support.',
+        'DAO name is required for historical DAOs with NULL admin_key_idx but was not provided'
+      );
+    }
+    return getHistoricalAdminKeypair(daoName);
+  }
+
+  // Normal DAO - use key service
+  return fetchKeypair(adminKeyIdx);
 }
 
 /**

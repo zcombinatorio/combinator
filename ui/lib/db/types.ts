@@ -242,7 +242,7 @@ export interface Dao {
   moderator_pda?: string;
   // Ownership
   owner_wallet: string;
-  admin_key_idx: number;
+  admin_key_idx: number | null;  // NULL for historical/migrated DAOs (use env-based keys)
   admin_wallet: string;
   // Token/Pool config
   token_mint: string;

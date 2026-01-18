@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS cmb_daos (
 
   -- Ownership
   owner_wallet TEXT NOT NULL,  -- Client who "owns" this DAO (logical)
-  admin_key_idx INTEGER NOT NULL REFERENCES cmb_key_registry(key_idx),
+  admin_key_idx INTEGER REFERENCES cmb_key_registry(key_idx),
   admin_wallet TEXT NOT NULL,  -- Public key of managed wallet
 
   -- Token/Pool config

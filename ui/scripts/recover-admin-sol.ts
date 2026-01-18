@@ -44,7 +44,7 @@ interface RecoveryResult {
   daoId: number;
   daoName: string;
   adminWallet: string;
-  adminKeyIdx: number;
+  adminKeyIdx: number | null;
   balanceSol: number;
   recoveredSol: number;
   status: 'success' | 'skipped' | 'failed';
@@ -136,6 +136,13 @@ async function recoverFromDao(
     recoveredSol: 0,
     status: 'skipped',
   };
+
+  // Skip historical DAOs (null admin_key_idx uses env-based keys)
+  if (dao.admin_key_idx === null) {
+    result.status = 'skipped';
+    result.error = 'Historical DAO - uses env-based admin key';
+    return result;
+  }
 
   try {
     // Fetch the admin keypair from key service

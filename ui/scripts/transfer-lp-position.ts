@@ -10,7 +10,7 @@ import {
   getAssociatedTokenAddressSync,
   TOKEN_2022_PROGRAM_ID
 } from '@solana/spl-token';
-import { fetchKeypair } from '../lib/keyService';
+import { fetchAdminKeypair } from '../lib/keyService';
 import { getPool } from '../lib/db';
 import { getDaoByPda } from '../lib/db/daos';
 
@@ -35,8 +35,8 @@ async function main() {
   console.log('Old DAO:', oldDao.dao_name, '- Admin:', oldDao.admin_wallet, '(key idx:', oldDao.admin_key_idx, ')');
   console.log('New DAO:', newDao.dao_name, '- Admin:', newDao.admin_wallet, '(key idx:', newDao.admin_key_idx, ')');
 
-  // Fetch keypair using the key index from the DAO record
-  const oldAdminKeypair = await fetchKeypair(oldDao.admin_key_idx);
+  // Fetch keypair using the key index from the DAO record (supports historical DAOs)
+  const oldAdminKeypair = await fetchAdminKeypair(oldDao.admin_key_idx, oldDao.dao_name);
   console.log('✓ Fetched old admin keypair');
 
   const cpAmm = new CpAmm(connection);

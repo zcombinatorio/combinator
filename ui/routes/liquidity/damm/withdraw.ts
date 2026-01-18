@@ -26,6 +26,7 @@ import {
   verifySignedTransaction,
   REQUEST_EXPIRY,
   getTokenProgramsForMints,
+  AdminKeyError,
 } from '../shared';
 import { withdrawRequests } from './storage';
 
@@ -78,7 +79,11 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
     let poolConfig;
     try {
       poolConfig = await getPoolConfig(poolAddress.toBase58(), 'damm', adminWallet);
-    } catch {
+    } catch (error) {
+      if (error instanceof AdminKeyError) {
+        console.error('Admin key error details:', error.internalDetails);
+        return res.status(503).json({ error: error.clientMessage });
+      }
       return res.status(403).json({ error: 'Pool not authorized for liquidity operations' });
     }
 
@@ -256,6 +261,10 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
 
   } catch (error) {
     console.error('Withdraw build error:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to create withdrawal transaction' });
   }
 });
@@ -300,7 +309,11 @@ router.post('/confirm', dammLiquidityLimiter, async (req: Request, res: Response
     let poolConfig;
     try {
       poolConfig = await getPoolConfig(withdrawData.poolAddress, 'damm', withdrawData.adminWallet);
-    } catch {
+    } catch (error) {
+      if (error instanceof AdminKeyError) {
+        console.error('Admin key error details:', error.internalDetails);
+        return res.status(503).json({ error: error.clientMessage });
+      }
       return res.status(403).json({ error: 'Pool not authorized for liquidity operations' });
     }
 

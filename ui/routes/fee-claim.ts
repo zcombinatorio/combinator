@@ -35,7 +35,7 @@ import { getTokenProgramsForMints } from './liquidity/shared';
 import rateLimit from 'express-rate-limit';
 import { getPool } from '../lib/db';
 import { getDaoByPoolAddress } from '../lib/db/daos';
-import { fetchKeypair } from '../lib/keyService';
+import { fetchAdminKeypair, AdminKeyError } from '../lib/keyService';
 import {
   PROTOCOL_FEE_WALLET,
   PARTNER_DAO_PDA,
@@ -106,8 +106,8 @@ async function getPoolFeeConfig(
   const dao = await getDaoByPoolAddress(pool, poolAddress);
 
   if (dao && dao.pool_type === 'damm') {
-    // Get LP owner keypair from key service
-    const lpOwnerKeypair = await fetchKeypair(dao.admin_key_idx);
+    // Get LP owner keypair (handles both key-service and historical DAOs)
+    const lpOwnerKeypair = await fetchAdminKeypair(dao.admin_key_idx, dao.dao_name);
 
     // Check for special partner fee configurations
     if (dao.dao_pda === PARTNER_DAO_PDA) {
@@ -617,6 +617,10 @@ router.post('/claim', feeClaimLimiter, async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error('Claim fees error:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({
       error: error instanceof Error ? error.message : 'Failed to create fee claim transaction'
     });

@@ -7,7 +7,7 @@
 
 import { Router, Request, Response } from 'express';
 import { PublicKey } from '@solana/web3.js';
-import { getPoolConfig } from '../shared';
+import { getPoolConfig, AdminKeyError } from '../shared';
 
 const router = Router();
 
@@ -32,7 +32,11 @@ router.get('/:poolAddress/config', async (req: Request, res: Response) => {
     let poolConfig;
     try {
       poolConfig = await getPoolConfig(poolAddress.toBase58(), 'damm');
-    } catch {
+    } catch (error) {
+      if (error instanceof AdminKeyError) {
+        console.error('Admin key error details:', error.internalDetails);
+        return res.status(503).json({ error: error.clientMessage });
+      }
       return res.status(403).json({ error: 'Pool not authorized for liquidity operations' });
     }
 

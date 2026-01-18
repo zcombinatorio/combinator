@@ -29,6 +29,7 @@ import {
   getJupiterPrice,
   REQUEST_EXPIRY,
   getTokenProgramsForMints,
+  AdminKeyError,
 } from '../shared';
 import { withdrawRequests } from './storage';
 
@@ -79,6 +80,10 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     try {
       poolConfig = await getPoolConfig(poolAddress.toBase58(), 'dlmm', adminWallet);
     } catch (error) {
+      if (error instanceof AdminKeyError) {
+        console.error('Admin key error details:', error.internalDetails);
+        return res.status(503).json({ error: error.clientMessage });
+      }
       return res.status(403).json({ error: 'Pool not authorized for liquidity operations', details: error instanceof Error ? error.message : String(error) });
     }
 
@@ -415,6 +420,10 @@ router.post('/confirm', dlmmLiquidityLimiter, async (req: Request, res: Response
     try {
       poolConfig = await getPoolConfig(requestData.poolAddress, 'dlmm', requestData.adminWallet);
     } catch (error) {
+      if (error instanceof AdminKeyError) {
+        console.error('Admin key error details:', error.internalDetails);
+        return res.status(503).json({ error: error.clientMessage });
+      }
       return res.status(403).json({ error: 'Pool not authorized for liquidity operations', details: error instanceof Error ? error.message : String(error) });
     }
 

@@ -12,7 +12,10 @@ import { Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { getPool } from '../../../lib/db';
 import { getDaoByPoolAddress } from '../../../lib/db/daos';
-import { fetchKeypair } from '../../../lib/keyService';
+import { fetchAdminKeypair, AdminKeyError } from '../../../lib/keyService';
+
+// Re-export AdminKeyError so callers can catch it
+export { AdminKeyError };
 
 /**
  * Pool configuration result from either legacy config or DAO database
@@ -90,7 +93,7 @@ export async function getPoolConfig(
 
   if (dao && dao.pool_type === poolType) {
     console.log(`[${logPrefix}] Using DAO config for ${dao.dao_name} (pool: ${poolAddress}, admin: ${dao.admin_wallet})`);
-    const lpOwnerKeypair = await fetchKeypair(dao.admin_key_idx);
+    const lpOwnerKeypair = await fetchAdminKeypair(dao.admin_key_idx, dao.dao_name);
     return {
       lpOwnerKeypair,
       managerWallet: dao.admin_wallet,

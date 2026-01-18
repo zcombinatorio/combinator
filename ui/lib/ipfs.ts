@@ -49,6 +49,7 @@ export interface ProposalMetadata {
   options: string[];
   dao_pda: string;
   created_at: string;
+  legacy_id?: number;  // Original proposal ID from legacy system (for historical migrations)
 }
 
 /**

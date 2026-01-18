@@ -27,7 +27,7 @@ import DLMM from '@meteora-ag/dlmm';
 
 import { getPool } from '../../lib/db';
 import { getDaoByPda, getDaoByModeratorPda } from '../../lib/db/daos';
-import { fetchKeypair } from '../../lib/keyService';
+import { fetchAdminKeypair, AdminKeyError } from '../../lib/keyService';
 import { isValidTokenMintAddress } from '../../lib/validation';
 import { uploadProposalMetadata } from '../../lib/ipfs';
 import {
@@ -198,13 +198,20 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     // 1. Check mint authority - mint_auth_multisig must be authority for token_mint
-    const mintAuthCheck = await checkMintAuthority(connection, dao.mint_auth_multisig, dao.token_mint);
-    if (isDaoReadinessError(mintAuthCheck)) {
-      return res.status(400).json({
-        error: 'DAO not ready for proposals',
-        reason: mintAuthCheck.reason,
-        check: 'mint_authority',
-      });
+    // Skip for legacy historical DAOs (ZC, SURFTEST, TESTSURF) - their mint authority
+    // was set up before migration and doesn't follow the standard pattern.
+    // SURF still requires the check as it was set up with proper mint authority.
+    const LEGACY_DAOS_SKIP_MINT_CHECK = ['ZC', 'SURFTEST', 'TESTSURF'];
+    const skipMintCheck = LEGACY_DAOS_SKIP_MINT_CHECK.includes(dao.dao_name);
+    if (!skipMintCheck) {
+      const mintAuthCheck = await checkMintAuthority(connection, dao.mint_auth_multisig, dao.token_mint);
+      if (isDaoReadinessError(mintAuthCheck)) {
+        return res.status(400).json({
+          error: 'DAO not ready for proposals',
+          reason: mintAuthCheck.reason,
+          check: 'mint_authority',
+        });
+      }
     }
 
     // 2. For parent DAOs only: Check token matches pool base token
@@ -274,7 +281,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // ========================================================================
 
     // Get admin keypair for liquidity operations (from parent if child DAO)
-    const adminKeypair = await fetchKeypair(liquidityDao.admin_key_idx);
+    const adminKeypair = await fetchAdminKeypair(liquidityDao.admin_key_idx, liquidityDao.dao_name);
     const adminPubkey = adminKeypair.publicKey;
 
     // Determine pool type and withdrawal percentage (from DAO settings)
@@ -726,6 +733,10 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     });
   } catch (error) {
     console.error('Error creating proposal:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({ error: 'Failed to create proposal', details: String(error) });
   }
 });
@@ -844,12 +855,8 @@ router.post('/finalize-proposal', async (req: Request, res: Response) => {
       });
     }
 
-    if (dao.admin_key_idx === undefined || dao.admin_key_idx === null) {
-      return res.status(500).json({ error: 'DAO has no admin key index' });
-    }
-
-    // Get admin keypair
-    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
+    // Get admin keypair (handles both key-service and historical DAOs)
+    const adminKeypair = await fetchAdminKeypair(dao.admin_key_idx, dao.dao_name);
 
     // Create provider and client with admin keypair
     const provider = createProvider(adminKeypair);
@@ -900,6 +907,10 @@ router.post('/finalize-proposal', async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error('Error finalizing proposal:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({ error: 'Failed to finalize proposal', details: String(error) });
   }
 });
@@ -986,12 +997,8 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
       console.log(`Child DAO detected, using parent DAO for redemption: ${liquidityDao.dao_name}`);
     }
 
-    if (liquidityDao.admin_key_idx === undefined || liquidityDao.admin_key_idx === null) {
-      return res.status(500).json({ error: 'DAO has no admin key index' });
-    }
-
-    // Get admin keypair (from parent if child DAO)
-    const adminKeypair = await fetchKeypair(liquidityDao.admin_key_idx);
+    // Get admin keypair (from parent if child DAO, handles historical DAOs)
+    const adminKeypair = await fetchAdminKeypair(liquidityDao.admin_key_idx, liquidityDao.dao_name);
 
     // Create provider and client with admin keypair
     const provider = createProvider(adminKeypair);
@@ -1069,6 +1076,10 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Error redeeming liquidity:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({
       error: 'Failed to redeem liquidity',
       details: String(error)
@@ -1165,10 +1176,6 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
       console.log(`Child DAO detected, using parent DAO for liquidity: ${liquidityDao.dao_name}`);
     }
 
-    if (liquidityDao.admin_key_idx === undefined || liquidityDao.admin_key_idx === null) {
-      return res.status(500).json({ error: 'DAO has no admin key index' });
-    }
-
     if (!liquidityDao.pool_address) {
       return res.status(500).json({ error: 'DAO has no pool address' });
     }
@@ -1177,8 +1184,8 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'DAO has no token mint' });
     }
 
-    // Get admin keypair (from parent if child DAO)
-    const adminKeypair = await fetchKeypair(liquidityDao.admin_key_idx);
+    // Get admin keypair (from parent if child DAO, handles historical DAOs)
+    const adminKeypair = await fetchAdminKeypair(liquidityDao.admin_key_idx, liquidityDao.dao_name);
     const adminPubkey = adminKeypair.publicKey;
 
     console.log(`Deposit-back for proposal ${proposal_pda}`);
@@ -1372,6 +1379,10 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Error in deposit-back:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({
       error: 'Failed to complete deposit-back',
       details: String(error)
@@ -1428,11 +1439,8 @@ router.post('/initialize-dlmm-position', async (req: Request, res: Response) => 
     console.log(`  Pool: ${dao.pool_address}`);
     console.log(`  Admin: ${dao.admin_wallet}`);
 
-    // Get admin keypair
-    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
-    if (!adminKeypair) {
-      return res.status(500).json({ error: 'Failed to derive admin keypair' });
-    }
+    // Get admin keypair (handles both key-service and historical DAOs)
+    const adminKeypair = await fetchAdminKeypair(dao.admin_key_idx, dao.dao_name);
 
     // Call deposit/build endpoint (cleanup mode - uses LP owner balances)
     const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -1515,6 +1523,10 @@ router.post('/initialize-dlmm-position', async (req: Request, res: Response) => 
 
   } catch (error) {
     console.error('Error initializing DLMM position:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({
       error: 'Failed to initialize DLMM position',
       details: String(error)
@@ -1578,12 +1590,8 @@ router.post('/crank-twap', async (req: Request, res: Response) => {
       });
     }
 
-    if (dao.admin_key_idx === undefined || dao.admin_key_idx === null) {
-      return res.status(500).json({ error: 'DAO has no admin key index' });
-    }
-
-    // Get admin keypair to pay for transactions
-    const adminKeypair = await fetchKeypair(dao.admin_key_idx);
+    // Get admin keypair to pay for transactions (handles both key-service and historical DAOs)
+    const adminKeypair = await fetchAdminKeypair(dao.admin_key_idx, dao.dao_name);
 
     // Create provider and client with admin keypair
     const provider = createProvider(adminKeypair);
@@ -1705,6 +1713,10 @@ router.post('/crank-twap', async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error('Error cranking TWAP:', error);
+    if (error instanceof AdminKeyError) {
+      console.error('Admin key error details:', error.internalDetails);
+      return res.status(503).json({ error: error.clientMessage });
+    }
     res.status(500).json({ error: 'Failed to crank TWAP', details: String(error) });
   }
 });
