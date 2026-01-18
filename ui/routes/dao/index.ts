@@ -74,6 +74,9 @@ router.use('/', proposersRouter);
 // ============================================================================
 
 router.post('/proposal', requireSignedHash, async (req: Request, res: Response) => {
+  const { wallet, dao_pda, title } = req.body;
+  console.log(`[POST /dao/proposal] wallet=${wallet?.slice(0, 8)}... dao=${dao_pda?.slice(0, 8)}... title="${title?.slice(0, 30)}..."`);
+
   try {
     const {
       wallet,
@@ -85,39 +88,45 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       options,
     } = req.body;
 
+    // Helper to log and return errors
+    const returnError = (status: number, body: Record<string, any>) => {
+      console.log(`[POST /dao/proposal] ERROR ${status}:`, JSON.stringify(body));
+      return res.status(status).json(body);
+    };
+
     // Validate required fields
     if (!dao_pda || !title || !description || !length_secs || warmup_secs === undefined || !options) {
-      return res.status(400).json({
+      return returnError(400, {
         error: 'Missing required fields: dao_pda, title, description, length_secs, warmup_secs, options'
       });
     }
 
     // Validate title and description length
     if (title.length > 128) {
-      return res.status(400).json({ error: 'Title must be 128 characters or less' });
+      return returnError(400, { error: 'Title must be 128 characters or less' });
     }
     if (description.length > 1024) {
-      return res.status(400).json({ error: 'Description must be 1024 characters or less' });
+      return returnError(400, { error: 'Description must be 1024 characters or less' });
     }
 
     // Validate options
     if (!Array.isArray(options) || options.length < 2 || options.length > 6) {
-      return res.status(400).json({ error: 'Options must be an array with 2-6 items' });
+      return returnError(400, { error: 'Options must be an array with 2-6 items' });
     }
 
     // Validate length_secs is a positive number (range validation after DAO lookup)
     if (typeof length_secs !== 'number' || length_secs <= 0) {
-      return res.status(400).json({ error: 'length_secs must be a positive number' });
+      return returnError(400, { error: 'length_secs must be a positive number' });
     }
 
     // Validate warmup_secs if provided (must be positive and <= 80% of length_secs)
     if (warmup_secs !== undefined) {
       if (typeof warmup_secs !== 'number' || warmup_secs <= 0) {
-        return res.status(400).json({ error: 'warmup_secs must be a positive number' });
+        return returnError(400, { error: 'warmup_secs must be a positive number' });
       }
       const maxWarmup = Math.floor(length_secs * 0.8);
       if (warmup_secs > maxWarmup) {
-        return res.status(400).json({
+        return returnError(400, {
           error: `warmup_secs must not exceed 80% of length_secs (max: ${maxWarmup} seconds)`,
         });
       }
@@ -128,11 +137,11 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // Fetch DAO
     const dao = await getDaoByPda(pool, dao_pda);
     if (!dao) {
-      return res.status(404).json({ error: 'DAO not found' });
+      return returnError(404, { error: 'DAO not found' });
     }
 
     if (!dao.moderator_pda) {
-      return res.status(500).json({ error: 'DAO has no moderator PDA' });
+      return returnError(500, { error: 'DAO has no moderator PDA' });
     }
 
     // Validate proposal duration based on proposer role
@@ -151,7 +160,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       const minDuration = ONE_MINUTE;
       const maxDuration = 7 * ONE_DAY;
       if (length_secs < minDuration || length_secs > maxDuration) {
-        return res.status(400).json({
+        return returnError(400, {
           error: 'Invalid proposal duration',
           reason: `DAO owner can create proposals from 1 minute to 7 days (${minDuration}-${maxDuration} seconds)`,
           provided: length_secs,
@@ -162,7 +171,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       const minDuration = ONE_DAY;
       const maxDuration = 4 * ONE_DAY;
       if (length_secs < minDuration || length_secs > maxDuration) {
-        return res.status(400).json({
+        return returnError(400, {
           error: 'Invalid proposal duration',
           reason: `Proposers can create proposals from 24 hours to 4 days (${minDuration}-${maxDuration} seconds)`,
           provided: length_secs,
@@ -187,7 +196,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       dao.token_mint
     );
     if (!proposerAuthResult.isAuthorized) {
-      return res.status(403).json({
+      return returnError(403, {
         error: 'Not authorized to propose',
         reason: proposerAuthResult.reason,
         check: 'proposer_authorization',
@@ -209,7 +218,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     if (!skipMintCheck) {
       const mintAuthCheck = await checkMintAuthority(connection, dao.mint_auth_multisig, dao.token_mint);
       if (isDaoReadinessError(mintAuthCheck)) {
-        return res.status(400).json({
+        return returnError(400, {
           error: 'DAO not ready for proposals',
           reason: mintAuthCheck.reason,
           check: 'mint_authority',
@@ -221,7 +230,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     if (dao.dao_type === 'parent') {
       const tokenPoolCheck = await checkTokenMatchesPoolBase(connection, dao.token_mint, dao.pool_address, dao.pool_type);
       if (isDaoReadinessError(tokenPoolCheck)) {
-        return res.status(400).json({
+        return returnError(400, {
           error: 'DAO not ready for proposals',
           reason: tokenPoolCheck.reason,
           check: 'token_pool_match',
@@ -238,7 +247,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
     const lpCheck = await checkAdminHoldsLP(connection, liquidityDao.admin_wallet, liquidityDao.pool_address, liquidityDao.pool_type);
     if (isDaoReadinessError(lpCheck)) {
-      return res.status(400).json({
+      return returnError(400, {
         error: 'DAO not ready for proposals',
         reason: lpCheck.reason,
         check: 'admin_lp_holdings',
@@ -248,7 +257,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // 4. Check no active proposal for this moderator
     const activeProposalCheck = await checkNoActiveProposal(connection, dao.moderator_pda, MOCK_MODE);
     if (isDaoReadinessError(activeProposalCheck)) {
-      return res.status(400).json({
+      return returnError(400, {
         error: 'DAO not ready for proposals',
         reason: activeProposalCheck.reason,
         check: 'active_proposal',
@@ -261,7 +270,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     const adminBalance = await connection.getBalance(new PublicKey(liquidityDao.admin_wallet));
     const adminBalanceSol = adminBalance / 1e9;
     if (adminBalanceSol < MIN_ADMIN_BALANCE_SOL) {
-      return res.status(400).json({
+      return returnError(400, {
         error: 'DAO not ready for proposals',
         reason: `Admin wallet has insufficient SOL balance: ${adminBalanceSol.toFixed(4)} SOL. Minimum required: ${MIN_ADMIN_BALANCE_SOL} SOL. Use the fund-admin-wallet script to fund it.`,
         check: 'admin_wallet_balance',
@@ -310,7 +319,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
     if (!withdrawBuildResponse.ok) {
       const error = await withdrawBuildResponse.json().catch(() => ({}));
-      return res.status(500).json({
+      return returnError(500, {
         error: 'Failed to build withdrawal transaction',
         details: (error as any).error || withdrawBuildResponse.statusText,
         check: 'liquidity_withdrawal'
@@ -359,7 +368,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       signedTxBase58 = bs58.encode(unsignedTx.serialize({ requireAllSignatures: false }));
       console.log('Signed DAMM transaction');
     } else {
-      return res.status(500).json({
+      return returnError(500, {
         error: 'No transaction(s) returned from withdrawal build',
         check: 'liquidity_withdrawal'
       });
@@ -378,7 +387,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
     if (!withdrawConfirmResponse.ok) {
       const error = await withdrawConfirmResponse.json().catch(() => ({}));
-      return res.status(500).json({
+      return returnError(500, {
         error: 'Failed to confirm withdrawal transaction',
         details: (error as any).error || withdrawConfirmResponse.statusText,
         check: 'liquidity_withdrawal'
@@ -441,7 +450,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       console.log(`Uploaded proposal metadata to IPFS: ${metadataCid}`);
     } catch (error) {
       console.error('Failed to upload proposal metadata to IPFS:', error);
-      return res.status(500).json({
+      return returnError(500, {
         error: 'Failed to upload proposal metadata to IPFS',
         details: String(error),
       });
@@ -738,8 +747,10 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     console.error('Error creating proposal:', error);
     if (error instanceof AdminKeyError) {
       console.error('Admin key error details:', error.internalDetails);
+      console.log(`[POST /dao/proposal] ERROR 503:`, JSON.stringify({ error: error.clientMessage }));
       return res.status(503).json({ error: error.clientMessage });
     }
+    console.log(`[POST /dao/proposal] ERROR 500:`, JSON.stringify({ error: 'Failed to create proposal', details: String(error) }));
     res.status(500).json({ error: 'Failed to create proposal', details: String(error) });
   }
 });
