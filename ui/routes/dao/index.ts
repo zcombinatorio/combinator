@@ -138,13 +138,16 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // Validate proposal duration based on proposer role
     // DAO owner: 1 minute to 7 days
     // Others (whitelist/token threshold): 24 hours to 4 days
+    // Test DAOs: allow short durations for all proposers
+    const TEST_DAOS = ['SURFTEST', 'TESTSURF'];
+    const isTestDao = TEST_DAOS.includes(dao.dao_name);
     const isOwner = wallet === dao.owner_wallet;
     const ONE_MINUTE = 60;
     const ONE_HOUR = 3600;
     const ONE_DAY = 24 * ONE_HOUR;
 
-    if (isOwner) {
-      // Owner: 1 minute to 7 days
+    if (isOwner || isTestDao) {
+      // Owner or test DAO: 1 minute to 7 days
       const minDuration = ONE_MINUTE;
       const maxDuration = 7 * ONE_DAY;
       if (length_secs < minDuration || length_secs > maxDuration) {
