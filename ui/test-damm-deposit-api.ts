@@ -1,5 +1,5 @@
 /*
- * Z Combinator - DAMM Deposit API Test Script
+ * Combinator - DAMM Deposit API Test Script
  *
  * This script tests the DAMM liquidity deposit API endpoints:
  * 1. POST /damm/deposit/build - Builds unsigned deposit transaction

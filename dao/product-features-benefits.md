@@ -80,3 +80,11 @@ Include product vision, features, benefits
 - Create a User Story describing what job the product will do
 - Pass/Fail tests identified
 - Pass decision market
+
+---
+
+## Contact
+
+Questions or feature requests? Reach out to the Combinator team:
+- **Telegram Group:** https://t.me/+Ao05jBnpEE0yZGVh
+- **Direct:** https://t.me/handsdiff

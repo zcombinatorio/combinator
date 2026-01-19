@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Solana Token Launchpad
+ * Combinator - Futarchy infrastructure for your project.
  * Copyright (C) 2026 Spice Finance Inc.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,6 +14,10 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Questions or feature requests? Reach out:
+ * - Telegram Group: https://t.me/+Ao05jBnpEE0yZGVh
+ * - Direct: https://t.me/handsdiff
  */
 
 import { Router, Request, Response } from 'express';
@@ -49,6 +53,7 @@ import {
 import queriesRouter from './queries';
 import creationRouter from './creation';
 import proposersRouter from './proposers';
+import tradingRouter from './trading';
 import { daoLimiter, getConnection, createProvider } from './shared';
 
 const router = Router();
@@ -61,6 +66,9 @@ router.use(daoLimiter);
 router.use('/', queriesRouter);
 router.use('/', creationRouter);
 router.use('/', proposersRouter);
+
+// NOTE: tradingRouter is mounted AFTER POST /proposal to prevent route interception
+// See end of POST /proposal handler
 
 // ============================================================================
 // Proposal Lifecycle Routes
@@ -757,6 +765,10 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     res.status(500).json({ error: 'Failed to create proposal', details: String(error) });
   }
 });
+
+// Mount trading router AFTER POST /proposal to prevent route interception
+// If tradingRouter had a POST / or POST /:something, it would intercept proposal creation
+router.use('/proposal', tradingRouter);
 
 // ============================================================================
 // ============================================================================

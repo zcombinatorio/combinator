@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Meteora DAMM v2 Liquidity Deposit Test Script
+ * Combinator - Meteora DAMM v2 Liquidity Deposit Test Script
  *
  * This script receives tokens from a manager wallet and deposits as much
  * liquidity as possible into a Meteora DAMM v2 pool position.
