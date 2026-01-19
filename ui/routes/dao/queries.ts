@@ -265,9 +265,10 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
           const proposalAccount = await readClient.fetchProposal(proposalPda);
           const parsedState = futarchy.parseProposalState(proposalAccount.state);
 
-          const proposalLength = proposalAccount.config.length;
+          // On-chain length is in minutes, convert to seconds then milliseconds
+          const proposalLengthMinutes = proposalAccount.config.length;
           createdAt = proposalAccount.createdAt.toNumber() * 1000;
-          endsAt = createdAt + (proposalLength * 1000);
+          endsAt = createdAt + (proposalLengthMinutes * 60 * 1000);
           metadataCid = proposalAccount.metadata || null;
           vault = proposalAccount.vault.toBase58();
           marketBias = proposalAccount.config.marketBias;
@@ -277,7 +278,7 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
           } else if (parsedState.state === 'resolved') {
             status = 'Resolved';
             winningIndex = parsedState.winningIdx;
-            finalizedAt = Date.now();
+            finalizedAt = endsAt;  // Use endsAt as proxy for finalization time
           } else {
             status = 'Pending';
           }
@@ -417,9 +418,11 @@ router.get('/:daoPda/proposal/live', async (req: Request, res: Response) => {
           continue;
         }
 
-        const proposalLength = proposalAccount.config.length;
+        // On-chain length is in minutes, convert to seconds for API
+        const proposalLengthMinutes = proposalAccount.config.length;
+        const proposalLengthSecs = proposalLengthMinutes * 60;
         const createdAt = proposalAccount.createdAt.toNumber() * 1000;
-        const endsAt = createdAt + (proposalLength * 1000);
+        const endsAt = createdAt + (proposalLengthSecs * 1000);
         const warmupDuration = proposalAccount.config.warmupDuration;
         const warmupEndsAt = createdAt + (warmupDuration * 1000);
 
@@ -446,7 +449,7 @@ router.get('/:daoPda/proposal/live', async (req: Request, res: Response) => {
           metadataCid,
           daoPda,
           config: {
-            length: proposalLength,
+            length: proposalLengthSecs,  // Return in seconds for API consumers
             warmupDuration,
             marketBias: proposalAccount.config.marketBias,
             fee: proposalAccount.config.fee,
@@ -547,9 +550,10 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
               const proposalAccount = await readClient.fetchProposal(proposalPda);
               const parsedState = futarchy.parseProposalState(proposalAccount.state);
 
-              const proposalLength = proposalAccount.config.length;
+              // On-chain length is in minutes, convert to seconds then milliseconds
+              const proposalLengthMinutes = proposalAccount.config.length;
               createdAt = proposalAccount.createdAt.toNumber() * 1000;
-              endsAt = createdAt + (proposalLength * 1000);
+              endsAt = createdAt + (proposalLengthMinutes * 60 * 1000);
               metadataCid = proposalAccount.metadata || null;
               vault = proposalAccount.vault.toBase58();
               marketBias = proposalAccount.config.marketBias;
@@ -559,7 +563,7 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
               } else if (parsedState.state === 'resolved') {
                 status = 'Resolved';
                 winningIndex = parsedState.winningIdx;
-                finalizedAt = Date.now();
+                finalizedAt = endsAt;  // Use endsAt as proxy for finalization time
               } else {
                 status = 'Pending';
               }
@@ -664,9 +668,11 @@ router.get('/proposal/:proposalPda', async (req: Request, res: Response) => {
       winningIndex = parsedState.winningIdx;
     }
 
-    const proposalLength = proposalAccount.config.length;
+    // On-chain length is in minutes, convert to seconds for API
+    const proposalLengthMinutes = proposalAccount.config.length;
+    const proposalLengthSecs = proposalLengthMinutes * 60;
     const createdAt = proposalAccount.createdAt.toNumber() * 1000;
-    const endsAt = createdAt + (proposalLength * 1000);
+    const endsAt = createdAt + (proposalLengthSecs * 1000);
     const warmupDuration = proposalAccount.config.warmupDuration;
     const warmupEndsAt = createdAt + (warmupDuration * 1000);
     const metadataCid = proposalAccount.metadata || null;
@@ -709,7 +715,7 @@ router.get('/proposal/:proposalPda', async (req: Request, res: Response) => {
       metadataCid,
       daoPda,
       config: {
-        length: proposalLength,
+        length: proposalLengthSecs,  // Return in seconds for API consumers
         warmupDuration,
         marketBias: proposalAccount.config.marketBias,
         fee: proposalAccount.config.fee,

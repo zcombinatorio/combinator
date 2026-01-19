@@ -83,7 +83,7 @@ const HISTORICAL_PROPOSALS: Record<string, HistoricalProposal[]> = {
   // TEST DAOs - Migrate these first for testing
   // ==========================================================================
   SURFTEST: [
-    // Moderator ID: 4, 23 proposals total
+    // Moderator ID: 4, 22 proposals migrated (legacy 29 skipped - exceeded MAX_OPTIONS)
     { legacyId: 1, title: 'test', description: 'test', options: ['No', 'Yes'], winningIdx: 0, length: 600, createdAt: 1765569540 },
     { legacyId: 2, title: 'test', description: 'test', options: ['No', 'yes'], winningIdx: 0, length: 600, createdAt: 1765847227 },
     { legacyId: 3, title: 'test', description: 'test', options: ['No', 'yes'], winningIdx: 1, length: 120, createdAt: 1765850879 },
@@ -104,7 +104,7 @@ const HISTORICAL_PROPOSALS: Record<string, HistoricalProposal[]> = {
     { legacyId: 18, title: 'test18', description: 'test18', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1766710847 },
     { legacyId: 19, title: 'test19', description: 'test19', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1766710963 },
     { legacyId: 26, title: 'test28', description: 'test28', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1767374353 },
-    { legacyId: 29, title: 'test29', description: 'test29', options: ['No', 'Yes', 'Yes2', 'Yes3', 'Yes4', 'Yes5', 'Yes6'], winningIdx: 0, length: 60, createdAt: 1767375252 },
+    // NOTE: legacyId 29 skipped - had 7 options, exceeds MAX_OPTIONS limit
     { legacyId: 30, title: 'test30', description: 'test30', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1767996387 },
     { legacyId: 31, title: 'test31', description: 'test31', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1768068180 },
   ],
@@ -170,8 +170,80 @@ const HISTORICAL_PROPOSALS: Record<string, HistoricalProposal[]> = {
   ],
   SURF: [
     // Moderator ID: 6, 2 proposals total
-    { legacyId: 9, title: 'SURF-001: Revenue Sharing vs Growth', description: 'Should SurfCash distribute quarterly net transaction fees to $SURF stakers, or reinvest 100% into growth?', options: ['No', '20% - Balanced approach', '30% - Aggressive distribution', '40% - Maximum distribution'], winningIdx: 2, length: 432000, createdAt: 1767298161 },
-    { legacyId: 10, title: 'SURF-002: $50K Monthly Operations Budget', description: 'Increase monthly operations budget from $25K to $50K starting January 2026.', options: ['No', 'Yes'], winningIdx: 1, length: 172800, createdAt: 1768070833 },
+    {
+      legacyId: 9,
+      title: 'SURF-001: Revenue Sharing vs Growth',
+      description: `**The Decision**
+
+Should SurfCash distribute quarterly net transaction fees to $SURF stakers, or reinvest 100% into growth?
+
+**Revenue Model**
+SurfCash generates revenue from multiple streams:
+
+Transaction fees (0.5%): $6.00 per user/month
+FX spread (0.15% on 85%): $1.55 per user/month
+Yield spread (3% on 60% of balance): $3.75 per user/month
+Premium tier (15% adoption): $1.50 per user/month
+
+Total: ~$12.80 MRPU
+At 10,000 users: $1.5M ARR
+
+Case for Revenue Sharing:
+
+- **Creates immediate utility.** $SURF becomes productive - holders receive real USDC distributions from multiple revenue streams, not just governance rights.
+
+- **Attracts long-term holders.** Users seeking distributions stake and hold vs speculators who flip. Better protocol stability.
+
+- **First mover advantage.** We'd be the first crypto-to-fiat bank distributing revenue to token holders. This creates category-defining positioning.
+
+**Market validation.** If 20-30% wins, traders believe distributions create more value than reinvestment.
+
+Case for Growth:
+
+- **Capital compounds faster.** Revenue reinvested into user acquisition, product development, and expansion creates more long-term value than current distributions.
+- **Still building.** At current scale, every dollar matters for competitive advantages: faster settlement, lower fees, better UX, new corridors.
+Multiple revenue streams need scale. FX spreads and yield spreads only become meaningful at higher volumes. Growing the user base maximizes all revenue streams.
+
+- **Future flexibility.** Growth now doesn't preclude revenue sharing later. We revisit in 6 months as revenue scales.
+
+- **Market validation.** If 0% wins, traders value aggressive expansion over immediate distributions.
+
+Implementation (If Revenue Sharing Passes)
+**Timeline:**
+
+Weeks 1-2: Proposal settles
+Weeks 3-6: Build staking platform and go live
+
+**Staking:**
+
+Minimum: 75k $SURF
+Cooldown: 7 days
+Distributions: Weekly USDC, pro-rata
+Treasury: 2/3 multi-sig
+
+**Implementation (If Growth Wins)**
+
+Transparency: Full capital allocation in biweekly reports - user acquisition, development milestones.
+Accountability: Execute on growth or Q3 shifts to revenue sharing.
+
+Discussion: https://t.me/getsurfcash
+Trading: 5 days
+Implementation: 4-6 weeks post-settlement`,
+      options: ['No', '20% - Balanced approach', '30% - Aggressive distribution', '40% - Maximum distribution'],
+      winningIdx: 2,
+      length: 432000,
+      createdAt: 1767298161,
+    },
+    {
+      legacyId: 10,
+      title: 'SURF-002: $50K Monthly Operations Budget',
+      // Note: Description has trailing spaces on some lines (preserved from DB)
+      description: "**Author**: Akshat\n\n**The Ask**\n\nIncrease monthly operations budget from $25K to $50K starting January 2026.\n\nTrading Period: 2 days\n\n**Why Now**\n\nApple has approved us on App Store, the iOS app will go live this month.\n\nWe are launching 12 countries in Q1 itself: Brazil, Mexico, Colombia, Argentina, Nigeria, Zambia, Thailand, Indonesia, USA, Canada, Philippines, Vietnam.\n\nWe have 700 verified TestFlight users making real payments.\n\nWe generated $60K revenue from trading fees in one month. The protocol generates real revenue.\n\nThe $25K budget was set for 2 countries. We are launching in 12.\n\n**What This Funds**\n\nThis budget will fund market expansion and user growth across all the 12 countries. \nIt will be used to building awareness and ecosystem reach at scale. \nIt covers product development and infrastructure scaling. It supports local operations, vendor partnerships, and community activation.\n\n**The Opportunity**\n\nThe product is already working, plus Apple has approved us. \n\nWe have a revenue of $60K/month from trading fees alone.\n\nFirst-mover advantage matters across 12 new markets. Capital deployed now will accelerate everything. \nI'll continue to publish full details in our biweekly reports.\n\nThe market will decide.\nProposal: SURF-002\nDiscussion: https://t.me/getsurfcash\nTrading period: 2 days\nImplementation: We will implement this immediately upon settlement",
+      options: ['No', 'Yes'],
+      winningIdx: 1,
+      length: 172800,
+      createdAt: 1768070833,
+    },
   ],
 };
 
@@ -235,9 +307,12 @@ async function migrateProposal(
   }
 
   // Build and send transaction
+  // Convert length from seconds (database) to minutes (on-chain)
+  const lengthMinutes = Math.ceil(proposal.length / 60);
+
   console.log(`    Building transaction...`);
   console.log(`      winningIdx: ${proposal.winningIdx} (${proposal.options[proposal.winningIdx]})`);
-  console.log(`      length: ${proposal.length} seconds`);
+  console.log(`      length: ${proposal.length} seconds (${lengthMinutes} minutes on-chain)`);
   console.log(`      createdAt: ${proposal.createdAt}`);
   console.log(`      numOptions: ${proposal.options.length}`);
 
@@ -257,7 +332,7 @@ async function migrateProposal(
     moderatorPda,
     proposal.options.length,  // numOptions
     proposal.winningIdx,
-    proposal.length,
+    lengthMinutes,            // length in minutes
     new BN(proposal.createdAt),
     metadataCid
   );
@@ -319,18 +394,24 @@ async function migrateProposalsForDao(
   // Sort proposals by legacy ID to maintain original creation order
   const sortedProposals = [...proposals].sort((a, b) => a.legacyId - b.legacyId);
 
-  // Check current on-chain counter to determine how many already migrated
+  // Check current on-chain counter to determine starting ID for new proposals
   const startingOnChainId = moderator.proposalIdCounter;
 
-  if (startingOnChainId > 0) {
+  // If the array has fewer items than startingOnChainId, we've manually curated
+  // the list to only include remaining proposals - migrate all of them
+  let proposalsToMigrate: HistoricalProposal[];
+  if (sortedProposals.length <= startingOnChainId) {
+    // Curated list - migrate all proposals in the array
+    console.log(`  ⚠ On-chain counter is ${startingOnChainId}, array has ${sortedProposals.length} items (curated list)`);
+    proposalsToMigrate = sortedProposals;
+  } else {
+    // Full list - skip already-migrated proposals based on position
     console.log(`  ⚠ On-chain counter is ${startingOnChainId}, skipping first ${startingOnChainId} proposals`);
+    proposalsToMigrate = sortedProposals.slice(startingOnChainId);
   }
 
-  // Skip already-migrated proposals (based on position, not legacy ID)
-  const proposalsToMigrate = sortedProposals.slice(startingOnChainId);
-
-  console.log(`  Total proposals: ${sortedProposals.length}`);
-  console.log(`  Already migrated: ${startingOnChainId}`);
+  console.log(`  Total proposals in array: ${sortedProposals.length}`);
+  console.log(`  On-chain counter: ${startingOnChainId}`);
   console.log(`  Proposals to migrate: ${proposalsToMigrate.length}`);
 
   const results: Array<{ legacyId: number; onChainId: number; success: boolean; error?: string }> = [];
@@ -348,6 +429,12 @@ async function migrateProposalsForDao(
       );
       results.push({ legacyId: proposal.legacyId, onChainId: result.onChainId, success: true });
       currentOnChainId++;
+
+      // Wait for RPC to propagate the state change before next proposal
+      if (proposalsToMigrate.indexOf(proposal) < proposalsToMigrate.length - 1) {
+        console.log(`    Waiting 2s for RPC propagation...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
     } catch (error) {
       console.error(`    ❌ Failed: ${(error as Error).message}`);
       results.push({

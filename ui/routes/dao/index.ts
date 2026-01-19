@@ -526,16 +526,19 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       // warmupDuration must be <= 80% of length_secs (validated above)
       const warmupDuration = warmup_secs;
 
+      // Convert length from seconds (API) to minutes (on-chain)
+      const lengthMinutes = Math.ceil(length_secs / 60);
+
       const proposalParams = {
-        length: length_secs,
+        length: lengthMinutes,      // On-chain stores in minutes
         startingObservation,        // Calculated from liquidity ratio
         maxObservationDelta,        // 5% of starting observation
-        warmupDuration,             // Client-specified warmup period
+        warmupDuration,             // Client-specified warmup period (still in seconds)
         marketBias: 0,              // 0% (Pass Fail Gap)
         fee: 50,                    // 0.5% fee
       };
 
-      console.log(`Proposal params: length=${length_secs}s, warmup=${warmupDuration}s, obs=${startingObservation}, delta=${maxObservationDelta}`);
+      console.log(`Proposal params: length=${length_secs}s (${lengthMinutes}min on-chain), warmup=${warmupDuration}s, obs=${startingObservation}, delta=${maxObservationDelta}`);
 
       // Step 1: Initialize proposal
       console.log('Step 1: Initializing proposal...');
@@ -845,10 +848,11 @@ router.post('/finalize-proposal', async (req: Request, res: Response) => {
     }
 
     // Check if proposal has ended
+    // On-chain length is in minutes, convert to seconds for time calculation
     const now = Math.floor(Date.now() / 1000);
     const createdAt = Number(proposal.createdAt?.toString() || 0);
-    const length = Number(proposal.config?.length || 0);
-    const endTime = createdAt + length;
+    const lengthMinutes = Number(proposal.config?.length || 0);
+    const endTime = createdAt + (lengthMinutes * 60);
 
     if (now < endTime) {
       const remaining = endTime - now;

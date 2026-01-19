@@ -162,7 +162,7 @@ const HISTORICAL_PROPOSALS: Record<string, HistoricalProposal[]> = {
     { legacyId: 18, title: 'test18', description: 'test18', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1766710847 },
     { legacyId: 19, title: 'test19', description: 'test19', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1766710963 },
     { legacyId: 26, title: 'test28', description: 'test28', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1767374353 },
-    { legacyId: 29, title: 'test29', description: 'test29', options: ['No', 'Yes', 'Yes2', 'Yes3', 'Yes4', 'Yes5', 'Yes6'], winningIdx: 0, length: 60, createdAt: 1767375252 },
+    // NOTE: legacyId 29 skipped - had 7 options, exceeds MAX_OPTIONS limit
     { legacyId: 30, title: 'test30', description: 'test30', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1767996387 },
     { legacyId: 31, title: 'test31', description: 'test31', options: ['No', 'Yes'], winningIdx: 0, length: 60, createdAt: 1768068180 },
   ],
@@ -359,9 +359,10 @@ async function verifyProposal(
       errors.push(`#${onChainId} (legacy ${expected.legacyId}): winningIdx is ${winningIdx}, expected ${expected.winningIdx}`);
     }
 
-    // Verify length (stored in proposal.config.length)
-    if (proposal.config.length !== expected.length) {
-      errors.push(`#${onChainId} (legacy ${expected.legacyId}): length is ${proposal.config.length}, expected ${expected.length}`);
+    // Verify length (on-chain stores in minutes, expected is in seconds)
+    const expectedLengthMinutes = Math.ceil(expected.length / 60);
+    if (proposal.config.length !== expectedLengthMinutes) {
+      errors.push(`#${onChainId} (legacy ${expected.legacyId}): length is ${proposal.config.length} min, expected ${expectedLengthMinutes} min (${expected.length} sec)`);
     }
 
     // Verify createdAt

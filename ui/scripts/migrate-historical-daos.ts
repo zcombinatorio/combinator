@@ -332,7 +332,8 @@ async function migrateDao(
     new PublicKey(config.cosigner),
     new PublicKey(config.pool),
     getPoolType(config.poolType),
-    config.proposalIdCounter
+    config.proposalIdCounter,
+    new PublicKey(config.adminWallet)  // Set admin to intended wallet, not signer
   );
 
   console.log(`Sending transaction...`);
