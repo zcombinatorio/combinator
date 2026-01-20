@@ -31,6 +31,7 @@ import { upsertProposalDaoMapping } from '../../lib/db/trading-activities';
 import { fetchAdminKeypair, AdminKeyError } from '../../lib/keyService';
 import { isValidTokenMintAddress } from '../../lib/validation';
 import { uploadProposalMetadata } from '../../lib/ipfs';
+import { getPriorityFee, PriorityFeeMode } from '../../lib/priorityFee';
 import {
   requireSignedHash,
   incrementProposalCount,
@@ -702,14 +703,18 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         // Extract the instruction from the builder
         const launchInstruction = await launchResult.builder.instruction();
 
-        // Add compute budget instruction (SDK defaults to 500k CUs via preInstructions,
-        // but .instruction() doesn't include them - we must add manually)
+        // Add compute budget instructions
         const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 });
+
+        // Get dynamic priority fee based on network conditions
+        const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+        const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee });
+        console.log(`  Using priority fee: ${priorityFee} microlamports`);
 
         // Build versioned transaction using the ALT
         const { versionedTx, blockhash, lastValidBlockHeight } = await client.buildVersionedTx(
           adminKeypair.publicKey,
-          [computeBudgetIx, launchInstruction],
+          [computeBudgetIx, priorityFeeIx, launchInstruction],
           altAddress,
         );
 
@@ -1049,9 +1054,16 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
     // This avoids exceeding the 1232 byte transaction size limit
     if (proposal.numOptions >= 3) {
       console.log(`  Using versioned transaction (${proposal.numOptions} options)`);
+
+      // Get dynamic priority fee based on network conditions
+      const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+      console.log(`  Using priority fee: ${priorityFee} microlamports`);
+
       const result = await client.redeemLiquidityVersioned(
         adminKeypair.publicKey,
-        proposalPubkey
+        proposalPubkey,
+        undefined, // altAddress - let SDK create if needed
+        { priorityFeeMicroLamports: priorityFee }
       );
 
       // Sign the versioned transaction with admin keypair
@@ -1073,8 +1085,13 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
       const instruction = await builder.instruction();
       const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 });
 
+      // Get dynamic priority fee based on network conditions
+      const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+      const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee });
+      console.log(`  Using priority fee: ${priorityFee} microlamports`);
+
       const redeemTx = new Transaction();
-      redeemTx.add(computeBudgetIx, instruction);
+      redeemTx.add(computeBudgetIx, priorityFeeIx, instruction);
 
       const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
       redeemTx.recentBlockhash = blockhash;
