@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Solana Token Launchpad
+ * Combinator - Futarchy infrastructure for your project.
  * Copyright (C) 2026 Spice Finance Inc.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,6 +14,10 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Questions or feature requests? Reach out:
+ * - Telegram Group: https://t.me/+Ao05jBnpEE0yZGVh
+ * - Direct: https://t.me/handsdiff
  */
 
 /**
@@ -52,7 +56,7 @@ const CONFIG = {
     '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2', // ZC DLMM pool
   ] as string[],
 
-  // API endpoint for fee claiming (zcombinator api-server)
+  // API endpoint for fee claiming (combinator api-server)
   FEE_CLAIM_API_BASE: process.env.FEE_CLAIM_API_BASE || 'https://api.zcombinator.io',
 };
 
@@ -212,7 +216,7 @@ async function fetchDaoPools(): Promise<DaoPoolsResult> {
 }
 
 // ============================================================================
-// DAMM FEE CLAIMING (via zcombinator api-server)
+// DAMM FEE CLAIMING (via combinator api-server)
 // ============================================================================
 
 async function prepareFeeClaim(
@@ -322,7 +326,7 @@ async function claimFeesFromDammPool(
 }
 
 // ============================================================================
-// DLMM FEE CLAIMING (via zcombinator api-server)
+// DLMM FEE CLAIMING (via combinator api-server)
 // ============================================================================
 
 async function prepareDlmmFeeClaim(

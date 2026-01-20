@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Solana Token Launchpad
+ * Combinator - Futarchy infrastructure for your project.
  * Copyright (C) 2026 Spice Finance Inc.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,6 +14,10 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Questions or feature requests? Reach out:
+ * - Telegram Group: https://t.me/+Ao05jBnpEE0yZGVh
+ * - Direct: https://t.me/handsdiff
  */
 
 import { Router, Request, Response } from 'express';

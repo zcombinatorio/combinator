@@ -1,8 +1,12 @@
 /*
- * Z Combinator - Solana Token Launchpad
+ * Combinator - Futarchy infrastructure for your project.
  * Copyright (C) 2026 Spice Finance Inc.
  *
  * Token utility functions for Token-2022 compatibility
+ *
+ * Questions or feature requests? Reach out:
+ * - Telegram Group: https://t.me/+Ao05jBnpEE0yZGVh
+ * - Direct: https://t.me/handsdiff
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';

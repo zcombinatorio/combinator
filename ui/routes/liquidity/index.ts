@@ -1,11 +1,15 @@
 /*
- * Z Combinator - Solana Token Launchpad
+ * Combinator - Futarchy infrastructure for your project.
  * Copyright (C) 2026 Spice Finance Inc.
  *
  * Liquidity Management Routes
  *
  * Combined router for both DLMM and DAMM liquidity management endpoints.
  * Use this for a unified import in api-server.ts
+ *
+ * Questions or feature requests? Reach out:
+ * - Telegram Group: https://t.me/+Ao05jBnpEE0yZGVh
+ * - Direct: https://t.me/handsdiff
  */
 
 import { Router } from 'express';
