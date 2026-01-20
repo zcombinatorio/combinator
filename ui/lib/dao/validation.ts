@@ -22,8 +22,9 @@ import { getMint, getAccount, getAssociatedTokenAddress } from '@solana/spl-toke
 import { futarchy } from '@zcomb/programs-sdk';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import DLMM from '@meteora-ag/dlmm';
-import { isProposer, getProposerThreshold } from '../db/daos';
+import { isProposer, getProposerThresholdConfig } from '../db/daos';
 import { getPool } from '../db';
+import { calculateAverageBalance } from '../historicalBalance';
 
 export interface ProposerAuthorizationResult {
   isAuthorized: boolean;
@@ -56,6 +57,8 @@ export function isDaoReadinessError(result: DaoReadinessResult): result is DaoRe
  * Authorization flow:
  * 1. Check if wallet is in DAO's DB whitelist (fast, no RPC)
  * 2. If not whitelisted AND threshold is set, check token balance (RPC call)
+ *    - If holding period is set, check time-weighted average balance via Helius
+ *    - Otherwise check current balance
  * 3. Otherwise deny (creator is always on whitelist by default)
  */
 export async function checkDaoProposerAuthorization(
@@ -71,11 +74,48 @@ export async function checkDaoProposerAuthorization(
     return { isAuthorized: true, authMethod: 'whitelist' };
   }
 
-  // 2. Get the DAO's token threshold setting
-  const threshold = await getProposerThreshold(pool, daoId);
+  // 2. Get the DAO's token threshold and holding period settings
+  const { threshold, holdingPeriodHours } = await getProposerThresholdConfig(pool, daoId);
 
   // 3. If threshold is set, check token balance
   if (threshold && threshold !== '0') {
+    const minBalanceRaw = BigInt(threshold);
+
+    // If holding period is set and Helius is configured, use time-weighted average
+    if (holdingPeriodHours && process.env.HELIUS_API_KEY) {
+      try {
+        const { averageBalance, currentBalance } = await calculateAverageBalance(
+          connection,
+          wallet,
+          tokenMint,
+          holdingPeriodHours
+        );
+
+        if (averageBalance >= minBalanceRaw) {
+          return { isAuthorized: true, authMethod: 'token_balance' };
+        }
+
+        return {
+          isAuthorized: false,
+          authMethod: null,
+          reason: `Wallet not whitelisted. Average balance over ${holdingPeriodHours}h (${averageBalance.toString()}) is below required threshold (${threshold}). Current balance: ${currentBalance.toString()}`,
+        };
+      } catch (error) {
+        if (error instanceof Error && error.message === 'HELIUS_RATE_LIMIT') {
+          return {
+            isAuthorized: false,
+            authMethod: null,
+            reason: 'Rate limited by Helius API. Please try again in a moment.',
+          };
+        }
+        // Fall back to current balance check on other errors
+        console.warn('Failed to calculate average balance, falling back to current balance:', error);
+      }
+    } else if (holdingPeriodHours && !process.env.HELIUS_API_KEY) {
+      console.warn('Holding period is set but HELIUS_API_KEY not configured, falling back to current balance check');
+    }
+
+    // Current balance check (default or fallback)
     const walletPubkey = new PublicKey(wallet);
     const mintPubkey = new PublicKey(tokenMint);
 
@@ -83,7 +123,6 @@ export async function checkDaoProposerAuthorization(
       const ata = await getAssociatedTokenAddress(mintPubkey, walletPubkey);
       const account = await getAccount(connection, ata);
       const balance = account.amount;
-      const minBalanceRaw = BigInt(threshold);
 
       if (balance >= minBalanceRaw) {
         return { isAuthorized: true, authMethod: 'token_balance' };

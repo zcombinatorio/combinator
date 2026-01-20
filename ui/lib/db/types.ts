@@ -258,6 +258,7 @@ export interface Dao {
   dao_type: 'parent' | 'child';
   // Proposer config (each DAO has independent settings)
   proposer_token_threshold?: string; // Min token balance to propose (null = no requirement)
+  proposer_holding_period_hours?: number; // Hours over which to calculate average balance (null = current balance only)
   // Liquidity withdrawal config
   withdrawal_percentage: number; // Percentage of LP to withdraw for proposals (1-50, default 12)
   // Funding

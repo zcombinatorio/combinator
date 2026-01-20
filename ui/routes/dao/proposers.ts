@@ -24,6 +24,7 @@ import {
   addProposer,
   removeProposer,
   updateProposerThreshold,
+  updateProposerHoldingPeriod,
   updateWithdrawalPercentage,
 } from '../../lib/db/daos';
 import { isValidSolanaAddress, isValidTokenMintAddress } from '../../lib/validation';
@@ -133,13 +134,18 @@ router.delete('/:daoPda/proposers/:proposerWallet', requireSignedHash, async (re
 });
 
 /**
- * PUT /dao/:daoPda/proposer-threshold - Update the token holding threshold
+ * PUT /dao/:daoPda/proposer-threshold - Update the token holding threshold and optional holding period
  * Only callable by the DAO owner
+ *
+ * Request body:
+ * - wallet: Owner wallet address (required)
+ * - threshold: Token amount threshold (required, string of raw token units)
+ * - holding_period_hours: Optional hours over which to calculate average balance (1-8760)
  */
 router.put('/:daoPda/proposer-threshold', requireSignedHash, async (req: Request, res: Response) => {
   try {
     const { daoPda } = req.params;
-    const { wallet, threshold } = req.body;
+    const { wallet, threshold, holding_period_hours } = req.body;
 
     if (!isValidTokenMintAddress(daoPda)) {
       return res.status(400).json({ error: 'Invalid DAO PDA' });
@@ -154,6 +160,20 @@ router.put('/:daoPda/proposer-threshold', requireSignedHash, async (req: Request
       normalizedThreshold = threshold;
     }
 
+    // Validate holding period
+    let normalizedHoldingPeriod: number | null = null;
+    if (holding_period_hours !== null && holding_period_hours !== undefined && holding_period_hours !== '') {
+      const hours = parseInt(holding_period_hours, 10);
+      if (isNaN(hours) || hours < 1 || hours > 8760) {
+        return res.status(400).json({ error: 'Holding period must be a positive integer between 1 and 8760 hours (1 year)' });
+      }
+      // Can't set holding period without a threshold
+      if (!normalizedThreshold) {
+        return res.status(400).json({ error: 'Cannot set holding period without a token threshold' });
+      }
+      normalizedHoldingPeriod = hours;
+    }
+
     const pool = getPool();
 
     const dao = await getDaoByPda(pool, daoPda);
@@ -166,14 +186,16 @@ router.put('/:daoPda/proposer-threshold', requireSignedHash, async (req: Request
     }
 
     await updateProposerThreshold(pool, dao.id!, normalizedThreshold);
+    await updateProposerHoldingPeriod(pool, dao.id!, normalizedHoldingPeriod);
 
-    console.log(`Updated proposer threshold for DAO ${dao.dao_name} to ${normalizedThreshold ?? 'null (disabled)'} by ${wallet}`);
+    console.log(`Updated proposer threshold for DAO ${dao.dao_name} to ${normalizedThreshold ?? 'null (disabled)'}, holding period: ${normalizedHoldingPeriod ?? 'null (disabled)'} by ${wallet}`);
 
     res.json({
       success: true,
       dao_pda: daoPda,
       dao_name: dao.dao_name,
       proposer_token_threshold: normalizedThreshold,
+      proposer_holding_period_hours: normalizedHoldingPeriod,
     });
   } catch (error) {
     console.error('Error updating proposer threshold:', error);

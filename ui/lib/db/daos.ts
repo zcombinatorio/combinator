@@ -584,6 +584,57 @@ export async function getProposerThreshold(
   }
 }
 
+/**
+ * Get both the proposer token threshold and holding period for a DAO.
+ * Returns the full proposer configuration.
+ */
+export async function getProposerThresholdConfig(
+  pool: Pool,
+  daoId: number
+): Promise<{ threshold: string | null; holdingPeriodHours: number | null }> {
+  const query = `
+    SELECT proposer_token_threshold, proposer_holding_period_hours FROM cmb_daos
+    WHERE id = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId]);
+    if (result.rows.length === 0) {
+      return { threshold: null, holdingPeriodHours: null };
+    }
+    return {
+      threshold: result.rows[0].proposer_token_threshold,
+      holdingPeriodHours: result.rows[0].proposer_holding_period_hours,
+    };
+  } catch (error) {
+    console.error('Error fetching proposer threshold config:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update the proposer holding period for a DAO.
+ * Set to null to disable time-weighted average (use current balance).
+ */
+export async function updateProposerHoldingPeriod(
+  pool: Pool,
+  daoId: number,
+  hours: number | null
+): Promise<void> {
+  const query = `
+    UPDATE cmb_daos
+    SET proposer_holding_period_hours = $2
+    WHERE id = $1
+  `;
+
+  try {
+    await pool.query(query, [daoId, hours]);
+  } catch (error) {
+    console.error('Error updating proposer holding period:', error);
+    throw error;
+  }
+}
+
 // ============================================================================
 // Withdrawal Percentage Functions
 // ============================================================================
