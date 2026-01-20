@@ -1,5 +1,5 @@
 /*
- * Z Combinator - DAMM Withdraw API Test Script
+ * Combinator - DAMM Withdraw API Test Script
  *
  * This script tests the DAMM liquidity withdrawal API endpoints:
  * 1. POST /damm/withdraw/build - Builds unsigned withdrawal transaction

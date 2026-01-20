@@ -103,7 +103,7 @@ async function backfillVerifiedWallets() {
     console.log('3. Users to log in through the app to trigger verification');
 
     console.log('\nFor now, users with designated tokens need to:');
-    console.log('1. Log in to Z Combinator with their social accounts');
+    console.log('1. Log in to Combinator with their social accounts');
     console.log('2. The system will automatically verify and link their wallets');
     console.log('3. They can then claim their designated tokens');
 

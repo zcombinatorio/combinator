@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Meteora DAMM v2 Fee Claim Test Script
+ * Combinator - Meteora DAMM v2 Fee Claim Test Script
  *
  * This script tests claiming fees from a Meteora DAMM v2 (Dynamic AMM) pool
  * and transferring 70% to a destination address.

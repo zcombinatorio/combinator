@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Meteora DLMM API Test Script
+ * Combinator - Meteora DLMM API Test Script
  *
  * This script tests the DLMM liquidity withdraw and deposit API endpoints
  * by calling them in succession to verify the full flow works correctly.

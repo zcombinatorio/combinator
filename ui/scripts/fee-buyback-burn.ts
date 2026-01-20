@@ -59,7 +59,7 @@ const CONFIG = {
     '7jbhVZcYqCRmciBcZzK8L5B96Pyw7i1SpXQFKBkzD3G2', // ZC DLMM pool
   ] as string[],
 
-  // API endpoint for fee claiming (zcombinator api-server)
+  // API endpoint for fee claiming (combinator api-server)
   FEE_CLAIM_API_BASE: process.env.FEE_CLAIM_API_BASE || 'https://api.zcombinator.io',
 
   // Reserve SOL for gas (0.333 SOL)
@@ -229,7 +229,7 @@ async function fetchDaoPools(): Promise<DaoPoolsResult> {
 }
 
 // ============================================================================
-// DAMM FEE CLAIMING (via zcombinator api-server)
+// DAMM FEE CLAIMING (via combinator api-server)
 // ============================================================================
 
 async function prepareFeeClaim(
@@ -333,7 +333,7 @@ async function claimFeesFromPool(
 }
 
 // ============================================================================
-// DLMM FEE CLAIMING (via zcombinator api-server)
+// DLMM FEE CLAIMING (via combinator api-server)
 // ============================================================================
 
 async function prepareDlmmFeeClaim(
