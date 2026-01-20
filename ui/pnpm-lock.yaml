@@ -69,8 +69,8 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
       '@zcomb/programs-sdk':
-        specifier: ^1.10.0
-        version: 1.10.0(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)
+        specifier: ^1.11.0
+        version: 1.11.0(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)
       axios:
         specifier: ^1.12.2
         version: 1.12.2
@@ -2374,8 +2374,8 @@ packages:
   '@walletconnect/window-metadata@1.0.1':
     resolution: {integrity: sha512-9koTqyGrM2cqFRW517BPY/iEtUDx2r1+Pwwu5m7sJ7ka79wi3EyqhqcICk/yDmv6jAS1rjKgTKXlEhanYjijcA==}
 
-  '@zcomb/programs-sdk@1.10.0':
-    resolution: {integrity: sha512-NX6IlcL8dNfe9mmzh3vY9yLfCot8C+3BLB4vyEPZkoJXoWwnAAlgLgg5hr09P82+hBPpvsao6IMEChlLOpHg/g==}
+  '@zcomb/programs-sdk@1.11.0':
+    resolution: {integrity: sha512-LLBSZM1oJ3q7eu+WwhrMo4eBe2aio9L/TjvaoCSgaFCfQYKiQGZn1xUCshJpKVvigRs1I8MbnqXcmZB7A8O+bg==}
 
   abitype@1.0.8:
     resolution: {integrity: sha512-ZeiI6h3GnW06uYDLx0etQtX/p8E24UaHHBj57RSjK7YBFe7iuVn07EDpOeP451D06sF27VOz9JJPlIKJmXgkEg==}
@@ -9374,7 +9374,7 @@ snapshots:
       '@walletconnect/window-getters': 1.0.1
       tslib: 1.14.1
 
-  '@zcomb/programs-sdk@1.10.0(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)':
+  '@zcomb/programs-sdk@1.11.0(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)':
     dependencies:
       '@coral-xyz/anchor': 0.32.1(bufferutil@4.0.9)(encoding@0.1.13)(typescript@5.9.2)(utf-8-validate@5.0.10)
       '@solana/spl-token': 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.0.9)(encoding@0.1.13)(typescript@5.9.2)(utf-8-validate@5.0.10))(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)
