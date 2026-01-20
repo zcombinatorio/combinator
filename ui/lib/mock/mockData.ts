@@ -1,5 +1,5 @@
 /**
- * Comprehensive mock data for Z Combinator
+ * Comprehensive mock data for Combinator
  * Used when running in development mode without API keys or database access
  */
 
@@ -100,9 +100,9 @@ export const MOCK_TOKENS: MockToken[] = [
     creator_wallet: MOCK_WALLETS.creator1,
     token_address: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
     token_metadata_url: '/api/mock-ipfs/QmMockHashZC',
-    token_name: 'Z Combinator',
+    token_name: 'Combinator',
     token_symbol: 'ZC',
-    creator_twitter: 'zcombinator',
+    creator_twitter: 'combinator',
     creator_github: 'zcombinatorio',
     created_at: '2025-10-15T14:30:00Z',
     verified: true,
@@ -366,12 +366,12 @@ export const MOCK_MARKET_DATA: Record<string, MockMarketData> = {
 // Mock token metadata
 export const MOCK_TOKEN_METADATA: Record<string, any> = {
   'QmMockHashZC': {
-    name: 'Z Combinator',
+    name: 'Combinator',
     symbol: 'ZC',
-    description: 'The official token of Z Combinator platform',
+    description: 'The official token of Combinator platform',
     image: '/z-pfp.jpg',
-    website: 'https://zcombinator.io',
-    twitter: 'https://x.com/zcombinator',
+    website: 'https://combinator.io',
+    twitter: 'https://x.com/combinator',
     discord: 'https://discord.com/invite/MQfcX9QM2r',
     attributes: [],
     properties: {
@@ -430,7 +430,7 @@ export const MOCK_PRESALES: MockPresale[] = [
     token_address: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
     base_mint_priv_key: 'MockBaseMintPrivKey111111111111111111111111111',
     creator_wallet: MOCK_WALLETS.creator1,
-    token_name: 'Z Combinator',
+    token_name: 'Combinator',
     token_symbol: 'ZC',
     token_metadata_url: '/api/mock-ipfs/QmMockHashZC',
     presale_tokens: { amount: 10000000 },
@@ -497,7 +497,7 @@ export const MOCK_DESIGNATED_CLAIMS = [
     id: 1,
     token_address: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
     original_launcher: MOCK_WALLETS.creator1,
-    designated_twitter: 'zcombinator',
+    designated_twitter: 'combinator',
     designated_github: null,
     verified_wallet: null,
     verified_embedded_wallet: null,

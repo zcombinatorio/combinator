@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Meteora DLMM Liquidity Deposit Test Script
+ * Combinator - Meteora DLMM Liquidity Deposit Test Script
  *
  * This script tests depositing liquidity into a Meteora DLMM
  * (Dynamic Liquidity Market Maker) pool position. It mirrors the production flow:

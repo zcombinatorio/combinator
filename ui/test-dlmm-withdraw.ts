@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Meteora DLMM Liquidity Withdrawal Test Script
+ * Combinator - Meteora DLMM Liquidity Withdrawal Test Script
  *
  * This script tests withdrawing a percentage of liquidity from a Meteora DLMM
  * (Dynamic Liquidity Market Maker) pool position and transferring it to a manager wallet.

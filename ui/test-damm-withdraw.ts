@@ -1,5 +1,5 @@
 /*
- * Z Combinator - Meteora DAMM v2 Liquidity Withdrawal Test Script
+ * Combinator - Meteora DAMM v2 Liquidity Withdrawal Test Script
  *
  * This script tests withdrawing 12.5% of liquidity from a Meteora DAMM v2
  * (Dynamic AMM) pool position and transferring it to a manager wallet.

@@ -1,11 +1,15 @@
 /*
- * Z Combinator - Solana Token Launchpad
+ * Combinator - Futarchy infrastructure for your project.
  * Copyright (C) 2026 Spice Finance Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
+ *
+ * Questions or feature requests? Reach out:
+ * - Telegram Group: https://t.me/+Ao05jBnpEE0yZGVh
+ * - Direct: https://t.me/handsdiff
  */
 
 import { Transaction, PublicKey } from '@solana/web3.js';
