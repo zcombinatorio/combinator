@@ -14,6 +14,10 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Questions or feature requests? Reach out:
+ * - Telegram Group: https://t.me/+Ao05jBnpEE0yZGVh
+ * - Direct: https://t.me/handsdiff
  */
 
 import { Router, Request, Response } from 'express';
@@ -66,7 +70,8 @@ router.use('/', queriesRouter);
 router.use('/', creationRouter);
 router.use('/', proposersRouter);
 router.use('/activity', activityRouter);
-router.use('/trading', tradingRouter);
+// NOTE: tradingRouter is mounted AFTER POST /proposal to prevent route interception
+// See end of POST /proposal handler
 
 // ============================================================================
 // Proposal Lifecycle Routes
@@ -775,6 +780,10 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     res.status(500).json({ error: 'Failed to create proposal', details: String(error) });
   }
 });
+
+// Mount trading router AFTER POST /proposal to prevent route interception
+// If tradingRouter had a POST / or POST /:something, it would intercept proposal creation
+router.use('/proposal', tradingRouter);
 
 // ============================================================================
 // ============================================================================
