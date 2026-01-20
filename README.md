@@ -6,8 +6,6 @@ Futarchy infrastructure for your project.
 
 ```
 ├── ui/                     # Backend API (see ui/README.md)
-├── dao/                    # Product vision docs
-├── SECURITY_REVIEW_CLAIMS.md
 └── LICENSE
 ```
 
