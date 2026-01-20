@@ -27,6 +27,7 @@ import DLMM from '@meteora-ag/dlmm';
 
 import { getPool } from '../../lib/db';
 import { getDaoByPda, getDaoByModeratorPda } from '../../lib/db/daos';
+import { upsertProposalDaoMapping } from '../../lib/db/trading-activities';
 import { fetchAdminKeypair, AdminKeyError } from '../../lib/keyService';
 import { isValidTokenMintAddress } from '../../lib/validation';
 import { uploadProposalMetadata } from '../../lib/ipfs';
@@ -49,6 +50,8 @@ import {
 import queriesRouter from './queries';
 import creationRouter from './creation';
 import proposersRouter from './proposers';
+import tradingRouter from './trading';
+import activityRouter from './activity';
 import { daoLimiter, getConnection, createProvider } from './shared';
 
 const router = Router();
@@ -61,6 +64,8 @@ router.use(daoLimiter);
 router.use('/', queriesRouter);
 router.use('/', creationRouter);
 router.use('/', proposersRouter);
+router.use('/activity', activityRouter);
+router.use('/trading', tradingRouter);
 
 // ============================================================================
 // Proposal Lifecycle Routes
@@ -735,6 +740,14 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     console.log(`Created proposal ${proposalPda} for DAO ${dao_pda}`);
+
+    // Insert proposal-to-DAO mapping for activity filtering
+    try {
+      await upsertProposalDaoMapping(pool, proposalPda, dao_pda);
+    } catch (mappingError) {
+      console.warn('Failed to upsert proposal-dao mapping:', mappingError);
+      // Non-fatal - continue with response
+    }
 
     // Update the proposal count cache
     incrementProposalCount(dao_pda);
