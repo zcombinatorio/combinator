@@ -21,6 +21,14 @@ pnpm api        # Start API server at http://localhost:3001
 
 See [`ui/README.md`](ui/README.md) for API endpoints and details.
 
+## SDK
+
+```bash
+npm install @zcomb/programs-sdk
+```
+
+On-chain futarchy program interactions. [Source on GitHub](https://github.com/zcombinatorio/programs).
+
 ## Using Claude Code
 
 Open [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and explore the codebase:
