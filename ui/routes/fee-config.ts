@@ -50,7 +50,7 @@ export const PARTNER_TREASURY = 'EtdhMR3yYHsUP3cm36X83SpvnL5jB48p5b653pqLC23C';
 // - 3/7 (~42.86%) to partner treasury
 // - 3/7 (~42.86%) to the DAO's own treasury
 export const PARTNER_REFERRED_DAO_PDAS: Set<string> = new Set([
-  // Add referred DAO PDAs here
+  '4YrUf7URPvb6hFYuw8DSXGwtuwGB2Xn4p3MUJAULLANz',
 ]);
 
 // ============================================================================
