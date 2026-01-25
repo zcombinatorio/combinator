@@ -39,19 +39,28 @@ export interface AverageBalanceResult {
   transferCount: number;
 }
 
+interface FetchResult {
+  transactions: ParsedTransaction[];
+  // True if we fetched all history (no more transactions exist before the ones we fetched)
+  // False if we stopped at the cutoff time (more history exists)
+  reachedBeginningOfHistory: boolean;
+}
+
 /**
  * Fetch token transfers for a wallet from Helius API.
  * Returns transfers sorted by timestamp descending (newest first).
+ * Also indicates whether we've reached the beginning of history (no more txs exist).
  */
 async function fetchWalletTokenTransfers(
   walletAddress: string,
   tokenMint: string,
   periodHours: number,
   apiKey: string
-): Promise<ParsedTransaction[]> {
+): Promise<FetchResult> {
   const cutoffTime = Date.now() - periodHours * 60 * 60 * 1000;
   const allTransactions: ParsedTransaction[] = [];
   let lastSignature: string | undefined = undefined;
+  let reachedBeginningOfHistory = false;
 
   // Fetch signatures for the wallet's associated token account
   const walletPubkey = new PublicKey(walletAddress);
@@ -90,6 +99,8 @@ async function fetchWalletTokenTransfers(
     }
 
     if (!data.result || !Array.isArray(data.result) || data.result.length === 0) {
+      // No more transactions - we've reached the beginning of history
+      reachedBeginningOfHistory = true;
       break;
     }
 
@@ -115,7 +126,15 @@ async function fetchWalletTokenTransfers(
       lastSignature = signatures[signatures.length - 1];
     }
 
-    if (reachedCutoff || data.result.length < 1000) {
+    if (reachedCutoff) {
+      // Stopped at cutoff - more history exists before this point
+      reachedBeginningOfHistory = false;
+      break;
+    }
+
+    if (data.result.length < 1000) {
+      // Less than a full page - we've reached the beginning of history
+      reachedBeginningOfHistory = true;
       break;
     }
 
@@ -123,7 +142,7 @@ async function fetchWalletTokenTransfers(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  return allTransactions;
+  return { transactions: allTransactions, reachedBeginningOfHistory };
 }
 
 /**
@@ -221,9 +240,9 @@ export async function calculateAverageBalance(
   const now = Date.now();
   const periodStart = now - periodHours * 60 * 60 * 1000;
 
-  let transactions: ParsedTransaction[];
+  let fetchResult: FetchResult;
   try {
-    transactions = await fetchWalletTokenTransfers(walletAddress, tokenMint, periodHours, HELIUS_API_KEY);
+    fetchResult = await fetchWalletTokenTransfers(walletAddress, tokenMint, periodHours, HELIUS_API_KEY);
   } catch (error) {
     if (error instanceof Error && error.message === 'HELIUS_RATE_LIMIT') {
       throw error;
@@ -236,6 +255,8 @@ export async function calculateAverageBalance(
       transferCount: 0,
     };
   }
+
+  const { transactions, reachedBeginningOfHistory } = fetchResult;
 
   // Filter to only transfers involving this token and wallet
   const relevantTransfers: { timestamp: number; delta: bigint }[] = [];
@@ -303,7 +324,13 @@ export async function calculateAverageBalance(
   // Add the remaining time at the earliest balance
   if (prevTimestamp > periodStart) {
     const duration = prevTimestamp - periodStart;
-    weightedSum += balance * BigInt(duration);
+
+    // CRITICAL: If we've fetched all history (no more transactions exist before what we found),
+    // then the balance before the first-ever transfer was 0, not the reconstructed balance.
+    // This handles cases like new tokens where the wallet had no balance before their first transfer.
+    const balanceForRemainder = reachedBeginningOfHistory ? BigInt(0) : balance;
+
+    weightedSum += balanceForRemainder * BigInt(duration);
   }
 
   // Calculate average

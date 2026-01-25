@@ -51,6 +51,10 @@ CREATE TABLE IF NOT EXISTS cmb_daos (
   -- NULL means no token holding requirement (only wallet whitelist applies)
   proposer_token_threshold TEXT,
 
+  -- Proposer holding period: hours over which to calculate time-weighted average balance
+  -- NULL means check current balance only, set value means check average over that period
+  proposer_holding_period_hours INTEGER DEFAULT NULL CHECK (proposer_holding_period_hours IS NULL OR proposer_holding_period_hours > 0),
+
   -- Withdrawal percentage (5-50%), default 12%
   withdrawal_percentage INTEGER NOT NULL DEFAULT 12 CHECK (withdrawal_percentage >= 5 AND withdrawal_percentage <= 50),
 
