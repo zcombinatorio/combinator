@@ -154,9 +154,9 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     // Validate proposal duration based on proposer role
-    // DAO owner: 1 minute to 7 days
+    // Test DAOs: 1 minute to 7 days (for testing)
+    // DAO owner: 18 hours to 7 days
     // Others (whitelist/token threshold): 24 hours to 4 days
-    // Test DAOs: allow short durations for all proposers
     const TEST_DAOS = ['SURFTEST', 'TESTSURF'];
     const isTestDao = TEST_DAOS.includes(dao.dao_name);
     const isOwner = wallet === dao.owner_wallet;
@@ -164,14 +164,25 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     const ONE_HOUR = 3600;
     const ONE_DAY = 24 * ONE_HOUR;
 
-    if (isOwner || isTestDao) {
-      // Owner or test DAO: 1 minute to 7 days
+    if (isTestDao) {
+      // Test DAOs: 1 minute to 7 days
       const minDuration = ONE_MINUTE;
       const maxDuration = 7 * ONE_DAY;
       if (length_secs < minDuration || length_secs > maxDuration) {
         return returnError(400, {
           error: 'Invalid proposal duration',
-          reason: `DAO owner can create proposals from 1 minute to 7 days (${minDuration}-${maxDuration} seconds)`,
+          reason: `Test DAO proposals can be from 1 minute to 7 days (${minDuration}-${maxDuration} seconds)`,
+          provided: length_secs,
+        });
+      }
+    } else if (isOwner) {
+      // Owner: 18 hours to 7 days
+      const minDuration = 18 * ONE_HOUR;
+      const maxDuration = 7 * ONE_DAY;
+      if (length_secs < minDuration || length_secs > maxDuration) {
+        return returnError(400, {
+          error: 'Invalid proposal duration',
+          reason: `DAO owner can create proposals from 18 hours to 7 days (${minDuration}-${maxDuration} seconds)`,
           provided: length_secs,
         });
       }
@@ -196,7 +207,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // 0. Check proposer authorization using per-DAO settings (DB whitelist + token threshold)
     // Each DAO (parent or child) has independent settings managed via:
     //   - POST/DELETE /dao/:daoPda/proposers (wallet whitelist)
-    //   - PUT /dao/:daoPda/proposer-threshold (token balance requirement)
+    //   - PUT /dao/:daoPda/proposer-config (token threshold and holding period)
     const proposerAuthResult = await checkDaoProposerAuthorization(
       connection,
       pool,
