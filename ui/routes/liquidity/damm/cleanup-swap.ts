@@ -12,7 +12,7 @@
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
 import { Connection, Transaction, PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddress, getMint, NATIVE_MINT } from '@solana/spl-token';
+import { getAssociatedTokenAddress, getMint } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
@@ -97,11 +97,10 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
 
     const tokenAMintInfo = await getMint(connection, tokenAMint, undefined, tokenAProgram);
     const tokenBMintInfo = await getMint(connection, tokenBMint, undefined, tokenBProgram);
-    const isTokenBNativeSOL = tokenBMint.equals(NATIVE_MINT);
-
     // Get LP owner token balances
+    // Always use wSOL token account for NATIVE_MINT - redemption deposits wSOL to ATA, not native SOL
     const lpOwnerTokenAAta = await getAssociatedTokenAddress(tokenAMint, lpOwner.publicKey, false, tokenAProgram);
-    const lpOwnerTokenBAta = isTokenBNativeSOL ? lpOwner.publicKey : await getAssociatedTokenAddress(tokenBMint, lpOwner.publicKey, false, tokenBProgram);
+    const lpOwnerTokenBAta = await getAssociatedTokenAddress(tokenBMint, lpOwner.publicKey, false, tokenBProgram);
 
     let tokenABalance = new BN(0);
     let tokenBBalance = new BN(0);
@@ -112,14 +111,8 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
     } catch { /* Account doesn't exist */ }
 
     try {
-      if (isTokenBNativeSOL) {
-        const solBalance = await connection.getBalance(lpOwner.publicKey);
-        const reserveForFees = 333_000_000;
-        tokenBBalance = new BN(Math.max(0, solBalance - reserveForFees));
-      } else {
-        const tokenBAccount = await connection.getTokenAccountBalance(lpOwnerTokenBAta);
-        tokenBBalance = new BN(tokenBAccount.value.amount);
-      }
+      const tokenBAccount = await connection.getTokenAccountBalance(lpOwnerTokenBAta);
+      tokenBBalance = new BN(tokenBAccount.value.amount);
     } catch { /* Account doesn't exist */ }
 
     console.log(`  LP Owner A Balance: ${tokenABalance.toString()}`);
