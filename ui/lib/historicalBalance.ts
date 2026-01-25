@@ -33,9 +33,16 @@ interface ParsedTransaction {
   tokenTransfers?: TokenTransfer[];
 }
 
+/**
+ * Result from calculateAverageBalance.
+ * All balance values are in raw token units (smallest unit, e.g., lamports for SOL).
+ */
 export interface AverageBalanceResult {
+  /** Time-weighted average balance over the period, in raw token units */
   averageBalance: bigint;
+  /** Current on-chain balance, in raw token units */
   currentBalance: bigint;
+  /** Number of transfers found in the period */
   transferCount: number;
 }
 
@@ -189,8 +196,12 @@ async function fetchTransactionDetails(
 /**
  * Calculate the time-weighted average token balance for a wallet over a period.
  *
+ * Units:
+ * - periodHours: hours (e.g., 720 = 30 days)
+ * - Returns balances in raw token units (smallest unit, e.g., for 6 decimals: 1000000 = 1 token)
+ *
  * Algorithm:
- * 1. Get current balance from RPC
+ * 1. Get current balance from RPC (raw units)
  * 2. Fetch token transfers within the time window from Helius
  * 3. Walk backwards through transfers, reconstructing balance at each point
  * 4. Calculate sum(balance × duration) / total_duration
@@ -198,8 +209,8 @@ async function fetchTransactionDetails(
  * @param connection - Solana RPC connection
  * @param walletAddress - The wallet to check
  * @param tokenMint - The token mint address
- * @param periodHours - Number of hours to look back
- * @returns Average balance, current balance, and transfer count
+ * @param periodHours - Number of hours to look back (e.g., 720 for 30 days)
+ * @returns Average balance and current balance in raw token units, plus transfer count
  */
 export async function calculateAverageBalance(
   connection: Connection,
@@ -244,16 +255,12 @@ export async function calculateAverageBalance(
   try {
     fetchResult = await fetchWalletTokenTransfers(walletAddress, tokenMint, periodHours, HELIUS_API_KEY);
   } catch (error) {
+    // SECURITY: Do not fall back to current balance - that would bypass time-weighted requirements.
+    // Re-throw all errors so the caller can handle them appropriately.
     if (error instanceof Error && error.message === 'HELIUS_RATE_LIMIT') {
       throw error;
     }
-    // If fetching fails, fall back to treating current balance as held for entire period
-    console.warn('Failed to fetch transfer history, using current balance:', error);
-    return {
-      averageBalance: currentBalance,
-      currentBalance,
-      transferCount: 0,
-    };
+    throw new Error(`Failed to fetch transfer history: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   const { transactions, reachedBeginningOfHistory } = fetchResult;

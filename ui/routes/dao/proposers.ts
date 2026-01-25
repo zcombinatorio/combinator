@@ -138,15 +138,17 @@ router.delete('/:daoPda/proposers/:proposerWallet', requireSignedHash, async (re
 });
 
 /**
- * PUT /dao/:daoPda/proposer-threshold - Update the token holding threshold and optional holding period
+ * PUT /dao/:daoPda/proposer-config - Update proposer eligibility requirements
  * Only callable by the DAO owner
  *
  * Request body:
  * - wallet: Owner wallet address (required)
- * - threshold: Token amount threshold (required, string of raw token units)
- * - holding_period_hours: Optional hours over which to calculate average balance (1-8760)
+ * - threshold: Token amount threshold (string of raw token units, null to clear)
+ * - holding_period_hours: Hours over which to calculate average balance (1-35040, up to 4 years, null to clear)
+ *
+ * Only fields present in the request body are updated. Omitted fields are preserved.
  */
-router.put('/:daoPda/proposer-threshold', requireSignedHash, async (req: Request, res: Response) => {
+router.put('/:daoPda/proposer-config', requireSignedHash, async (req: Request, res: Response) => {
   try {
     const { daoPda } = req.params;
     const { wallet, threshold, holding_period_hours } = req.body;
@@ -168,8 +170,8 @@ router.put('/:daoPda/proposer-threshold', requireSignedHash, async (req: Request
     let normalizedHoldingPeriod: number | null = null;
     if (holding_period_hours !== null && holding_period_hours !== undefined && holding_period_hours !== '') {
       const hours = parseInt(holding_period_hours, 10);
-      if (isNaN(hours) || hours < 1 || hours > 8760) {
-        return res.status(400).json({ error: 'Holding period must be a positive integer between 1 and 8760 hours (1 year)' });
+      if (isNaN(hours) || hours < 1 || hours > 35040) {
+        return res.status(400).json({ error: 'Holding period must be a positive integer between 1 and 35040 hours (4 years)' });
       }
       // Can't set holding period without a threshold
       if (!normalizedThreshold) {
@@ -189,17 +191,25 @@ router.put('/:daoPda/proposer-threshold', requireSignedHash, async (req: Request
       return res.status(403).json({ error: 'Only the DAO owner can update the proposer threshold' });
     }
 
-    await updateProposerThreshold(pool, dao.id!, normalizedThreshold);
-    await updateProposerHoldingPeriod(pool, dao.id!, normalizedHoldingPeriod);
+    // Only update fields that are explicitly provided in the request
+    if ('threshold' in req.body) {
+      await updateProposerThreshold(pool, dao.id!, normalizedThreshold);
+    }
+    if ('holding_period_hours' in req.body) {
+      await updateProposerHoldingPeriod(pool, dao.id!, normalizedHoldingPeriod);
+    }
 
-    console.log(`Updated proposer threshold for DAO ${dao.dao_name} to ${normalizedThreshold ?? 'null (disabled)'}, holding period: ${normalizedHoldingPeriod ?? 'null (disabled)'} by ${wallet}`);
+    // Fetch updated DAO to return current values
+    const updatedDao = await getDaoByPda(pool, daoPda);
+
+    console.log(`Updated proposer config for DAO ${dao.dao_name}: threshold=${normalizedThreshold ?? '(unchanged)'}, holding_period=${normalizedHoldingPeriod ?? '(unchanged)'} by ${wallet}`);
 
     res.json({
       success: true,
       dao_pda: daoPda,
       dao_name: dao.dao_name,
-      proposer_token_threshold: normalizedThreshold,
-      proposer_holding_period_hours: normalizedHoldingPeriod,
+      proposer_token_threshold: updatedDao?.proposer_token_threshold ?? null,
+      proposer_holding_period_hours: updatedDao?.proposer_holding_period_hours ?? null,
     });
   } catch (error) {
     console.error('Error updating proposer threshold:', error);

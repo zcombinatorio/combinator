@@ -82,6 +82,7 @@ export async function checkDaoProposerAuthorization(
   const { threshold, holdingPeriodHours } = await getProposerThresholdConfig(pool, daoId);
 
   // 3. If threshold is set, check token balance
+  // Both threshold and balances are in raw token units (smallest unit)
   if (threshold && threshold !== '0') {
     const minBalanceRaw = BigInt(threshold);
 
@@ -105,21 +106,30 @@ export async function checkDaoProposerAuthorization(
           reason: `Wallet not whitelisted. Average balance over ${holdingPeriodHours}h (${averageBalance.toString()}) is below required threshold (${threshold}). Current balance: ${currentBalance.toString()}`,
         };
       } catch (error) {
-        if (error instanceof Error && error.message === 'HELIUS_RATE_LIMIT') {
-          return {
-            isAuthorized: false,
-            authMethod: null,
-            reason: 'Rate limited by Helius API. Please try again in a moment.',
-          };
-        }
-        // Fall back to current balance check on other errors
-        console.warn('Failed to calculate average balance, falling back to current balance:', error);
+        // SECURITY: If holding period is set but calculation fails, deny authorization.
+        // We must NOT fall back to current balance - that would bypass the time-weighted requirement.
+        const reason = error instanceof Error && error.message === 'HELIUS_RATE_LIMIT'
+          ? 'Rate limited by Helius API. Please try again in a moment.'
+          : `Failed to verify time-weighted balance: ${error instanceof Error ? error.message : String(error)}`;
+        console.error('Historical balance check failed:', error);
+        return {
+          isAuthorized: false,
+          authMethod: null,
+          reason,
+        };
       }
     } else if (holdingPeriodHours && !process.env.HELIUS_API_KEY) {
-      console.warn('Holding period is set but HELIUS_API_KEY not configured, falling back to current balance check');
+      // SECURITY: If holding period is configured but Helius API key is missing, deny authorization.
+      // We cannot verify the time-weighted requirement without the API.
+      console.error('Holding period is set but HELIUS_API_KEY not configured - denying authorization');
+      return {
+        isAuthorized: false,
+        authMethod: null,
+        reason: 'Time-weighted balance verification unavailable. Please contact DAO admin.',
+      };
     }
 
-    // Current balance check (default or fallback)
+    // Current balance check (only when NO holding period is configured)
     const walletPubkey = new PublicKey(wallet);
     const mintPubkey = new PublicKey(tokenMint);
 

@@ -63,7 +63,7 @@ async function removeProposer(proposerWallet: string) {
 
 async function setThreshold(threshold: string | null) {
   const payload = { wallet: ownerWallet.publicKey.toBase58(), threshold };
-  const response = await fetch(`${API_URL}/dao/${DAO_PDA}/proposer-threshold`, {
+  const response = await fetch(`${API_URL}/dao/${DAO_PDA}/proposer-config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, signed_hash: signRequest(payload, ownerWallet) }),

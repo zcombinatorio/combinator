@@ -48,10 +48,12 @@ CREATE TABLE IF NOT EXISTS cmb_daos (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
   -- Proposer threshold: minimum token balance required to be eligible as a proposer
+  -- Stored as TEXT in raw token units (smallest unit, e.g., for 6 decimals: "1000000" = 1 token)
   -- NULL means no token holding requirement (only wallet whitelist applies)
   proposer_token_threshold TEXT,
 
   -- Proposer holding period: hours over which to calculate time-weighted average balance
+  -- e.g., 720 = 30 days, 168 = 7 days
   -- NULL means check current balance only, set value means check average over that period
   proposer_holding_period_hours INTEGER DEFAULT NULL CHECK (proposer_holding_period_hours IS NULL OR proposer_holding_period_hours > 0),
 

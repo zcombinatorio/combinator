@@ -82,7 +82,7 @@ async function testAddProposer() {
 }
 
 async function testUpdateThreshold() {
-  console.log('\n=== Test PUT /dao/:daoPda/proposer-threshold ===\n');
+  console.log('\n=== Test PUT /dao/:daoPda/proposer-config ===\n');
 
   // Set threshold to 1000000000 (1 token with 9 decimals)
   const threshold = '1000000000';
@@ -94,7 +94,7 @@ async function testUpdateThreshold() {
 
   const signedHash = signRequest(payload, testWallet);
 
-  const response = await fetch(`${API_URL}/dao/${DAO_PDA}/proposer-threshold`, {
+  const response = await fetch(`${API_URL}/dao/${DAO_PDA}/proposer-config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, signed_hash: signedHash }),
@@ -151,7 +151,7 @@ async function testClearThreshold() {
 
   const signedHash = signRequest(payload, testWallet);
 
-  const response = await fetch(`${API_URL}/dao/${DAO_PDA}/proposer-threshold`, {
+  const response = await fetch(`${API_URL}/dao/${DAO_PDA}/proposer-config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, signed_hash: signedHash }),
