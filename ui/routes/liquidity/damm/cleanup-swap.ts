@@ -97,8 +97,23 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
 
     const tokenAMintInfo = await getMint(connection, tokenAMint, undefined, tokenAProgram);
     const tokenBMintInfo = await getMint(connection, tokenBMint, undefined, tokenBProgram);
-    // Get LP owner token balances
-    // Always use wSOL token account for NATIVE_MINT - redemption deposits wSOL to ATA, not native SOL
+
+    // ===================================================================================
+    // SOL/wSOL HANDLING - READ FROM wSOL ATA
+    // ===================================================================================
+    // Context: This runs after liquidity redemption from conditional pools.
+    //
+    // Why wSOL ATA (not native SOL balance)?
+    // - Liquidity redemption returns wSOL to the wSOL ATA, NOT native SOL to wallet
+    // - If we checked native SOL balance here, we'd miss the redeemed wSOL entirely
+    // - This would cause incorrect swap calculations (e.g., swapping half of token A
+    //   unnecessarily because we thought we had no SOL)
+    //
+    // What happens next:
+    // - Jupiter swap (with wrapAndUnwrapSol: true) reads from wSOL ATA for input
+    // - Jupiter outputs native SOL (unwrapped) when output mint is NATIVE_MINT
+    // - DAMM deposit expects native SOL and wraps it internally via SystemProgram.transfer
+    // ===================================================================================
     const lpOwnerTokenAAta = await getAssociatedTokenAddress(tokenAMint, lpOwner.publicKey, false, tokenAProgram);
     const lpOwnerTokenBAta = await getAssociatedTokenAddress(tokenBMint, lpOwner.publicKey, false, tokenBProgram);
 
