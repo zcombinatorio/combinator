@@ -12,7 +12,7 @@
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
 import { Connection, Transaction, PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddress, getMint, NATIVE_MINT, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { getAssociatedTokenAddress, getMint, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
 import DLMM from '@meteora-ag/dlmm';
@@ -99,10 +99,10 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
 
     const tokenXMintInfo = await getMint(connection, tokenXMint, undefined, tokenXProgram);
     const tokenYMintInfo = await getMint(connection, tokenYMint, undefined, tokenYProgram);
-    const isTokenYNativeSOL = tokenYMint.equals(NATIVE_MINT);
 
+    // Always use wSOL token account for NATIVE_MINT - redemption deposits wSOL to ATA, not native SOL
     const lpOwnerTokenXAta = await getAssociatedTokenAddress(tokenXMint, lpOwner.publicKey, false, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
-    const lpOwnerTokenYAta = isTokenYNativeSOL ? lpOwner.publicKey : await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey, false, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const lpOwnerTokenYAta = await getAssociatedTokenAddress(tokenYMint, lpOwner.publicKey, false, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
 
     let tokenXBalance = new BN(0);
     let tokenYBalance = new BN(0);
@@ -113,14 +113,8 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     } catch { /* Account doesn't exist */ }
 
     try {
-      if (isTokenYNativeSOL) {
-        const solBalance = await connection.getBalance(lpOwner.publicKey);
-        const reserveForFees = 333_000_000;
-        tokenYBalance = new BN(Math.max(0, solBalance - reserveForFees));
-      } else {
-        const tokenYAccount = await connection.getTokenAccountBalance(lpOwnerTokenYAta);
-        tokenYBalance = new BN(tokenYAccount.value.amount);
-      }
+      const tokenYAccount = await connection.getTokenAccountBalance(lpOwnerTokenYAta);
+      tokenYBalance = new BN(tokenYAccount.value.amount);
     } catch { /* Account doesn't exist */ }
 
     console.log(`  LP Owner X Balance: ${tokenXBalance.toString()}`);
