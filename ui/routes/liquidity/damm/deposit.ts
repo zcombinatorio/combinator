@@ -11,7 +11,8 @@
 
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
-import { Connection, Transaction, PublicKey, SystemProgram } from '@solana/web3.js';
+import { Connection, Transaction, PublicKey, SystemProgram, ComputeBudgetProgram } from '@solana/web3.js';
+import { getPriorityFee, PriorityFeeMode } from '../../../lib/priorityFee';
 import {
   createTransferInstruction,
   getAssociatedTokenAddress,
@@ -223,6 +224,10 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
     combinedTx.feePayer = managerWallet;
     const { blockhash } = await connection.getLatestBlockhash();
     combinedTx.recentBlockhash = blockhash;
+
+    // Add priority fee for faster inclusion
+    const priorityFee = await getPriorityFee(connection, PriorityFeeMode.Dynamic);
+    combinedTx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
 
     const managerTokenAAta = await getAssociatedTokenAddress(poolState.tokenAMint, managerWallet, false, tokenAProgram);
     const managerTokenBAta = isTokenBNativeSOL ? managerWallet : await getAssociatedTokenAddress(poolState.tokenBMint, managerWallet, false, tokenBProgram);
@@ -436,12 +441,9 @@ router.post('/confirm', dammLiquidityLimiter, async (req: Request, res: Response
     console.log('✓ Deposit transaction sent');
     console.log(`  Signature: ${signature}`);
 
-    try {
-      await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight });
-      console.log(`✓ Deposit confirmed: ${signature}`);
-    } catch (error) {
-      console.error(`⚠ Confirmation timeout for ${signature}:`, error);
-    }
+    // Wait for confirmation - fail if not confirmed
+    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+    console.log(`✓ Deposit confirmed: ${signature}`);
 
     depositRequests.delete(requestId);
 
@@ -461,8 +463,8 @@ router.post('/confirm', dammLiquidityLimiter, async (req: Request, res: Response
       deposited: { tokenA: depositData.depositedTokenAAmount, tokenB: depositData.depositedTokenBAmount, liquidityDelta: depositData.liquidityDelta },
       leftover: { tokenA: depositData.leftoverTokenAAmount, tokenB: depositData.leftoverTokenBAmount },
       message: hasLeftover
-        ? 'Deposit transaction submitted successfully. Leftover tokens remain in LP owner wallet for cleanup.'
-        : 'Deposit transaction submitted successfully'
+        ? 'Deposit transaction confirmed successfully. Leftover tokens remain in LP owner wallet for cleanup.'
+        : 'Deposit transaction confirmed successfully'
     });
 
   } catch (error) {

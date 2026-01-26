@@ -11,7 +11,8 @@
 
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
-import { Connection, Transaction, PublicKey, SystemProgram } from '@solana/web3.js';
+import { Connection, Transaction, PublicKey, SystemProgram, ComputeBudgetProgram } from '@solana/web3.js';
+import { getPriorityFee, PriorityFeeMode } from '../../../lib/priorityFee';
 import {
   createTransferInstruction,
   getAssociatedTokenAddress,
@@ -145,6 +146,10 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
     combinedTx.feePayer = managerWallet;
     const { blockhash } = await connection.getLatestBlockhash();
     combinedTx.recentBlockhash = blockhash;
+
+    // Add priority fee for faster inclusion
+    const priorityFee = await getPriorityFee(connection, PriorityFeeMode.Dynamic);
+    combinedTx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
 
     // Get token accounts
     const tokenAAta = await getAssociatedTokenAddress(poolState.tokenAMint, lpOwner.publicKey, false, tokenAProgram);
@@ -354,13 +359,9 @@ router.post('/confirm', dammLiquidityLimiter, async (req: Request, res: Response
     console.log(`  Signature: ${signature}`);
     console.log(`  Solscan: https://solscan.io/tx/${signature}`);
 
-    // Wait for confirmation
-    try {
-      await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight });
-      console.log(`✓ Withdrawal confirmed: ${signature}`);
-    } catch (error) {
-      console.error(`⚠ Confirmation timeout for ${signature}:`, error);
-    }
+    // Wait for confirmation - fail if not confirmed
+    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+    console.log(`✓ Withdrawal confirmed: ${signature}`);
 
     // Clean up
     withdrawRequests.delete(requestId);
@@ -377,7 +378,7 @@ router.post('/confirm', dammLiquidityLimiter, async (req: Request, res: Response
         tokenB: withdrawData.estimatedTokenBAmount,
         liquidityDelta: withdrawData.liquidityDelta
       },
-      message: 'Withdrawal transaction submitted successfully'
+      message: 'Withdrawal transaction confirmed successfully'
     });
 
   } catch (error) {
