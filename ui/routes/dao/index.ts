@@ -1147,25 +1147,44 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
     if (proposal.numOptions >= 3) {
       console.log(`  Using versioned transaction (${proposal.numOptions} options)`);
 
-      // Get dynamic priority fee based on network conditions
-      const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
-      console.log(`  Using priority fee: ${priorityFee} microlamports`);
+      // Retry loop for transient RPC errors (blockhash expiry, timeout, etc.)
+      const maxRetries = 3;
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          // Get dynamic priority fee based on network conditions
+          const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+          console.log(`  Using priority fee: ${priorityFee} microlamports`);
 
-      const result = await client.redeemLiquidityVersioned(
-        adminKeypair.publicKey,
-        proposalPubkey,
-        undefined, // altAddress - let SDK create if needed
-        { priorityFeeMicroLamports: priorityFee }
-      );
+          const result = await client.redeemLiquidityVersioned(
+            adminKeypair.publicKey,
+            proposalPubkey,
+            undefined, // altAddress - let SDK create if needed
+            { priorityFeeMicroLamports: priorityFee }
+          );
 
-      // Sign the versioned transaction with admin keypair
-      result.versionedTx.sign([adminKeypair]);
+          // Sign the versioned transaction with admin keypair
+          result.versionedTx.sign([adminKeypair]);
 
-      // Send the signed transaction with blockhash info for proper confirmation
-      tx = await client.sendVersionedTransaction(result.versionedTx, {
-        blockhash: result.blockhash,
-        lastValidBlockHeight: result.lastValidBlockHeight,
-      });
+          // Send the signed transaction with blockhash info for proper confirmation
+          tx = await client.sendVersionedTransaction(result.versionedTx, {
+            blockhash: result.blockhash,
+            lastValidBlockHeight: result.lastValidBlockHeight,
+          });
+          break; // Success, exit retry loop
+        } catch (e: unknown) {
+          const isRetryable = e instanceof Error &&
+            (e.message.includes('Blockhash not found') ||
+             e.message.includes('block height exceeded') ||
+             e.message.includes('was not confirmed') ||
+             e.message.includes('has expired'));
+          if (isRetryable && attempt < maxRetries - 1) {
+            console.log(`  ⚠ Redemption failed, retrying (attempt ${attempt + 2}/${maxRetries})...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          throw e;
+        }
+      }
     } else {
       // Standard transaction for 2-option proposals
       // Build and send manually for robust confirmation (builder.rpc() has timeout issues)
@@ -1801,43 +1820,59 @@ router.post('/crank-twap', async (req: Request, res: Response) => {
       }
     }
 
-    // Second pass: build all crank instructions and send in a single transaction
+    // Second pass: build all crank instructions and send in a single transaction (with retry)
     if (poolsToCrank.length > 0) {
-      try {
-        const instructions = [];
-        for (const { poolPda } of poolsToCrank) {
-          const builder = await client.amm.crankTwap(poolPda);
-          const ix = await builder.instruction();
-          instructions.push(ix);
-        }
+      const maxRetries = 3;
+      let cranked = false;
 
-        // Build and send single transaction with all crank instructions
-        const tx = new Transaction();
-        for (const ix of instructions) {
-          tx.add(ix);
-        }
+      for (let attempt = 0; attempt < maxRetries && !cranked; attempt++) {
+        try {
+          const instructions = [];
+          for (const { poolPda } of poolsToCrank) {
+            const builder = await client.amm.crankTwap(poolPda);
+            const ix = await builder.instruction();
+            instructions.push(ix);
+          }
 
-        const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
-        tx.recentBlockhash = blockhash;
-        tx.feePayer = adminKeypair.publicKey;
+          // Build and send single transaction with all crank instructions
+          const tx = new Transaction();
+          for (const ix of instructions) {
+            tx.add(ix);
+          }
 
-        const signature = await provider.connection.sendTransaction(tx, [adminKeypair]);
-        await provider.connection.confirmTransaction({
-          signature,
-          blockhash,
-          lastValidBlockHeight,
-        }, 'confirmed');
+          const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
+          tx.recentBlockhash = blockhash;
+          tx.feePayer = adminKeypair.publicKey;
 
-        console.log(`  Cranked ${poolsToCrank.length} pools in single tx: ${signature}`);
+          const signature = await provider.connection.sendTransaction(tx, [adminKeypair]);
+          await provider.connection.confirmTransaction({
+            signature,
+            blockhash,
+            lastValidBlockHeight,
+          }, 'confirmed');
 
-        // Mark all pools as cranked with the same signature
-        for (const { poolPda } of poolsToCrank) {
-          results.push({ pool: poolPda.toBase58(), signature });
-        }
-      } catch (err) {
-        console.error('  Batch crank failed:', err);
-        for (const { poolPda } of poolsToCrank) {
-          results.push({ pool: poolPda.toBase58(), reason: `batch error: ${String(err)}` });
+          console.log(`  Cranked ${poolsToCrank.length} pools in single tx: ${signature}`);
+
+          // Mark all pools as cranked with the same signature
+          for (const { poolPda } of poolsToCrank) {
+            results.push({ pool: poolPda.toBase58(), signature });
+          }
+          cranked = true;
+        } catch (err) {
+          const isRetryable = err instanceof Error &&
+            (err.message.includes('Blockhash not found') ||
+             err.message.includes('block height exceeded') ||
+             err.message.includes('was not confirmed') ||
+             err.message.includes('has expired'));
+          if (isRetryable && attempt < maxRetries - 1) {
+            console.log(`  ⚠ Batch crank failed, retrying (attempt ${attempt + 2}/${maxRetries})...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          console.error('  Batch crank failed:', err);
+          for (const { poolPda } of poolsToCrank) {
+            results.push({ pool: poolPda.toBase58(), reason: `batch error: ${String(err)}` });
+          }
         }
       }
     }
