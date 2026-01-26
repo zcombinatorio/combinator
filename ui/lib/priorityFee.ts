@@ -57,8 +57,8 @@ export async function getPriorityFee(
       });
 
       if (!recentFees || recentFees.length === 0) {
-        // Fallback to medium if no data available
-        return 5000;
+        console.log('[PriorityFee] No recent fee data from RPC, using fallback (15000)');
+        return 15000;
       }
 
       // Sort fees and get 75th percentile
@@ -68,17 +68,19 @@ export async function getPriorityFee(
         .sort((a: number, b: number) => a - b);
 
       if (fees.length === 0) {
-        return 5000; // Default to medium
+        console.log(`[PriorityFee] All ${recentFees.length} recent fees were 0, using fallback (15000)`);
+        return 15000;
       }
 
       const percentileIndex = Math.floor(fees.length * 0.75);
       const suggestedFee = fees[percentileIndex];
+      const cappedFee = Math.min(suggestedFee, maxPriorityFee);
 
-      // Cap at max configured fee
-      return Math.min(suggestedFee, maxPriorityFee);
+      console.log(`[PriorityFee] Dynamic fee: ${cappedFee} (75th pctl of ${fees.length} samples, max ${maxPriorityFee})`);
+      return cappedFee;
     } catch (error) {
-      console.warn('Failed to get dynamic priority fee, using medium', error);
-      return 5000; // Default to medium
+      console.warn('[PriorityFee] Failed to get dynamic priority fee, using fallback (15000):', error);
+      return 15000;
     }
   }
 
