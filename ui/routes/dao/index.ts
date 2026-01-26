@@ -637,6 +637,8 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
       // Step 2: Add additional options (beyond initial 2) if needed
       for (let i = 2; i < options.length; i++) {
+        // Brief delay to let RPC sync after previous transaction
+        if (i > 2) await new Promise(resolve => setTimeout(resolve, 500));
         console.log(`Step 2.${i-1}: Adding option ${i}...`);
         try {
           const addResult = await client.addOption(adminKeypair.publicKey, initResult.proposalPda);
