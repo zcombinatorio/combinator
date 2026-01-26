@@ -1378,20 +1378,20 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
     }
 
     // Calculate percentage (with precision)
-    const balancePercent = (adminBalance * BigInt(10000)) / totalSupply; // basis points
-    const percentFormatted = Number(balancePercent) / 100;
+    const balancePercent = (adminBalance * BigInt(1000000)) / totalSupply; // hundredths of basis points
+    const percentFormatted = Number(balancePercent) / 10000;
 
-    console.log(`  Admin token balance: ${adminBalance} (${percentFormatted.toFixed(2)}% of supply)`);
+    console.log(`  Admin token balance: ${adminBalance} (${percentFormatted.toFixed(4)}% of supply)`);
 
-    // If balance < 0.5% of supply, skip deposit-back
-    if (balancePercent < BigInt(50)) { // 50 basis points = 0.5%
-      console.log(`  Balance too small for deposit-back (< 0.5%), skipping`);
+    // If balance < 0.005% of supply, skip deposit-back
+    if (balancePercent < BigInt(50)) { // 50 hundredths of basis points = 0.005%
+      console.log(`  Balance too small for deposit-back (< 0.005%), skipping`);
       return res.json({
         success: true,
         proposal_pda,
         dao_pda: dao.dao_pda,
         skipped: true,
-        reason: 'Admin token balance below 0.5% threshold',
+        reason: 'Admin token balance below 0.005% threshold',
         balance_percent: percentFormatted,
       });
     }
