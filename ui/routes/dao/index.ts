@@ -508,10 +508,15 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       console.log('Step 0: Creating Address Lookup Table for versioned transactions...');
       console.log(`  Options: ${options.length} (accounts: ${8 + 6 + 7 * options.length})`);
 
+      // Get dynamic priority fee for ALT creation
+      const altPriorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+      console.log(`  Using priority fee: ${altPriorityFee} microlamports`);
+
       const altResult = await client.createProposalALT(
         adminKeypair.publicKey,
         moderatorPda,
         options.length,
+        altPriorityFee,
       );
       const altAddress = altResult.altAddress;
       console.log(`  ✓ ALT created: ${altAddress.toBase58()}`);
@@ -602,8 +607,10 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         try {
           // Build and send manually for robust confirmation
           const initInstruction = await initResult.builder.instruction();
+          const initPriorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
           const initTx = new Transaction().add(
             ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: initPriorityFee }),
             initInstruction
           );
           const { blockhash: initBlockhash, lastValidBlockHeight: initLastValidBlockHeight } =
@@ -616,7 +623,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
             skipPreflight: false,
             preflightCommitment: 'confirmed',
           });
-          console.log(`  ✓ Initialize tx: ${initSig}`);
+          console.log(`  ✓ Initialize tx: ${initSig} (priority: ${initPriorityFee})`);
           await provider.connection.confirmTransaction({
             signature: initSig,
             blockhash: initBlockhash,
@@ -635,8 +642,10 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
           const addResult = await client.addOption(adminKeypair.publicKey, initResult.proposalPda);
           // Build and send manually for robust confirmation
           const addInstruction = await addResult.builder.instruction();
+          const addPriorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
           const addTx = new Transaction().add(
             ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: addPriorityFee }),
             addInstruction
           );
           const { blockhash: addBlockhash, lastValidBlockHeight: addLastValidBlockHeight } =
@@ -649,7 +658,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
             skipPreflight: false,
             preflightCommitment: 'confirmed',
           });
-          console.log(`  ✓ AddOption ${i} tx: ${optSig}`);
+          console.log(`  ✓ AddOption ${i} tx: ${optSig} (priority: ${addPriorityFee})`);
           await provider.connection.confirmTransaction({
             signature: optSig,
             blockhash: addBlockhash,
@@ -713,7 +722,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
           blockhash,
           lastValidBlockHeight,
         }, 'confirmed');
-        console.log(`  ✓ Wrapped ${quoteAmount.toString()} lamports to WSOL: ${wrapSig}`);
+        console.log(`  ✓ Wrapped ${quoteAmount.toString()} lamports to WSOL: ${wrapSig} (priority: ${wrapPriorityFee})`);
       }
 
       // Step 3: Launch proposal using versioned transaction with ALT
