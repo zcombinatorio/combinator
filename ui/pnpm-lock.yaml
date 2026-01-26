@@ -66,8 +66,8 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
       '@zcomb/programs-sdk':
-        specifier: ^1.11.2
-        version: 1.11.2(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)
+        specifier: ^1.11.3
+        version: 1.11.3(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)
       axios:
         specifier: ^1.12.2
         version: 1.12.2
@@ -1505,8 +1505,8 @@ packages:
     resolution: {integrity: sha512-DJDQhjKmSNVLKWItoKThJS+CsJQjR9AOBOirBVT1F9YpRyC9oYHE+ZnSf8y8bxUphtKqdQMPVQ2mHohYdRvDVQ==}
     engines: {node: '>=16'}
 
-  '@zcomb/programs-sdk@1.11.2':
-    resolution: {integrity: sha512-x39FVDlFGzVHCcDAQ6WOslFKN7359fY4MSi2aPr+monbuvGcA23swGy+VY+S2YgibFPGe+SHk4JopN+LlP1RHw==}
+  '@zcomb/programs-sdk@1.11.3':
+    resolution: {integrity: sha512-VBydFkIw/DJ5RqUbSBhbwiDizNbFFHUXuXAIFpdJVzhXnTNTJxbIVRhOLEN7g9XVvLKI4BSftEOgf8SaiaNOqQ==}
 
   abitype@1.1.0:
     resolution: {integrity: sha512-6Vh4HcRxNMLA0puzPjM5GBgT4aAcFGKZzSgAXvuZ27shJP6NEpielTuqbBmZILR5/xd0PizkBGy5hReKz9jl5A==}
@@ -5333,7 +5333,7 @@ snapshots:
 
   '@wallet-standard/base@1.1.0': {}
 
-  '@zcomb/programs-sdk@1.11.2(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)':
+  '@zcomb/programs-sdk@1.11.3(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)':
     dependencies:
       '@coral-xyz/anchor': 0.32.1(bufferutil@4.0.9)(encoding@0.1.13)(typescript@5.9.2)(utf-8-validate@5.0.10)
       '@solana/spl-token': 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.0.9)(encoding@0.1.13)(typescript@5.9.2)(utf-8-validate@5.0.10))(bufferutil@4.0.9)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)

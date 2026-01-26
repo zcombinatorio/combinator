@@ -729,11 +729,16 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       // ALT reduces account references from 32 bytes to 1 byte each
       console.log('Step 3: Launching proposal with versioned transaction...');
       try {
+        // Get dynamic priority fee based on network conditions (needed for ATA pre-creation and launch tx)
+        const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+        console.log(`  Using priority fee: ${priorityFee} microlamports`);
+
         const launchResult = await client.launchProposal(
           adminKeypair.publicKey,
           initResult.proposalPda,
           baseAmount,
           quoteAmount,
+          { priorityFeeMicroLamports: priorityFee },
         );
 
         // Extract the instruction from the builder
@@ -741,11 +746,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
 
         // Add compute budget instructions
         const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 });
-
-        // Get dynamic priority fee based on network conditions
-        const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
         const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee });
-        console.log(`  Using priority fee: ${priorityFee} microlamports`);
 
         // Build versioned transaction using the ALT
         const { versionedTx, blockhash, lastValidBlockHeight } = await client.buildVersionedTx(
