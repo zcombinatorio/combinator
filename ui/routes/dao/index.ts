@@ -667,7 +667,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       if (new PublicKey(dao.quote_mint).equals(NATIVE_SOL_MINT)) {
         console.log('Step 2.5: Wrapping SOL to WSOL...');
         const { createSyncNativeInstruction, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');
-        const { SystemProgram, Transaction, sendAndConfirmTransaction } = await import('@solana/web3.js');
+        const { SystemProgram, Transaction } = await import('@solana/web3.js');
 
         const wsolAta = getAssociatedTokenAddressSync(NATIVE_SOL_MINT, adminKeypair.publicKey);
         const wrapTx = new Transaction();
@@ -695,11 +695,24 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         // Sync native balance
         wrapTx.add(createSyncNativeInstruction(wsolAta));
 
-        const { blockhash } = await provider.connection.getLatestBlockhash();
+        // Add priority fee for faster inclusion
+        const wrapPriorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+        wrapTx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: wrapPriorityFee }));
+
+        const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash();
         wrapTx.recentBlockhash = blockhash;
         wrapTx.feePayer = adminKeypair.publicKey;
+        wrapTx.sign(adminKeypair);
 
-        const wrapSig = await sendAndConfirmTransaction(provider.connection, wrapTx, [adminKeypair]);
+        const wrapSig = await provider.connection.sendRawTransaction(wrapTx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        });
+        await provider.connection.confirmTransaction({
+          signature: wrapSig,
+          blockhash,
+          lastValidBlockHeight,
+        }, 'confirmed');
         console.log(`  ✓ Wrapped ${quoteAmount.toString()} lamports to WSOL: ${wrapSig}`);
       }
 
