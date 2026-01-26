@@ -740,56 +740,100 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         console.log(`  ✓ Wrapped ${quoteAmount.toString()} lamports to WSOL: ${wrapSig} (priority: ${wrapPriorityFee})`);
       }
 
-      // Step 3: Launch proposal using versioned transaction with ALT
+      // Step 2.6: Pre-create conditional ATAs for 3+ options (with retry logic)
+      // This avoids the 64 instruction trace limit and gives us control over retries
+      if (options.length >= 3) {
+        console.log('Step 2.6: Pre-creating conditional token ATAs...');
+        const ataMaxRetries = 3;
+        for (let attempt = 0; attempt < ataMaxRetries; attempt++) {
+          try {
+            const ataPriorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+            const ataSig = await client.ensureConditionalATAs(
+              adminKeypair.publicKey,
+              initResult.proposalPda,
+              { priorityFeeMicroLamports: ataPriorityFee }
+            );
+            console.log(`  ✓ ATAs created: ${ataSig} (priority: ${ataPriorityFee})`);
+            break;
+          } catch (e: unknown) {
+            const isRetryable = e instanceof Error &&
+              (e.message.includes('Blockhash not found') ||
+               e.message.includes('block height exceeded') ||
+               e.message.includes('was not confirmed'));
+            if (isRetryable && attempt < ataMaxRetries - 1) {
+              console.log(`  ⚠ ATA creation failed, retrying (attempt ${attempt + 2}/${ataMaxRetries})...`);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              continue;
+            }
+            throw e;
+          }
+        }
+      }
+
+      // Step 3: Launch proposal using versioned transaction with ALT (with retry logic)
       // ALT reduces account references from 32 bytes to 1 byte each
       console.log('Step 3: Launching proposal with versioned transaction...');
-      try {
-        // Get dynamic priority fee based on network conditions (needed for ATA pre-creation and launch tx)
-        const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
-        console.log(`  Using priority fee: ${priorityFee} microlamports`);
+      const launchMaxRetries = 3;
+      for (let attempt = 0; attempt < launchMaxRetries; attempt++) {
+        try {
+          // Get dynamic priority fee based on network conditions
+          const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+          console.log(`  Using priority fee: ${priorityFee} microlamports`);
 
-        const launchResult = await client.launchProposal(
-          adminKeypair.publicKey,
-          initResult.proposalPda,
-          baseAmount,
-          quoteAmount,
-          { priorityFeeMicroLamports: priorityFee },
-        );
+          // Disable automatic ATA creation since we handled it above
+          const launchResult = await client.launchProposal(
+            adminKeypair.publicKey,
+            initResult.proposalPda,
+            baseAmount,
+            quoteAmount,
+            { priorityFeeMicroLamports: priorityFee, ensureATAs: false },
+          );
 
-        // Extract the instruction from the builder
-        const launchInstruction = await launchResult.builder.instruction();
+          // Extract the instruction from the builder
+          const launchInstruction = await launchResult.builder.instruction();
 
-        // Add compute budget instructions
-        const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 });
-        const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee });
+          // Add compute budget instructions
+          const computeBudgetIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 });
+          const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee });
 
-        // Build versioned transaction using the ALT
-        const { versionedTx, blockhash, lastValidBlockHeight } = await client.buildVersionedTx(
-          adminKeypair.publicKey,
-          [computeBudgetIx, priorityFeeIx, launchInstruction],
-          altAddress,
-        );
+          // Build versioned transaction using the ALT
+          const { versionedTx, blockhash, lastValidBlockHeight } = await client.buildVersionedTx(
+            adminKeypair.publicKey,
+            [computeBudgetIx, priorityFeeIx, launchInstruction],
+            altAddress,
+          );
 
-        // Sign the versioned transaction
-        versionedTx.sign([adminKeypair]);
+          // Sign the versioned transaction
+          versionedTx.sign([adminKeypair]);
 
-        // Send and confirm with proper blockhash-based expiration detection
-        const launchSig = await provider.connection.sendTransaction(versionedTx, {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-        });
+          // Send and confirm with proper blockhash-based expiration detection
+          const launchSig = await provider.connection.sendTransaction(versionedTx, {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          });
 
-        // Wait for confirmation using blockhash expiration
-        await provider.connection.confirmTransaction({
-          signature: launchSig,
-          blockhash,
-          lastValidBlockHeight,
-        }, 'confirmed');
+          // Wait for confirmation using blockhash expiration
+          await provider.connection.confirmTransaction({
+            signature: launchSig,
+            blockhash,
+            lastValidBlockHeight,
+          }, 'confirmed');
 
-        console.log(`  ✓ Launch tx: ${launchSig}`);
-      } catch (e) {
-        console.error('  ✗ Launch failed:', e);
-        throw e;
+          console.log(`  ✓ Launch tx: ${launchSig}`);
+          break; // Success, exit retry loop
+        } catch (e: unknown) {
+          const isRetryable = e instanceof Error &&
+            (e.message.includes('Blockhash not found') ||
+             e.message.includes('block height exceeded') ||
+             e.message.includes('was not confirmed'));
+          if (isRetryable && attempt < launchMaxRetries - 1) {
+            console.log(`  ⚠ Launch failed, retrying (attempt ${attempt + 2}/${launchMaxRetries})...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          console.error('  ✗ Launch failed:', e);
+          throw e;
+        }
       }
 
       proposalPda = initResult.proposalPda.toBase58();
