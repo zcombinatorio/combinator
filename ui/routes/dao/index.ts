@@ -640,35 +640,48 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         // Brief delay to let RPC sync after previous transaction
         if (i > 2) await new Promise(resolve => setTimeout(resolve, 500));
         console.log(`Step 2.${i-1}: Adding option ${i}...`);
-        try {
-          const addResult = await client.addOption(adminKeypair.publicKey, initResult.proposalPda);
-          // Build and send manually for robust confirmation
-          const addInstruction = await addResult.builder.instruction();
-          const addPriorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
-          const addTx = new Transaction().add(
-            ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
-            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: addPriorityFee }),
-            addInstruction
-          );
-          const { blockhash: addBlockhash, lastValidBlockHeight: addLastValidBlockHeight } =
-            await provider.connection.getLatestBlockhash('confirmed');
-          addTx.recentBlockhash = addBlockhash;
-          addTx.feePayer = adminKeypair.publicKey;
-          addTx.sign(adminKeypair);
 
-          const optSig = await provider.connection.sendRawTransaction(addTx.serialize(), {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-          });
-          console.log(`  ✓ AddOption ${i} tx: ${optSig} (priority: ${addPriorityFee})`);
-          await provider.connection.confirmTransaction({
-            signature: optSig,
-            blockhash: addBlockhash,
-            lastValidBlockHeight: addLastValidBlockHeight,
-          }, 'confirmed');
-        } catch (e) {
-          console.error(`  ✗ AddOption ${i} failed:`, e);
-          throw e;
+        const addResult = await client.addOption(adminKeypair.publicKey, initResult.proposalPda);
+        const addInstruction = await addResult.builder.instruction();
+        const addPriorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
+
+        // Retry loop for transient RPC errors (blockhash not found, etc.)
+        const maxRetries = 3;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            const addTx = new Transaction().add(
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: addPriorityFee }),
+              addInstruction
+            );
+            const { blockhash: addBlockhash, lastValidBlockHeight: addLastValidBlockHeight } =
+              await provider.connection.getLatestBlockhash('confirmed');
+            addTx.recentBlockhash = addBlockhash;
+            addTx.feePayer = adminKeypair.publicKey;
+            addTx.sign(adminKeypair);
+
+            const optSig = await provider.connection.sendRawTransaction(addTx.serialize(), {
+              skipPreflight: false,
+              preflightCommitment: 'confirmed',
+            });
+            console.log(`  ✓ AddOption ${i} tx: ${optSig} (priority: ${addPriorityFee})`);
+            await provider.connection.confirmTransaction({
+              signature: optSig,
+              blockhash: addBlockhash,
+              lastValidBlockHeight: addLastValidBlockHeight,
+            }, 'confirmed');
+            break; // Success, exit retry loop
+          } catch (e: unknown) {
+            const isRetryable = e instanceof Error &&
+              (e.message.includes('Blockhash not found') || e.message.includes('block height exceeded'));
+            if (isRetryable && attempt < maxRetries - 1) {
+              console.log(`  ⚠ Retrying AddOption ${i} (attempt ${attempt + 2}/${maxRetries})...`);
+              await new Promise(resolve => setTimeout(resolve, 500));
+              continue;
+            }
+            console.error(`  ✗ AddOption ${i} failed:`, e);
+            throw e;
+          }
         }
       }
 
