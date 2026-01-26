@@ -1140,7 +1140,7 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
       console.log(`  Parent DAO (LP owner): ${liquidityDao.dao_name} (${liquidityDao.dao_pda})`);
     }
 
-    let tx: string;
+    let tx: string | undefined;
 
     // Use versioned transaction with ALT for 3+ option proposals
     // This avoids exceeding the 1232 byte transaction size limit
@@ -1185,6 +1185,7 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
           throw e;
         }
       }
+      if (!tx) throw new Error('Redemption failed after all retries');
     } else {
       // Standard transaction for 2-option proposals
       // Build and send manually for robust confirmation (builder.rpc() has timeout issues)
