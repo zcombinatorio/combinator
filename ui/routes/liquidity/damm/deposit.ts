@@ -284,6 +284,18 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
       maxAmountTokenB = BN.min(maxAmountTokenB, new BN(availableForWrap));
     }
 
+    // Log deposit parameters for debugging
+    console.log('  [Deposit Debug]');
+    console.log(`    Mode: ${useCleanupMode ? 'cleanup' : 'normal'}`);
+    console.log(`    Token A: ${poolState.tokenAMint.toBase58().slice(0, 8)}... (${isTokenANativeSOL ? 'native SOL' : 'SPL'})`);
+    console.log(`    Token B: ${poolState.tokenBMint.toBase58().slice(0, 8)}... (${isTokenBNativeSOL ? 'native SOL' : 'SPL'})`);
+    console.log(`    Available balances: A=${tokenAAmountRaw.toString()}, B=${tokenBAmountRaw.toString()}`);
+    console.log(`    Deposit amounts: A=${depositTokenAAmount.toString()}, B=${depositTokenBAmount.toString()}`);
+    console.log(`    Max amounts: A=${maxAmountTokenA.toString()}, B=${maxAmountTokenB.toString()}`);
+    console.log(`    Thresholds: A=${maxAmountTokenA.toString()}, B=${maxAmountTokenB.toString()}`);
+    console.log(`    Liquidity delta: ${liquidityDelta.toString()}`);
+    console.log(`    Max > Available? A=${maxAmountTokenA.gt(tokenAAmountRaw)}, B=${maxAmountTokenB.gt(tokenBAmountRaw)}`);
+
     // Add liquidity
     const addLiquidityTx = await cpAmm.addLiquidity({
       owner: lpOwner.publicKey,
