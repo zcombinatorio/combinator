@@ -629,6 +629,8 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
             blockhash: initBlockhash,
             lastValidBlockHeight: initLastValidBlockHeight,
           }, 'confirmed');
+          // Brief delay to let RPC nodes sync after initialize
+          await new Promise(resolve => setTimeout(resolve, 500));
         } catch (e) {
           console.error('  ✗ Initialize failed:', e);
           throw e;
