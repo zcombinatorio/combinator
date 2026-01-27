@@ -30,7 +30,6 @@ import {
   getPoolConfig,
   acquireLiquidityLock,
   verifySignedTransactionBatch,
-  getJupiterPrice,
   REQUEST_EXPIRY,
   getTokenProgramsForMints,
   AdminKeyError,
@@ -163,22 +162,14 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
     const managerTokenXAta = await getAssociatedTokenAddress(tokenXMint, managerWallet, false, tokenXProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
     const managerTokenYAta = await getAssociatedTokenAddress(tokenYMint, managerWallet, false, tokenYProgram, ASSOCIATED_TOKEN_PROGRAM_ID);
 
-    // Fetch Jupiter market price, fall back to pool price if not available
-    console.log('  Fetching Jupiter market price...');
-    let marketPrice: number;
-    try {
-      const jupiterPrice = await getJupiterPrice(tokenXMint.toBase58(), tokenYMint.toBase58());
-      marketPrice = jupiterPrice.tokenBPerTokenA;
-    } catch (jupiterError) {
-      // Jupiter doesn't have price data (common for new/test tokens)
-      // Use the pool's active bin price as fallback
-      console.log(`  Jupiter price not available: ${jupiterError instanceof Error ? jupiterError.message : String(jupiterError)}`);
-      console.log('  Using pool active bin price as fallback...');
-      const activeBin = await dlmmPool.getActiveBin();
-      // activeBin.price is in Y per X (quote per base)
-      marketPrice = Number(activeBin.price);
-      console.log(`  Pool active bin price: ${marketPrice} tokenY per tokenX`);
-    }
+    // Use on-chain price from the pool being withdrawn from
+    // This ensures conditional markets are seeded at the actual pool price
+    // and avoids dependency on external APIs that may be stale/inaccurate
+    // Consistent with os-percent monitor price fetching (price.service.ts:443-445)
+    console.log('  Fetching DLMM active bin price...');
+    const activeBin = await dlmmPool.getActiveBin();
+    const marketPrice = Number(activeBin.pricePerToken);
+    console.log(`  Active bin ${activeBin.binId}: ${marketPrice} tokenY per tokenX`);
 
     const withdrawnXDecimal = Number(estimatedTokenXAmount.toString()) / Math.pow(10, tokenXMintInfo.decimals);
     const withdrawnYDecimal = Number(estimatedTokenYAmount.toString()) / Math.pow(10, tokenYMintInfo.decimals);
