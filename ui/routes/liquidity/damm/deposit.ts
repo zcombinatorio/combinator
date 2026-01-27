@@ -120,11 +120,15 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
 
     if (useCleanupMode) {
       console.log('  Using cleanup mode - reading LP owner wallet balances');
+      const priceBeforeDelay = Math.pow(Number(poolState.sqrtPrice.toString()) / Math.pow(2, 64), 2);
+      console.log(`  Pool price before delay: ${priceBeforeDelay}`);
       console.log('  Waiting 2s for RPC to propagate pool state...');
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Re-fetch pool state after delay to get post-swap prices
       poolState = await cpAmm.fetchPoolState(poolAddress);
+      const priceAfterDelay = Math.pow(Number(poolState.sqrtPrice.toString()) / Math.pow(2, 64), 2);
+      console.log(`  Pool price after delay: ${priceAfterDelay} (${priceBeforeDelay !== priceAfterDelay ? 'CHANGED' : 'same'})`);
 
       if (isRestrictedLpOwner(lpOwner.publicKey.toBase58())) {
         return res.status(403).json({ error: 'Deposit operations using LP owner balances are not permitted for this LP owner address' });
