@@ -104,7 +104,7 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
     const isSameWallet = lpOwner.publicKey.equals(managerWallet);
 
     const cpAmm = new CpAmm(connection);
-    const poolState = await cpAmm.fetchPoolState(poolAddress);
+    let poolState = await cpAmm.fetchPoolState(poolAddress);
 
     // Detect token programs (Token-2022 vs SPL Token) before calling getMint
     const tokenPrograms = await getTokenProgramsForMints(connection, [poolState.tokenAMint, poolState.tokenBMint]);
@@ -122,6 +122,9 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
       console.log('  Using cleanup mode - reading LP owner wallet balances');
       console.log('  Waiting 2s for RPC to propagate pool state...');
       await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Re-fetch pool state after delay to get post-swap prices
+      poolState = await cpAmm.fetchPoolState(poolAddress);
 
       if (isRestrictedLpOwner(lpOwner.publicKey.toBase58())) {
         return res.status(403).json({ error: 'Deposit operations using LP owner balances are not permitted for this LP owner address' });
