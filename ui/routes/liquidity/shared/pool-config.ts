@@ -49,6 +49,7 @@ export const DAMM_POOL_TO_TICKER: Record<string, string> = {
   '2FCqTyvFcE4uXgRL1yh56riZ9vdjVgoP6yknZW3f8afX': 'OOGWAY',
   'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': 'SURF',
   'PS3rPSb49GnAkmh3tec1RQizgNSb1hUwPsYHGGuAy5r': 'SURFTEST',
+  '4557n38ThUyuiTbzs3A6GszKxRt3ApPDndEekUWuqswD': 'SUTESTRF',
 };
 
 /**

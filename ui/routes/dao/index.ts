@@ -157,7 +157,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // Test DAOs: 1 minute to 7 days (for testing)
     // DAO owner: 18 hours to 7 days
     // Others (whitelist/token threshold): 24 hours to 4 days
-    const TEST_DAOS = ['SURFTEST', 'TESTSURF'];
+    const TEST_DAOS = ['SURFTEST', 'TESTSURF', 'SUTESTRF'];
     const isTestDao = TEST_DAOS.includes(dao.dao_name);
     const isOwner = wallet === dao.owner_wallet;
     const ONE_MINUTE = 60;
@@ -233,7 +233,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // Skip for legacy historical DAOs (ZC, SURFTEST, TESTSURF) - their mint authority
     // was set up before migration and doesn't follow the standard pattern.
     // SURF still requires the check as it was set up with proper mint authority.
-    const LEGACY_DAOS_SKIP_MINT_CHECK = ['ZC', 'SURFTEST', 'TESTSURF'];
+    const LEGACY_DAOS_SKIP_MINT_CHECK = ['ZC', 'SURFTEST', 'TESTSURF', 'SUTESTRF'];
     const skipMintCheck = LEGACY_DAOS_SKIP_MINT_CHECK.includes(dao.dao_name);
     if (!skipMintCheck) {
       const mintAuthCheck = await checkMintAuthority(connection, dao.mint_auth_multisig, dao.token_mint);

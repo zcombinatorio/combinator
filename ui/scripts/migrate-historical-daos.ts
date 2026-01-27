@@ -140,6 +140,24 @@ const DAO_CONFIGS: Record<string, DaoConfig> = {
     ],
     withdrawalPercentage: 12,
   },
+  SUTESTRF: {
+    name: 'SUTESTRF',
+    baseMint: 'E7xktmaFNM6vd4GKa8FrXwX7sA7hrLzToxc64foGq3iW',
+    quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',  // USDC
+    pool: '4557n38ThUyuiTbzs3A6GszKxRt3ApPDndEekUWuqswD',
+    poolType: 'damm',
+    proposalIdCounter: 0,
+    treasuryMultisig: 'CcNLEfshWM7EPcEUxtJkRWd5BCrjvFqJCexz5oU3SyFz',
+    mintAuthMultisig: 'Ed8gTWnKvEVz17ucjJPm7nxPtE1uRBghbv8nRnGGnJHS',
+    cosigner: '2DxruuK1pTh9i1DruuuchJGAtjiczPtY2FAYtFQUBy27',
+    adminWallet: '2DxruuK1pTh9i1DruuuchJGAtjiczPtY2FAYtFQUBy27',
+    ownerWallet: '83PbZortE6imDzJcZrd5eGS42zbSAskJw7eP26GaJbqE',
+    initialProposers: [
+      '2DxruuK1pTh9i1DruuuchJGAtjiczPtY2FAYtFQUBy27',
+      'FtV94i2JvmaqsE1rBT72C9YR58wYJXt1ZjRmPb4tDvMK',
+    ],
+    withdrawalPercentage: 12,
+  },
 
   // ==========================================================================
   // PRODUCTION DAOs - Migrate after testing
