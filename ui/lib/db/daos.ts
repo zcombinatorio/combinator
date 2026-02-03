@@ -538,6 +538,52 @@ export async function getDaoStats(
   }
 }
 
+export async function getDaoStatsBatch(
+  pool: Pool,
+  daoIds: number[]
+): Promise<Map<number, { proposerCount: number; childDaoCount: number }>> {
+  if (daoIds.length === 0) {
+    return new Map();
+  }
+
+  const query = `
+    SELECT
+      d.id AS dao_id,
+      COALESCE(p.proposer_count, 0) AS proposer_count,
+      COALESCE(c.child_count, 0) AS child_dao_count
+    FROM unnest($1::int[]) AS d(id)
+    LEFT JOIN (
+      SELECT dao_id, COUNT(*) AS proposer_count
+      FROM cmb_dao_proposers
+      WHERE dao_id = ANY($1)
+      GROUP BY dao_id
+    ) p ON p.dao_id = d.id
+    LEFT JOIN (
+      SELECT parent_dao_id, COUNT(*) AS child_count
+      FROM cmb_daos
+      WHERE parent_dao_id = ANY($1)
+      GROUP BY parent_dao_id
+    ) c ON c.parent_dao_id = d.id
+  `;
+
+  try {
+    const result = await pool.query(query, [daoIds]);
+    const statsMap = new Map<number, { proposerCount: number; childDaoCount: number }>();
+
+    for (const row of result.rows) {
+      statsMap.set(row.dao_id, {
+        proposerCount: parseInt(row.proposer_count),
+        childDaoCount: parseInt(row.child_dao_count),
+      });
+    }
+
+    return statsMap;
+  } catch (error) {
+    console.error('Error fetching DAO stats batch:', error);
+    throw error;
+  }
+}
+
 // ============================================================================
 // Proposer Threshold Functions
 // ============================================================================
