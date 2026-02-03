@@ -534,4 +534,154 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
   }
 });
 
+// ============================================================================
+// POST /dao/reserve-admin - Reserve an admin key for external DAO creation
+// ============================================================================
+
+/**
+ * Reserve an admin key for a client who will create the DAO on-chain themselves.
+ *
+ * This endpoint allows a trusted client to:
+ * 1. Get a managed admin wallet from our key service
+ * 2. Create an optimistic DAO entry in our database
+ *
+ * The client then builds their own transaction including:
+ * - Token launch
+ * - Pool launch
+ * - DAO creation (with themselves as temp admin)
+ * - transferAdmin to our managed admin
+ * - LP transfer to our admin
+ *
+ * After confirming on-chain creation, visibility should be updated separately.
+ *
+ * Auth: API key in request body (no wallet signature required)
+ */
+router.post('/reserve-admin', async (req: Request, res: Response) => {
+  try {
+    const {
+      api_key,
+      name,
+      token_mint,
+      pool_address,
+      pool_type,
+      quote_mint,
+      treasury_cosigner,
+      owner_wallet,
+    } = req.body;
+
+    // Validate API key
+    const expectedApiKey = process.env.DAO_RESERVE_API_KEY;
+    if (!expectedApiKey) {
+      console.error('[reserve-admin] DAO_RESERVE_API_KEY not configured');
+      return res.status(500).json({ error: 'API key not configured on server' });
+    }
+    if (!api_key || api_key !== expectedApiKey) {
+      return res.status(403).json({ error: 'Invalid API key' });
+    }
+
+    // Validate required fields
+    if (!name || !token_mint || !pool_address || !pool_type || !quote_mint || !treasury_cosigner || !owner_wallet) {
+      return res.status(400).json({
+        error: 'Missing required fields: name, token_mint, pool_address, pool_type, quote_mint, treasury_cosigner, owner_wallet'
+      });
+    }
+
+    // Validate name length
+    if (name.length > 32) {
+      return res.status(400).json({ error: 'DAO name must be 32 characters or less' });
+    }
+
+    // Validate pool_type
+    if (pool_type !== 'damm' && pool_type !== 'dlmm') {
+      return res.status(400).json({ error: 'pool_type must be "damm" or "dlmm"' });
+    }
+
+    // Validate addresses
+    if (!isValidTokenMintAddress(token_mint)) {
+      return res.status(400).json({ error: 'Invalid token_mint address' });
+    }
+    if (!isValidTokenMintAddress(pool_address)) {
+      return res.status(400).json({ error: 'Invalid pool_address' });
+    }
+    if (!isValidTokenMintAddress(quote_mint)) {
+      return res.status(400).json({ error: 'Invalid quote_mint address' });
+    }
+    if (!isValidSolanaAddress(treasury_cosigner)) {
+      return res.status(400).json({ error: 'Invalid treasury_cosigner address' });
+    }
+    if (!isValidSolanaAddress(owner_wallet)) {
+      return res.status(400).json({ error: 'Invalid owner_wallet address' });
+    }
+
+    const pool = getPool();
+    const connection = getConnection();
+
+    // Acquire lock for key allocation
+    await daoCreationMutex.acquire();
+
+    try {
+      // Check if DAO with this name already exists
+      const existingDao = await getDaoByName(pool, name);
+      if (existingDao) {
+        return res.status(409).json({ error: 'DAO with this name already exists' });
+      }
+
+      // Get next key index and allocate a new managed wallet
+      const keyIdx = await getNextKeyIndex(pool);
+      const { publicKey: adminWallet } = await allocateKey(connection, keyIdx, false);
+
+      // Register the key
+      await registerKey(pool, {
+        key_idx: keyIdx,
+        public_key: adminWallet,
+        purpose: 'dao_parent',
+      });
+
+      // Create optimistic DAO entry
+      // Note: visibility defaults to 0 (hidden) until confirmed on-chain
+      // PDAs use "PENDING" placeholder - update manually after on-chain creation
+      const dao = await createDao(pool, {
+        dao_pda: 'PENDING',
+        dao_name: name,
+        moderator_pda: 'PENDING',
+        owner_wallet,
+        admin_key_idx: keyIdx,
+        admin_wallet: adminWallet, // Our managed admin, not client's temp admin
+        token_mint,
+        pool_address,
+        pool_type,
+        quote_mint,
+        treasury_multisig: 'PENDING',
+        mint_auth_multisig: 'PENDING',
+        treasury_cosigner,
+        dao_type: 'parent',
+        withdrawal_percentage: 12,
+        // No funding_signature - this flow doesn't use funding verification
+      });
+
+      await updateKeyDaoId(pool, keyIdx, dao.id!);
+
+      // Add creator to proposer whitelist
+      await addProposer(pool, {
+        dao_id: dao.id!,
+        proposer_wallet: owner_wallet,
+        added_by: owner_wallet,
+      });
+
+      console.log(`[reserve-admin] Reserved admin for DAO ${name}: ${adminWallet} (key_idx: ${keyIdx}, dao_id: ${dao.id})`);
+
+      res.json({
+        admin_wallet: adminWallet,
+        admin_key_idx: keyIdx,
+        dao_id: dao.id,
+      });
+    } finally {
+      daoCreationMutex.release();
+    }
+  } catch (error) {
+    console.error('Error reserving admin:', error);
+    res.status(500).json({ error: 'Failed to reserve admin', details: String(error) });
+  }
+});
+
 export default router;
