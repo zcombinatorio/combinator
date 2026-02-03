@@ -12,7 +12,7 @@
 import { Router, Request, Response } from 'express';
 import * as crypto from 'crypto';
 import { Connection, Transaction, PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddress, getMint } from '@solana/spl-token';
+import { getAssociatedTokenAddress, getMint, NATIVE_MINT } from '@solana/spl-token';
 import bs58 from 'bs58';
 import BN from 'bn.js';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
@@ -97,38 +97,39 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
 
     const tokenAMintInfo = await getMint(connection, tokenAMint, undefined, tokenAProgram);
     const tokenBMintInfo = await getMint(connection, tokenBMint, undefined, tokenBProgram);
+    const isTokenANativeSOL = tokenAMint.equals(NATIVE_MINT);
+    const isTokenBNativeSOL = tokenBMint.equals(NATIVE_MINT);
 
-    // ===================================================================================
-    // SOL/wSOL HANDLING - READ FROM wSOL ATA
-    // ===================================================================================
-    // Context: This runs after liquidity redemption from conditional pools.
-    //
-    // Why wSOL ATA (not native SOL balance)?
-    // - Liquidity redemption returns wSOL to the wSOL ATA, NOT native SOL to wallet
-    // - If we checked native SOL balance here, we'd miss the redeemed wSOL entirely
-    // - This would cause incorrect swap calculations (e.g., swapping half of token A
-    //   unnecessarily because we thought we had no SOL)
-    //
-    // What happens next:
-    // - Jupiter swap (with wrapAndUnwrapSol: true) reads from wSOL ATA for input
-    // - Jupiter outputs native SOL (unwrapped) when output mint is NATIVE_MINT
-    // - DAMM deposit expects native SOL and wraps it internally via SystemProgram.transfer
-    // ===================================================================================
     const lpOwnerTokenAAta = await getAssociatedTokenAddress(tokenAMint, lpOwner.publicKey, false, tokenAProgram);
     const lpOwnerTokenBAta = await getAssociatedTokenAddress(tokenBMint, lpOwner.publicKey, false, tokenBProgram);
 
     let tokenABalance = new BN(0);
     let tokenBBalance = new BN(0);
+    const reserveForFees = 333_000_000; // Reserve ~0.33 SOL for tx fees
 
     try {
-      const tokenAAccount = await connection.getTokenAccountBalance(lpOwnerTokenAAta);
-      tokenABalance = new BN(tokenAAccount.value.amount);
-    } catch { /* Account doesn't exist */ }
+      if (isTokenANativeSOL) {
+        const solBalance = await connection.getBalance(lpOwner.publicKey);
+        tokenABalance = new BN(Math.max(0, solBalance - reserveForFees));
+      } else {
+        const tokenAAccount = await connection.getTokenAccountBalance(lpOwnerTokenAAta);
+        tokenABalance = new BN(tokenAAccount.value.amount);
+      }
+    } catch (err) {
+      console.log(`  Warning: Failed to read token A balance: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     try {
-      const tokenBAccount = await connection.getTokenAccountBalance(lpOwnerTokenBAta);
-      tokenBBalance = new BN(tokenBAccount.value.amount);
-    } catch { /* Account doesn't exist */ }
+      if (isTokenBNativeSOL) {
+        const solBalance = await connection.getBalance(lpOwner.publicKey);
+        tokenBBalance = new BN(Math.max(0, solBalance - reserveForFees));
+      } else {
+        const tokenBAccount = await connection.getTokenAccountBalance(lpOwnerTokenBAta);
+        tokenBBalance = new BN(tokenBAccount.value.amount);
+      }
+    } catch (err) {
+      console.log(`  Warning: Failed to read token B balance: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     console.log(`  LP Owner A Balance: ${tokenABalance.toString()}`);
     console.log(`  LP Owner B Balance: ${tokenBBalance.toString()}`);

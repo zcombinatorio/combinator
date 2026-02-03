@@ -23,7 +23,7 @@
 import { Router, Request, Response } from 'express';
 import { PublicKey, Transaction, VersionedTransaction, ComputeBudgetProgram } from '@solana/web3.js';
 import { AnchorProvider, BN } from '@coral-xyz/anchor';
-import { NATIVE_MINT, getAssociatedTokenAddress } from '@solana/spl-token';
+import { NATIVE_MINT, getAssociatedTokenAddress, createCloseAccountInstruction } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { futarchy } from '@zcomb/programs-sdk';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
@@ -1157,11 +1157,14 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
           const priorityFee = await getPriorityFee(provider.connection, PriorityFeeMode.Dynamic);
           console.log(`  Using priority fee: ${priorityFee} microlamports`);
 
+          // Check if quote mint is SOL - if so, enable atomic unwrap
+          const isQuoteSol = new PublicKey(liquidityDao.quote_mint).equals(NATIVE_MINT);
+
           const result = await client.redeemLiquidityVersioned(
             adminKeypair.publicKey,
             proposalPubkey,
             undefined, // altAddress - let SDK create if needed
-            { priorityFeeMicroLamports: priorityFee }
+            { priorityFeeMicroLamports: priorityFee, unwrapSol: isQuoteSol }
           );
 
           // Sign the versioned transaction with admin keypair
@@ -1206,6 +1209,14 @@ router.post('/redeem-liquidity', async (req: Request, res: Response) => {
 
       const redeemTx = new Transaction();
       redeemTx.add(computeBudgetIx, priorityFeeIx, instruction);
+
+      // Add wSOL unwrap instruction if quote mint is native SOL
+      const isQuoteSol = new PublicKey(liquidityDao.quote_mint).equals(NATIVE_MINT);
+      if (isQuoteSol) {
+        const wsolAta = await getAssociatedTokenAddress(NATIVE_MINT, adminKeypair.publicKey);
+        redeemTx.add(createCloseAccountInstruction(wsolAta, adminKeypair.publicKey, adminKeypair.publicKey));
+        console.log('  Adding wSOL unwrap instruction (quote mint is SOL)');
+      }
 
       const { blockhash, lastValidBlockHeight } = await provider.connection.getLatestBlockhash('confirmed');
       redeemTx.recentBlockhash = blockhash;
@@ -1465,13 +1476,28 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
     const depositBuildBody = poolType === 'dlmm'
       ? { poolAddress: liquidityDao.pool_address, tokenXAmount: 0, tokenYAmount: 0, adminWallet: liquidityDao.admin_wallet }
       : { poolAddress: liquidityDao.pool_address, tokenAAmount: 0, tokenBAmount: 0, adminWallet: liquidityDao.admin_wallet };
-    const depositBuildResponse = await fetch(`${baseUrl}/${poolType}/deposit/build`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(depositBuildBody)
-    });
 
-    if (depositBuildResponse.ok) {
+    // Retry deposit build up to 3 times with delay (RPC may return stale data)
+    let depositBuildResponse: globalThis.Response | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      depositBuildResponse = await fetch(`${baseUrl}/${poolType}/deposit/build`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(depositBuildBody)
+      });
+
+      if (depositBuildResponse.ok) break;
+
+      const err = await depositBuildResponse.clone().json().catch(() => ({})) as { error?: string };
+      if (err.error?.includes('zero balance') && attempt < 3) {
+        console.log(`  Deposit build attempt ${attempt} failed (stale RPC?), retrying in 2s...`);
+        await new Promise(r => setTimeout(r, 2000));
+      } else {
+        break;
+      }
+    }
+
+    if (depositBuildResponse?.ok) {
       const depositBuildData = await depositBuildResponse.json() as {
         requestId: string;
         // DAMM returns 'transaction' (singular), DLMM returns 'transactions' (array)
@@ -1524,7 +1550,7 @@ router.post('/deposit-back', async (req: Request, res: Response) => {
         const depositError = await depositConfirmResponse.json().catch(() => ({}));
         console.log(`  Deposit failed: ${(depositError as any).error || 'unknown'}`);
       }
-    } else {
+    } else if (depositBuildResponse) {
       const depositError = await depositBuildResponse.json().catch(() => ({}));
       console.log(`  Deposit build failed: ${(depositError as any).error || 'unknown'}`);
     }

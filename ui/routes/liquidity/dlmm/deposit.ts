@@ -123,30 +123,27 @@ router.post('/build', dlmmLiquidityLimiter, async (req: Request, res: Response) 
         return res.status(403).json({ error: 'Deposit operations using LP owner balances are not permitted for this LP owner address' });
       }
 
-      tokenXAmountRaw = new BN(0);
-      tokenYAmountRaw = new BN(0);
+      const tokenXAccount = await connection.getTokenAccountBalance(lpOwnerTokenXAta);
+      tokenXAmountRaw = new BN(tokenXAccount.value.amount);
 
-      try {
-        const tokenXAccount = await connection.getTokenAccountBalance(lpOwnerTokenXAta);
-        tokenXAmountRaw = new BN(tokenXAccount.value.amount);
-      } catch { /* Account doesn't exist */ }
-
-      try {
-        if (isTokenYNativeSOL) {
-          const solBalance = await connection.getBalance(lpOwner.publicKey);
-          const reserveForFees = 333_000_000;
-          tokenYAmountRaw = new BN(Math.max(0, solBalance - reserveForFees));
-        } else {
-          const tokenYAccount = await connection.getTokenAccountBalance(lpOwnerTokenYAta);
-          tokenYAmountRaw = new BN(tokenYAccount.value.amount);
-        }
-      } catch { /* Account doesn't exist */ }
+      if (isTokenYNativeSOL) {
+        const solBalance = await connection.getBalance(lpOwner.publicKey);
+        const reserveForFees = 333_000_000;
+        tokenYAmountRaw = new BN(Math.max(0, solBalance - reserveForFees));
+      } else {
+        const tokenYAccount = await connection.getTokenAccountBalance(lpOwnerTokenYAta);
+        tokenYAmountRaw = new BN(tokenYAccount.value.amount);
+      }
 
       console.log(`  LP Owner X Balance: ${tokenXAmountRaw.toString()}`);
       console.log(`  LP Owner Y Balance: ${tokenYAmountRaw.toString()}`);
 
-      if (tokenXAmountRaw.isZero() && tokenYAmountRaw.isZero()) {
-        return res.status(400).json({ error: 'No tokens available in LP owner wallet for cleanup deposit' });
+      // Fail if either balance is zero - cleanup mode should have both tokens after swap
+      if (tokenXAmountRaw.isZero() || tokenYAmountRaw.isZero()) {
+        return res.status(400).json({
+          error: 'Unexpected zero balance in cleanup mode - RPC may have returned stale data',
+          balances: { tokenX: tokenXAmountRaw.toString(), tokenY: tokenYAmountRaw.toString() }
+        });
       }
     } else {
       tokenXAmountRaw = new BN(tokenXAmount || '0');
