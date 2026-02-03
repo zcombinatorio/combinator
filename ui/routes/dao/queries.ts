@@ -299,7 +299,7 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
             options = metadata.options || options;
             metadataDaoPda = metadata.dao_pda || null;
           } catch (err) {
-            console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
+            console.warn(`Failed to fetch IPFS metadata for ${metadataCid}: ${err instanceof Error ? err.message : err}`);
           }
         }
 
@@ -414,7 +414,7 @@ router.get('/:daoPda/proposal/live', async (req: Request, res: Response) => {
             options = metadata.options || options;
             metadataDaoPda = metadata.dao_pda || null;
           } catch (err) {
-            console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
+            console.warn(`Failed to fetch IPFS metadata for ${metadataCid}: ${err instanceof Error ? err.message : err}`);
           }
         }
 
@@ -586,7 +586,7 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
                 metadataDaoPda = metadata.dao_pda || null;
                 metadataFetchSucceeded = true;
               } catch (err) {
-                console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
+                console.warn(`Failed to fetch IPFS metadata for ${metadataCid}: ${err instanceof Error ? err.message : err}`);
               }
             }
 
@@ -694,7 +694,7 @@ router.get('/proposal/:proposalPda', async (req: Request, res: Response) => {
         options = metadata.options || options;
         daoPda = metadata.dao_pda || null;
       } catch (err) {
-        console.warn(`Failed to fetch IPFS metadata for ${metadataCid}:`, err);
+        console.warn(`Failed to fetch IPFS metadata for ${metadataCid}: ${err instanceof Error ? err.message : err}`);
       }
     }
 
