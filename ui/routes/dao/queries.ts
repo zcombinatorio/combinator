@@ -32,6 +32,7 @@ import {
   getDaosByOwner,
   getChildDaos,
   getProposersByDao,
+  getDaoStats,
   getDaoStatsBatch,
 } from '../../lib/db/daos';
 import { isValidTokenMintAddress } from '../../lib/validation';
