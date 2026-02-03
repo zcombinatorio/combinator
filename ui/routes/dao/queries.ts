@@ -222,7 +222,8 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
       }
     }
 
-    if (!moderatorPda) {
+    // Return empty if no moderator or if DAO is pending finalization (reserved but not yet created on-chain)
+    if (!moderatorPda || moderatorPda.startsWith('PENDING')) {
       return res.json({ proposals: [] });
     }
 
@@ -369,7 +370,8 @@ router.get('/:daoPda/proposal/live', async (req: Request, res: Response) => {
       }
     }
 
-    if (!moderatorPda) {
+    // Return 404 if no moderator or if DAO is pending finalization (reserved but not yet created on-chain)
+    if (!moderatorPda || moderatorPda.startsWith('PENDING')) {
       return res.status(404).json({ error: 'No live proposal found' });
     }
 
@@ -511,7 +513,8 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
           }
         }
 
-        if (!moderatorPda) {
+        // Skip if no moderator or if DAO is pending finalization (reserved but not yet created on-chain)
+        if (!moderatorPda || moderatorPda.startsWith('PENDING')) {
           return [];
         }
 

@@ -637,13 +637,26 @@ router.post('/reserve-admin', async (req: Request, res: Response) => {
         purpose: 'dao_parent',
       });
 
-      // Create optimistic DAO entry
-      // Note: visibility defaults to 0 (hidden) until confirmed on-chain
-      // PDAs use "PENDING" placeholder - update manually after on-chain creation
+      // Create optimistic DAO entry with unique PENDING placeholders.
+      //
+      // MANUAL FINALIZATION REQUIRED:
+      // After on-chain DAO creation, update these fields directly in the database:
+      //   UPDATE cmb_daos SET
+      //     dao_pda = '<actual_dao_pda>',
+      //     moderator_pda = '<actual_moderator_pda>',
+      //     treasury_multisig = '<actual_treasury_multisig>',
+      //     mint_auth_multisig = '<actual_mint_auth_multisig>',
+      //     visibility = 1
+      //   WHERE id = <dao_id>;
+      //
+      // Until finalized:
+      // - visibility=0 keeps DAO hidden from public queries
+      // - PENDING_* values will cause proposal queries to return empty (not crash)
+      const pendingId = `PENDING_${keyIdx}_${Date.now()}`;
       const dao = await createDao(pool, {
-        dao_pda: 'PENDING',
+        dao_pda: pendingId,
         dao_name: name,
-        moderator_pda: 'PENDING',
+        moderator_pda: `${pendingId}_mod`,
         owner_wallet,
         admin_key_idx: keyIdx,
         admin_wallet: adminWallet, // Our managed admin, not client's temp admin
@@ -651,8 +664,8 @@ router.post('/reserve-admin', async (req: Request, res: Response) => {
         pool_address,
         pool_type,
         quote_mint,
-        treasury_multisig: 'PENDING',
-        mint_auth_multisig: 'PENDING',
+        treasury_multisig: `${pendingId}_treasury`,
+        mint_auth_multisig: `${pendingId}_mint`,
         treasury_cosigner,
         dao_type: 'parent',
         withdrawal_percentage: 12,

@@ -175,6 +175,14 @@ export async function checkMintAuthority(
   mintAuthMultisig: string,
   tokenMint: string
 ): Promise<DaoReadinessResult> {
+  // Guard against PENDING placeholders from reserve-admin flow
+  if (mintAuthMultisig.startsWith('PENDING')) {
+    return {
+      ready: false,
+      reason: 'DAO mint authority not yet finalized (pending on-chain creation)',
+    };
+  }
+
   const mintAuthPubkey = new PublicKey(mintAuthMultisig);
   const tokenMintPubkey = new PublicKey(tokenMint);
 

@@ -149,8 +149,9 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
       return returnError(404, { error: 'DAO not found' });
     }
 
-    if (!dao.moderator_pda) {
-      return returnError(500, { error: 'DAO has no moderator PDA' });
+    // Check moderator PDA exists and is not a PENDING placeholder (reserved but not finalized)
+    if (!dao.moderator_pda || dao.moderator_pda.startsWith('PENDING')) {
+      return returnError(500, { error: 'DAO has no moderator PDA (may be pending finalization)' });
     }
 
     // Validate proposal duration based on proposer role

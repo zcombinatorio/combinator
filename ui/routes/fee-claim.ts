@@ -110,6 +110,12 @@ async function getPoolFeeConfig(
   const dao = await getDaoByPoolAddress(pool, poolAddress);
 
   if (dao && dao.pool_type === 'damm') {
+    // Skip DAOs that are pending finalization (reserved but not yet fully created on-chain)
+    if (dao.dao_pda.startsWith('PENDING') || dao.treasury_multisig?.startsWith('PENDING')) {
+      console.log(`[Fee Claim] Skipping pending DAO ${dao.dao_name} - not yet finalized`);
+      return null;
+    }
+
     // Get LP owner keypair (handles both key-service and historical DAOs)
     const lpOwnerKeypair = await fetchAdminKeypair(dao.admin_key_idx, dao.dao_name);
 
