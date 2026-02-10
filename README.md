@@ -1,31 +1,8 @@
 # Combinator
 
-Futarchy infrastructure for your project.
+Futarchy infrastructure for your project. The main API server is `ui/api-server.ts`.
 
-## Repository Structure
-
-```
-├── ui/                     # Backend API (see ui/README.md)
-└── LICENSE
-```
-
-## Getting Started
-
-```bash
-cd ui
-pnpm install
-pnpm api        # Start API server at http://localhost:3001
-```
-
-See [`ui/README.md`](ui/README.md) for API endpoints and details.
-
-## SDK
-
-```bash
-npm install @zcomb/programs-sdk
-```
-
-On-chain futarchy program interactions. [Source on GitHub](https://github.com/zcombinatorio/programs).
+**[Documentation](https://docs.combinator.trade)** | **[Quickstart](https://docs.combinator.trade/api-reference/dao/quickstart)** | **[API Reference](https://docs.combinator.trade/api-reference/dao/overview)**
 
 ## Using Claude Code
 
