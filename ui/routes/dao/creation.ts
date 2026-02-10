@@ -641,20 +641,9 @@ router.post('/reserve-admin', async (req: Request, res: Response) => {
       });
 
       // Create optimistic DAO entry with unique PENDING placeholders.
-      //
-      // MANUAL FINALIZATION REQUIRED:
-      // After on-chain DAO creation, update these fields directly in the database:
-      //   UPDATE cmb_daos SET
-      //     dao_pda = '<actual_dao_pda>',
-      //     moderator_pda = '<actual_moderator_pda>',
-      //     treasury_multisig = '<actual_treasury_multisig>',
-      //     mint_auth_multisig = '<actual_mint_auth_multisig>',
-      //     visibility = 1
-      //   WHERE id = <dao_id>;
-      //
-      // Until finalized:
-      // - visibility=0 keeps DAO hidden from public queries
-      // - PENDING_* values will cause proposal queries to return empty (not crash)
+      // Finalized via POST /dao/finalize-reserved after on-chain DAO creation.
+      // Until finalized, visibility=0 (hidden) keeps DAO out of public queries
+      // and PENDING_* values cause proposal queries to return empty (not crash).
       const pendingId = `PENDING_${keyIdx}_${Date.now()}`;
       const dao = await createDao(pool, {
         dao_pda: pendingId,
@@ -720,7 +709,8 @@ router.post('/reserve-admin', async (req: Request, res: Response) => {
  * - Verify the DAO exists on-chain with our admin wallet
  * - Extract moderator PDA, treasury/mint vault PDAs from on-chain state
  * - Update the PENDING placeholders in our database
- * - Set visibility to 3 (client test tier, tracked by production monitor)
+ * - Set visibility to 3 (client test — tracked by production monitor)
+ *   Visibility: 0=hidden, 1=internal test, 2=production, 3=client test
  *
  * Auth: API key in request body (same as reserve-admin)
  */
@@ -812,7 +802,7 @@ router.post('/finalize-reserved', async (req: Request, res: Response) => {
       moderator_pda: moderatorPda,
       treasury_multisig: treasuryVaultPda,
       mint_auth_multisig: mintVaultPda,
-      visibility: 3,
+      visibility: 3, // client test — tracked by prod monitor
     });
 
     if (!finalized) {

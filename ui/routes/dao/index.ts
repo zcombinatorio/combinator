@@ -159,7 +159,8 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // DAO owner: 18 hours to 7 days
     // Others (whitelist/token threshold): 24 hours to 4 days
     const TEST_DAOS = ['SURFTEST', 'TESTSURF', 'SUTESTRF', 'testext1'];
-    const isTestDao = TEST_DAOS.includes(dao.dao_name);
+    // Visibility: 0=hidden, 1=internal test, 2=production, 3=client test
+    const isTestDao = TEST_DAOS.includes(dao.dao_name) || dao.visibility === 3;
     const isOwner = wallet === dao.owner_wallet;
     const ONE_MINUTE = 60;
     const ONE_HOUR = 3600;
