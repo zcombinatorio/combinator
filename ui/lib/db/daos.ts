@@ -391,6 +391,50 @@ export async function updateDaoModeratorPda(
   }
 }
 
+/**
+ * Finalize a reserved DAO by replacing PENDING placeholders with real on-chain values.
+ * Called after the client creates the DAO on-chain and calls transferAdmin.
+ */
+export async function finalizeReservedDao(
+  pool: Pool,
+  daoId: number,
+  updates: {
+    dao_pda: string;
+    moderator_pda: string;
+    treasury_multisig: string;
+    mint_auth_multisig: string;
+    visibility: number;
+  }
+): Promise<Dao | null> {
+  const query = `
+    UPDATE cmb_daos
+    SET dao_pda = $2,
+        moderator_pda = $3,
+        treasury_multisig = $4,
+        mint_auth_multisig = $5,
+        visibility = $6
+    WHERE id = $1
+    RETURNING *
+  `;
+
+  const values = [
+    daoId,
+    updates.dao_pda,
+    updates.moderator_pda,
+    updates.treasury_multisig,
+    updates.mint_auth_multisig,
+    updates.visibility,
+  ];
+
+  try {
+    const result = await pool.query(query, values);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error finalizing reserved DAO:', error);
+    throw error;
+  }
+}
+
 // ============================================================================
 // DAO Proposer Functions
 // ============================================================================

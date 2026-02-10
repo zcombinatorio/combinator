@@ -31,9 +31,11 @@ import {
   registerKey,
   updateKeyDaoId,
   createDao,
+  getDaoById,
   getDaoByPda,
   getDaoByName,
   addProposer,
+  finalizeReservedDao,
 } from '../../lib/db/daos';
 import { allocateKey, fetchKeypair, fetchAdminKeypair, AdminKeyError } from '../../lib/keyService';
 import { isValidSolanaAddress, isValidTokenMintAddress } from '../../lib/validation';
@@ -46,6 +48,7 @@ import {
   deriveQuoteMint,
   deriveSquadsVaultPda,
   verifyFundingTransaction,
+  createReadOnlyClient,
   type PoolInfo,
 } from '../../lib/dao';
 import { getConnection, createProvider, daoCreationMutex } from './shared';
@@ -694,6 +697,148 @@ router.post('/reserve-admin', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error reserving admin:', error);
     res.status(500).json({ error: 'Failed to reserve admin', details: String(error) });
+  }
+});
+
+// ============================================================================
+// POST /dao/finalize-reserved - Finalize a reserved DAO after on-chain creation
+// ============================================================================
+
+/**
+ * Finalize a DAO that was created via the reserve-admin flow.
+ *
+ * After calling reserve-admin, the client builds and sends their own transaction:
+ * 1. Launch token + pool
+ * 2. Create DAO (with themselves as temp admin)
+ * 3. Transfer mint authority to DAO's mint multisig
+ * 4. Transfer treasury to DAO's treasury multisig
+ * 5. transferAdmin to our managed admin wallet
+ * 6. Transfer LP to our managed admin
+ * 7. Fund admin wallet
+ *
+ * Once confirmed on-chain, the client calls this endpoint to:
+ * - Verify the DAO exists on-chain with our admin wallet
+ * - Extract moderator PDA, treasury/mint vault PDAs from on-chain state
+ * - Update the PENDING placeholders in our database
+ * - Set visibility to 3 (client test tier, tracked by production monitor)
+ *
+ * Auth: API key in request body (same as reserve-admin)
+ */
+router.post('/finalize-reserved', async (req: Request, res: Response) => {
+  try {
+    const { api_key, dao_id, dao_pda } = req.body;
+
+    // Validate API key (same as reserve-admin)
+    const expectedApiKey = process.env.DAO_RESERVE_API_KEY;
+    if (!expectedApiKey) {
+      console.error('[finalize-reserved] DAO_RESERVE_API_KEY not configured');
+      return res.status(500).json({ error: 'API key not configured on server' });
+    }
+    if (!api_key || api_key !== expectedApiKey) {
+      return res.status(403).json({ error: 'Invalid API key' });
+    }
+
+    // Validate required fields
+    if (dao_id === undefined || dao_id === null || !dao_pda) {
+      return res.status(400).json({ error: 'Missing required fields: dao_id, dao_pda' });
+    }
+    if (typeof dao_id !== 'number') {
+      return res.status(400).json({ error: 'dao_id must be a number' });
+    }
+    if (!isValidTokenMintAddress(dao_pda)) {
+      return res.status(400).json({ error: 'Invalid dao_pda address' });
+    }
+
+    const pool = getPool();
+    const connection = getConnection();
+
+    // Look up DB row by dao_id, verify it's still pending
+    const dbRow = await getDaoById(pool, dao_id);
+    if (!dbRow) {
+      return res.status(404).json({ error: 'DAO not found' });
+    }
+    if (!dbRow.dao_pda.startsWith('PENDING')) {
+      return res.status(409).json({
+        error: 'DAO already finalized',
+        dao_pda: dbRow.dao_pda,
+      });
+    }
+
+    // Fetch on-chain DAO account
+    const client = createReadOnlyClient(connection);
+    let onChainDao;
+    try {
+      onChainDao = await client.fetchDAO(new PublicKey(dao_pda));
+    } catch (err) {
+      return res.status(404).json({
+        error: 'DAO not found on-chain',
+        details: String(err),
+      });
+    }
+
+    // Verify admin matches (proves transferAdmin happened to our managed wallet)
+    if (onChainDao.admin.toBase58() !== dbRow.admin_wallet) {
+      return res.status(400).json({
+        error: 'Admin mismatch: on-chain admin does not match reserved admin wallet',
+        on_chain_admin: onChainDao.admin.toBase58(),
+        expected_admin: dbRow.admin_wallet,
+      });
+    }
+
+    // Verify name matches
+    if (onChainDao.name !== dbRow.dao_name) {
+      return res.status(400).json({
+        error: 'Name mismatch: on-chain name does not match reserved name',
+        on_chain_name: onChainDao.name,
+        expected_name: dbRow.dao_name,
+      });
+    }
+
+    // Verify it's a parent DAO and extract moderator
+    const parentType = 'parent' in onChainDao.daoType ? onChainDao.daoType.parent : null;
+    if (!parentType) {
+      return res.status(400).json({ error: 'On-chain DAO is not a parent DAO' });
+    }
+    const moderatorPda = parentType.moderator.toBase58();
+
+    // Derive vault PDAs from on-chain multisig PDAs
+    // On-chain stores multisig PDAs; DB stores vault PDAs (derived via Squads)
+    const treasuryVaultPda = deriveSquadsVaultPda(onChainDao.treasuryMultisig).toBase58();
+    const mintVaultPda = deriveSquadsVaultPda(onChainDao.mintAuthMultisig).toBase58();
+
+    // Update DB with real values
+    const finalized = await finalizeReservedDao(pool, dao_id, {
+      dao_pda,
+      moderator_pda: moderatorPda,
+      treasury_multisig: treasuryVaultPda,
+      mint_auth_multisig: mintVaultPda,
+      visibility: 3,
+    });
+
+    if (!finalized) {
+      return res.status(500).json({ error: 'Failed to update DAO record' });
+    }
+
+    console.log(`[finalize-reserved] Finalized DAO ${dbRow.dao_name} (id: ${dao_id})`);
+    console.log(`  DAO PDA:          ${dao_pda}`);
+    console.log(`  Moderator PDA:    ${moderatorPda}`);
+    console.log(`  Treasury Vault:   ${treasuryVaultPda}`);
+    console.log(`  Mint Auth Vault:  ${mintVaultPda}`);
+    console.log(`  Visibility:       3`);
+
+    res.json({
+      dao_id: finalized.id,
+      dao_pda,
+      dao_name: finalized.dao_name,
+      moderator_pda: moderatorPda,
+      treasury_vault: treasuryVaultPda,
+      mint_vault: mintVaultPda,
+      admin_wallet: finalized.admin_wallet,
+      visibility: 3,
+    });
+  } catch (error) {
+    console.error('Error finalizing reserved DAO:', error);
+    res.status(500).json({ error: 'Failed to finalize reserved DAO', details: String(error) });
   }
 });
 
