@@ -122,7 +122,8 @@ export async function updateKeyDaoId(
 
 export async function createDao(
   pool: Pool,
-  dao: Omit<Dao, 'id' | 'created_at' | 'visibility'>
+  dao: Omit<Dao, 'id' | 'created_at' | 'visibility'>,
+  visibility: number = 0
 ): Promise<Dao> {
   const query = `
     INSERT INTO cmb_daos (
@@ -142,8 +143,9 @@ export async function createDao(
       parent_dao_id,
       dao_type,
       withdrawal_percentage,
-      funding_signature
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      funding_signature,
+      visibility
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
     RETURNING *
   `;
 
@@ -164,7 +166,8 @@ export async function createDao(
     dao.parent_dao_id || null,
     dao.dao_type,
     dao.withdrawal_percentage,
-    dao.funding_signature || null
+    dao.funding_signature || null,
+    visibility,
   ];
 
   try {

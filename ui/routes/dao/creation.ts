@@ -81,7 +81,11 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
       treasury_cosigner,
       pool_address,
       funding_signature,
+      api_key,
     } = req.body;
+
+    // If a valid reserve API key is passed, mark as client test (visibility 3)
+    const clientTest = api_key && api_key === process.env.DAO_RESERVE_API_KEY;
 
     // Validate required fields
     if (!name || !token_mint || !treasury_cosigner || !pool_address || !funding_signature) {
@@ -285,7 +289,7 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
         dao_type: 'parent',
         withdrawal_percentage: 12,
         funding_signature,
-      });
+      }, clientTest ? 3 : undefined);
 
       await updateKeyDaoId(pool, keyIdx, dao.id!);
 
@@ -323,7 +327,10 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
 
 router.post('/child', requireSignedHash, async (req: Request, res: Response) => {
   try {
-    const { wallet, name, parent_pda, token_mint, treasury_cosigner, funding_signature } = req.body;
+    const { wallet, name, parent_pda, token_mint, treasury_cosigner, funding_signature, api_key } = req.body;
+
+    // If a valid reserve API key is passed, mark as client test (visibility 3)
+    const clientTest = api_key && api_key === process.env.DAO_RESERVE_API_KEY;
 
     // Validate required fields
     if (!name || !parent_pda || !token_mint || !treasury_cosigner || !funding_signature) {
@@ -503,7 +510,7 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
         dao_type: 'child',
         withdrawal_percentage: 12,
         funding_signature,
-      });
+      }, clientTest ? 3 : undefined);
 
       await updateKeyDaoId(pool, keyIdx, dao.id!);
 
