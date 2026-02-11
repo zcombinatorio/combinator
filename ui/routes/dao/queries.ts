@@ -33,6 +33,7 @@ import {
   getChildDaos,
   getProposersByDao,
   getDaoStats,
+  getDaoStatsBatch,
 } from '../../lib/db/daos';
 import { Dao } from '../../lib/db/types';
 import { isValidTokenMintAddress } from '../../lib/validation';
@@ -46,44 +47,6 @@ import {
 import { getConnection } from './shared';
 
 const router = Router();
-
-// ============================================================================
-// Helper: Parallel fetch with concurrency limit
-// ============================================================================
-
-async function parallelLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
-  const executing: Promise<void>[] = [];
-
-  for (const item of items) {
-    const promise = fn(item).then((result) => {
-      results.push(result);
-    });
-    executing.push(promise);
-
-    if (executing.length >= limit) {
-      await Promise.race(executing);
-      // Remove completed promises
-      for (let i = executing.length - 1; i >= 0; i--) {
-        // Check if promise is settled by trying to await with timeout 0
-        const settled = await Promise.race([
-          executing[i].then(() => true),
-          Promise.resolve(false),
-        ]);
-        if (settled) {
-          executing.splice(i, 1);
-        }
-      }
-    }
-  }
-
-  await Promise.all(executing);
-  return results;
-}
 
 // ============================================================================
 // GET /dao - List all DAOs (for client indexing)
@@ -106,43 +69,43 @@ router.get('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Batch fetch token icons and decimals for all DAOs
+    // Batch fetch token icons, decimals, and stats for all DAOs
     const tokenMints = daos.map(dao => dao.token_mint);
     const quoteMints = daos.map(dao => dao.quote_mint);
+    const daoIds = daos.map(dao => dao.id!);
     // Collect unique mints for decimal fetching (both base and quote)
     const allMints = [...new Set([...tokenMints, ...quoteMints])];
 
-    const [iconMap, decimalsMap] = await Promise.all([
+    const [iconMap, decimalsMap, statsMap] = await Promise.all([
       getTokenIcons(connection, tokenMints),
       getTokenDecimalsBatch(connection, allMints),
+      getDaoStatsBatch(pool, daoIds),
     ]);
 
     // Enrich with stats, icons, decimals, strip internal fields, and rename DB columns to API fields
-    const enrichedDaos = await Promise.all(
-      daos.map(async (dao) => {
-        const stats = await getDaoStats(pool, dao.id!);
-        const { admin_key_idx, treasury_multisig, mint_auth_multisig, ...rest } = dao;
-        // Get proposal count from cache (undefined if not yet fetched)
-        const proposalCount = getCachedProposalCount(dao.dao_pda);
-        // Get icon from token metadata
-        const icon = iconMap.get(dao.token_mint) || null;
-        // Get decimals from on-chain data
-        const token_decimals = decimalsMap.get(dao.token_mint)!;
-        const quote_decimals = decimalsMap.get(dao.quote_mint)!;
-        return {
-          ...rest,
-          treasury_vault: treasury_multisig,
-          mint_vault: mint_auth_multisig,
-          icon,
-          token_decimals,
-          quote_decimals,
-          stats: {
-            ...stats,
-            proposalCount,
-          },
-        };
-      })
-    );
+    const enrichedDaos = daos.map((dao) => {
+      const stats = statsMap.get(dao.id!) || { proposerCount: 0, childDaoCount: 0 };
+      const { admin_key_idx, treasury_multisig, mint_auth_multisig, ...rest } = dao;
+      // Get proposal count from cache (undefined if not yet fetched)
+      const proposalCount = getCachedProposalCount(dao.dao_pda);
+      // Get icon from token metadata
+      const icon = iconMap.get(dao.token_mint) || null;
+      // Get decimals from on-chain data
+      const token_decimals = decimalsMap.get(dao.token_mint)!;
+      const quote_decimals = decimalsMap.get(dao.quote_mint)!;
+      return {
+        ...rest,
+        treasury_vault: treasury_multisig,
+        mint_vault: mint_auth_multisig,
+        icon,
+        token_decimals,
+        quote_decimals,
+        stats: {
+          ...stats,
+          proposalCount,
+        },
+      };
+    });
 
     res.json({ daos: enrichedDaos });
   } catch (error) {
@@ -260,7 +223,8 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
       }
     }
 
-    if (!moderatorPda) {
+    // Return empty if no moderator or if DAO is pending finalization (reserved but not yet created on-chain)
+    if (!moderatorPda || moderatorPda.startsWith('PENDING')) {
       return res.json({ proposals: [] });
     }
 
