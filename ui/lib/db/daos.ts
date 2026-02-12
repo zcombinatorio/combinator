@@ -403,6 +403,7 @@ export async function finalizeReservedDao(
   daoId: number,
   updates: {
     dao_pda: string;
+    dao_name: string;
     moderator_pda: string;
     treasury_multisig: string;
     mint_auth_multisig: string;
@@ -412,10 +413,11 @@ export async function finalizeReservedDao(
   const query = `
     UPDATE cmb_daos
     SET dao_pda = $2,
-        moderator_pda = $3,
-        treasury_multisig = $4,
-        mint_auth_multisig = $5,
-        visibility = $6
+        dao_name = $3,
+        moderator_pda = $4,
+        treasury_multisig = $5,
+        mint_auth_multisig = $6,
+        visibility = $7
     WHERE id = $1
     RETURNING *
   `;
@@ -423,6 +425,7 @@ export async function finalizeReservedDao(
   const values = [
     daoId,
     updates.dao_pda,
+    updates.dao_name,
     updates.moderator_pda,
     updates.treasury_multisig,
     updates.mint_auth_multisig,

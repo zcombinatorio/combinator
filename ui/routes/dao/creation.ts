@@ -782,13 +782,10 @@ router.post('/finalize-reserved', async (req: Request, res: Response) => {
       });
     }
 
-    // Verify name matches
-    if (onChainDao.name !== dbRow.dao_name) {
-      return res.status(400).json({
-        error: 'Name mismatch: on-chain name does not match reserved name',
-        on_chain_name: onChainDao.name,
-        expected_name: dbRow.dao_name,
-      });
+    // Adopt the on-chain name as source of truth
+    const onChainName = onChainDao.name;
+    if (onChainName !== dbRow.dao_name) {
+      console.log(`[finalize-reserved] Updating DAO name: "${dbRow.dao_name}" → "${onChainName}"`);
     }
 
     // Verify it's a parent DAO and extract moderator
@@ -806,6 +803,7 @@ router.post('/finalize-reserved', async (req: Request, res: Response) => {
     // Update DB with real values
     const finalized = await finalizeReservedDao(pool, dao_id, {
       dao_pda,
+      dao_name: onChainName,
       moderator_pda: moderatorPda,
       treasury_multisig: treasuryVaultPda,
       mint_auth_multisig: mintVaultPda,
@@ -816,7 +814,7 @@ router.post('/finalize-reserved', async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Failed to update DAO record' });
     }
 
-    console.log(`[finalize-reserved] Finalized DAO ${dbRow.dao_name} (id: ${dao_id})`);
+    console.log(`[finalize-reserved] Finalized DAO ${onChainName} (id: ${dao_id})`);
     console.log(`  DAO PDA:          ${dao_pda}`);
     console.log(`  Moderator PDA:    ${moderatorPda}`);
     console.log(`  Treasury Vault:   ${treasuryVaultPda}`);
