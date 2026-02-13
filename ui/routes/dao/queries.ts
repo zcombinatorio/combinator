@@ -89,9 +89,12 @@ router.get('/', async (req: Request, res: Response) => {
       const proposalCount = getCachedProposalCount(dao.dao_pda);
       // Get icon from token metadata
       const icon = iconMap.get(dao.token_mint) || null;
-      // Get decimals from on-chain data
-      const token_decimals = decimalsMap.get(dao.token_mint)!;
-      const quote_decimals = decimalsMap.get(dao.quote_mint)!;
+      // Get decimals from on-chain data (skip DAOs with missing mint data)
+      const token_decimals = decimalsMap.get(dao.token_mint);
+      const quote_decimals = decimalsMap.get(dao.quote_mint);
+      if (token_decimals === undefined || quote_decimals === undefined) {
+        return null;
+      }
       return {
         ...rest,
         treasury_vault: treasury_multisig,
@@ -106,7 +109,7 @@ router.get('/', async (req: Request, res: Response) => {
       };
     });
 
-    res.json({ daos: enrichedDaos });
+    res.json({ daos: enrichedDaos.filter((d): d is NonNullable<typeof d> => d !== null) });
   } catch (error) {
     console.error('Error fetching DAOs:', error);
     res.status(500).json({ error: 'Failed to fetch DAOs' });
@@ -132,11 +135,14 @@ router.get('/:daoPda', async (req: Request, res: Response) => {
     const proposers = await getProposersByDao(pool, dao.id!);
 
     // Fetch token icon and decimals from on-chain data
-    const [icon, token_decimals, quote_decimals] = await Promise.all([
+    const [iconResult, tokenDecResult, quoteDecResult] = await Promise.allSettled([
       getTokenIcon(connection, dao.token_mint),
       getTokenDecimals(connection, dao.token_mint),
       getTokenDecimals(connection, dao.quote_mint),
     ]);
+    const icon = iconResult.status === 'fulfilled' ? iconResult.value : null;
+    const token_decimals = tokenDecResult.status === 'fulfilled' ? tokenDecResult.value : null;
+    const quote_decimals = quoteDecResult.status === 'fulfilled' ? quoteDecResult.value : null;
 
     let children: any[] = [];
     if (dao.dao_type === 'parent') {
@@ -228,10 +234,12 @@ router.get('/:daoPda/proposals', async (req: Request, res: Response) => {
     }
 
     // Fetch token decimals for this DAO
-    const [baseDecimals, quoteDecimals] = await Promise.all([
+    const [baseDecResult, quoteDecResult] = await Promise.allSettled([
       getTokenDecimals(connection, dao.token_mint),
       getTokenDecimals(connection, dao.quote_mint),
     ]);
+    const baseDecimals = baseDecResult.status === 'fulfilled' ? baseDecResult.value : null;
+    const quoteDecimals = quoteDecResult.status === 'fulfilled' ? quoteDecResult.value : null;
 
     // Create a read-only client for on-chain fetching
     const readClient = createReadOnlyClient(connection);
@@ -356,10 +364,12 @@ router.get('/:daoPda/proposal/live', async (req: Request, res: Response) => {
     }
 
     // Fetch token decimals in parallel with moderator lookup
-    const [baseDecimals, quoteDecimals] = await Promise.all([
+    const [baseDecResult, quoteDecResult] = await Promise.allSettled([
       getTokenDecimals(connection, dao.token_mint),
       getTokenDecimals(connection, dao.quote_mint),
     ]);
+    const baseDecimals = baseDecResult.status === 'fulfilled' ? baseDecResult.value : null;
+    const quoteDecimals = quoteDecResult.status === 'fulfilled' ? quoteDecResult.value : null;
 
     // Get the moderator PDA - for child DAOs, use parent's moderator
     let moderatorPda = dao.moderator_pda;
@@ -612,9 +622,9 @@ router.get('/proposals/all', async (req: Request, res: Response) => {
               finalizedAt,
               metadataCid,
               marketBias,
-              // Token decimals from on-chain
-              baseDecimals: decimalsMap.get(dao.token_mint)!,
-              quoteDecimals: decimalsMap.get(dao.quote_mint)!,
+              // Token decimals from on-chain (skip if mint not found)
+              baseDecimals: decimalsMap.get(dao.token_mint) ?? null,
+              quoteDecimals: decimalsMap.get(dao.quote_mint) ?? null,
               // DAO metadata for markets page
               daoPda: dao.dao_pda,
               daoName: dao.dao_name,

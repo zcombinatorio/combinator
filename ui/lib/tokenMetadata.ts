@@ -83,11 +83,15 @@ export async function getTokenDecimalsBatch(
   const BATCH_SIZE = 10;
   for (let i = 0; i < mintAddresses.length; i += BATCH_SIZE) {
     const batch = mintAddresses.slice(i, i + BATCH_SIZE);
-    const decimals = await Promise.all(
+    const settled = await Promise.allSettled(
       batch.map(mint => getTokenDecimals(connection, mint))
     );
     batch.forEach((mint, idx) => {
-      results.set(mint, decimals[idx]);
+      const result = settled[idx];
+      if (result.status === 'fulfilled') {
+        results.set(mint, result.value);
+      }
+      // Skip mints that failed (e.g. account not found on-chain)
     });
   }
 
