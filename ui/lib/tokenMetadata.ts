@@ -70,29 +70,36 @@ export async function getTokenDecimals(
 }
 
 /**
- * Batch fetch decimals for multiple tokens.
- * Returns a map of mint address -> decimals.
+ * Batch fetch decimals for multiple tokens using getMultipleAccountsInfo.
+ * Reads decimals at offset 44 of the SPL Mint layout (works for both Token and Token-2022).
  */
 export async function getTokenDecimalsBatch(
   connection: Connection,
   mintAddresses: string[]
 ): Promise<Map<string, number>> {
   const results = new Map<string, number>();
+  const uncached: string[] = [];
 
-  // Fetch in parallel with a concurrency limit
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < mintAddresses.length; i += BATCH_SIZE) {
-    const batch = mintAddresses.slice(i, i + BATCH_SIZE);
-    const settled = await Promise.allSettled(
-      batch.map(mint => getTokenDecimals(connection, mint))
-    );
-    batch.forEach((mint, idx) => {
-      const result = settled[idx];
-      if (result.status === 'fulfilled') {
-        results.set(mint, result.value);
-      }
-      // Skip mints that failed (e.g. account not found on-chain)
-    });
+  for (const mint of mintAddresses) {
+    if (tokenDecimalsCache.has(mint)) {
+      results.set(mint, tokenDecimalsCache.get(mint)!);
+    } else if (!results.has(mint)) {
+      uncached.push(mint);
+    }
+  }
+
+  // Batch fetch all uncached mints in one RPC call (max 100 per call)
+  for (let i = 0; i < uncached.length; i += 100) {
+    const batch = uncached.slice(i, i + 100);
+    const accounts = await connection.getMultipleAccountsInfo(batch.map(m => new PublicKey(m)));
+    for (let j = 0; j < accounts.length; j++) {
+      const info = accounts[j];
+      if (!info || info.data.length < 45) continue;
+      if (!info.owner.equals(TOKEN_PROGRAM_ID) && !info.owner.equals(TOKEN_2022_PROGRAM_ID)) continue;
+      const decimals = info.data[44];
+      tokenDecimalsCache.set(batch[j], decimals);
+      results.set(batch[j], decimals);
+    }
   }
 
   return results;
@@ -196,26 +203,81 @@ export async function getTokenIcon(
 }
 
 /**
- * Batch fetch icons for multiple tokens.
- * Returns a map of mint address -> icon URL (or null).
+ * Batch fetch icons for multiple tokens using getMultipleAccountsInfo.
+ * Fetches all Metaplex metadata accounts in one RPC call, then fetches JSON URIs in parallel.
  */
 export async function getTokenIcons(
   connection: Connection,
   mintAddresses: string[]
 ): Promise<Map<string, string | null>> {
   const results = new Map<string, string | null>();
+  const uncached: string[] = [];
 
-  // Fetch in parallel with a concurrency limit
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < mintAddresses.length; i += BATCH_SIZE) {
-    const batch = mintAddresses.slice(i, i + BATCH_SIZE);
-    const icons = await Promise.all(
-      batch.map(mint => getTokenIcon(connection, mint))
-    );
-    batch.forEach((mint, idx) => {
-      results.set(mint, icons[idx]);
-    });
+  for (const mint of [...new Set(mintAddresses)]) {
+    if (tokenIconCache.has(mint)) {
+      results.set(mint, tokenIconCache.get(mint) ?? null);
+    } else {
+      uncached.push(mint);
+    }
   }
 
+  if (uncached.length === 0) return results;
+
+  // Batch fetch all Metaplex metadata accounts
+  const metadataPDAs = uncached.map(m => deriveMetadataPDA(new PublicKey(m)));
+  const allAccounts: (import('@solana/web3.js').AccountInfo<Buffer> | null)[] = [];
+  for (let i = 0; i < metadataPDAs.length; i += 100) {
+    const batch = metadataPDAs.slice(i, i + 100);
+    allAccounts.push(...await connection.getMultipleAccountsInfo(batch));
+  }
+
+  // Parse URIs from on-chain metadata, then fetch JSON in parallel
+  const uriFetches: Promise<void>[] = [];
+  for (let i = 0; i < uncached.length; i++) {
+    const mint = uncached[i];
+    const info = allAccounts[i];
+    if (!info) {
+      tokenIconCache.set(mint, null);
+      results.set(mint, null);
+      continue;
+    }
+
+    try {
+      const data = info.data;
+      let offset = 65;
+      const nameLen = data.readUInt32LE(offset);
+      offset += 4 + nameLen;
+      const symbolLen = data.readUInt32LE(offset);
+      offset += 4 + symbolLen;
+      const uriLen = data.readUInt32LE(offset);
+      offset += 4;
+      const uri = data.slice(offset, offset + uriLen).toString('utf8').replace(/\0/g, '').trim();
+
+      if (!uri) {
+        tokenIconCache.set(mint, null);
+        results.set(mint, null);
+        continue;
+      }
+
+      uriFetches.push(
+        fetch(uri, { signal: AbortSignal.timeout(5000) })
+          .then(r => r.ok ? r.json() : null)
+          .then(metadata => {
+            const icon = metadata?.image || null;
+            tokenIconCache.set(mint, icon);
+            results.set(mint, icon);
+          })
+          .catch(() => {
+            tokenIconCache.set(mint, null);
+            results.set(mint, null);
+          })
+      );
+    } catch {
+      tokenIconCache.set(mint, null);
+      results.set(mint, null);
+    }
+  }
+
+  await Promise.all(uriFetches);
   return results;
 }

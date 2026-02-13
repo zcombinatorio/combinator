@@ -200,7 +200,13 @@ export function getIpfsUrl(cid: string): string {
  * Uses Kubo /api/v0/cat if configured, otherwise fetches from Pinata gateway.
  * Returns the parsed JSON content.
  */
+// CIDs are immutable — cache forever
+const ipfsCache = new Map<string, unknown>();
+
 export async function fetchFromIPFS<T = unknown>(cid: string): Promise<T> {
+  if (ipfsCache.has(cid)) return ipfsCache.get(cid) as T;
+
+  let result: T;
   if (isKuboConfigured()) {
     const apiUrl = process.env.IPFS_API_URL;
     const response = await fetch(`${apiUrl}/api/v0/cat?arg=${cid}`, {
@@ -214,16 +220,18 @@ export async function fetchFromIPFS<T = unknown>(cid: string): Promise<T> {
       throw new Error(`Kubo IPFS fetch failed: ${response.status}`);
     }
 
-    return response.json();
+    result = await response.json();
+  } else {
+    const response = await fetch(getIpfsUrl(cid));
+    if (!response.ok) {
+      throw new Error(`IPFS gateway fetch failed: ${response.status}`);
+    }
+
+    result = await response.json();
   }
 
-  // Fallback to Pinata gateway (simple GET)
-  const response = await fetch(getIpfsUrl(cid));
-  if (!response.ok) {
-    throw new Error(`IPFS gateway fetch failed: ${response.status}`);
-  }
-
-  return response.json();
+  ipfsCache.set(cid, result);
+  return result;
 }
 
 /**

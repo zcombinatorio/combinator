@@ -47,15 +47,29 @@ import { getConnection } from './shared';
 
 const router = Router();
 
+// Simple response cache with TTL
+const responseCache = new Map<string, { data: any; expiry: number }>();
+const CACHE_TTL = 30_000;
+
+function cached(key: string): any | null {
+  const entry = responseCache.get(key);
+  if (entry && Date.now() < entry.expiry) return entry.data;
+  return null;
+}
+
 // ============================================================================
 // GET /dao - List all DAOs (for client indexing)
 // ============================================================================
 
 router.get('/', async (req: Request, res: Response) => {
   try {
+    const { type, owner, limit, offset } = req.query;
+    const cacheKey = `dao:${type || ''}:${owner || ''}:${limit || ''}:${offset || ''}`;
+    const hit = cached(cacheKey);
+    if (hit) return res.json(hit);
+
     const pool = getPool();
     const connection = getConnection();
-    const { type, owner, limit, offset } = req.query;
 
     let daos;
     if (owner && typeof owner === 'string') {
@@ -109,7 +123,9 @@ router.get('/', async (req: Request, res: Response) => {
       };
     });
 
-    res.json({ daos: enrichedDaos.filter((d): d is NonNullable<typeof d> => d !== null) });
+    const result = { daos: enrichedDaos.filter((d): d is NonNullable<typeof d> => d !== null) };
+    responseCache.set(cacheKey, { data: result, expiry: Date.now() + CACHE_TTL });
+    res.json(result);
   } catch (error) {
     console.error('Error fetching DAOs:', error);
     res.status(500).json({ error: 'Failed to fetch DAOs' });
@@ -489,163 +505,160 @@ router.get('/:daoPda/proposal/live', async (req: Request, res: Response) => {
 // GET /dao/proposals/all - Get all proposals from all DAOs
 // ============================================================================
 
-router.get('/proposals/all', async (req: Request, res: Response) => {
+router.get('/proposals/all', async (_req: Request, res: Response) => {
   try {
+    const hit = cached('proposals:all');
+    if (hit) return res.json(hit);
+
     const pool = getPool();
     const connection = getConnection();
-
     const allDaos = await getAllDaos(pool);
+    if (allDaos.length === 0) return res.json({ proposals: [] });
 
-    if (allDaos.length === 0) {
-      return res.json({ proposals: [] });
-    }
-
-    // Batch fetch token icons and decimals for all DAOs
+    // Batch fetch token metadata
     const tokenMints = allDaos.map(dao => dao.token_mint);
-    const quoteMints = allDaos.map(dao => dao.quote_mint);
-    const allMints = [...new Set([...tokenMints, ...quoteMints])];
-
+    const allMints = [...new Set([...tokenMints, ...allDaos.map(dao => dao.quote_mint)])];
     const [iconMap, decimalsMap] = await Promise.all([
       getTokenIcons(connection, tokenMints),
       getTokenDecimalsBatch(connection, allMints),
     ]);
 
-    // Create a read-only client for on-chain fetching
     const readClient = createReadOnlyClient(connection);
+    const coder = readClient.program.coder.accounts;
 
-    const allProposals = await Promise.all(
-      allDaos.map(async (dao) => {
-        let moderatorPda = dao.moderator_pda;
-        if (!moderatorPda && dao.parent_dao_id) {
-          const parentDao = await getDaoById(pool, dao.parent_dao_id);
-          if (parentDao?.moderator_pda) {
-            moderatorPda = parentDao.moderator_pda;
-          }
-        }
+    // Resolve moderator PDAs from DB (no RPC needed)
+    const daosByMod = new Map<string, typeof allDaos>();
+    for (const dao of allDaos) {
+      let modPda = dao.moderator_pda;
+      if (!modPda && dao.parent_dao_id) {
+        const parent = await getDaoById(pool, dao.parent_dao_id);
+        if (parent?.moderator_pda) modPda = parent.moderator_pda;
+      }
+      if (!modPda || modPda.startsWith('PENDING')) continue;
+      const arr = daosByMod.get(modPda) || [];
+      arr.push(dao);
+      daosByMod.set(modPda, arr);
+    }
 
-        // Skip if no moderator or if DAO is pending finalization (reserved but not yet created on-chain)
-        if (!moderatorPda || moderatorPda.startsWith('PENDING')) {
-          return [];
-        }
-
-        const moderatorPubkey = new PublicKey(moderatorPda);
-        let proposalCount = 0;
-
+    // Batch fetch moderator accounts (1 RPC call per 100)
+    const modPdas = [...daosByMod.keys()];
+    const modCounts = new Map<string, number>();
+    for (let i = 0; i < modPdas.length; i += 100) {
+      const batch = modPdas.slice(i, i + 100);
+      const accounts = await connection.getMultipleAccountsInfo(batch.map(p => new PublicKey(p)));
+      for (let j = 0; j < accounts.length; j++) {
+        if (!accounts[j]) continue;
         try {
-          const moderator = await readClient.fetchModerator(moderatorPubkey);
-          proposalCount = moderator.proposalIdCounter;
-        } catch (err: any) {
-          const errMsg = err?.message || String(err);
-          if (!errMsg.includes('Account does not exist')) {
-            console.warn(`Failed to fetch moderator ${moderatorPda} for DAO ${dao.dao_name}:`, err);
-          }
-          return [];
+          const decoded = coder.decode('moderatorAccount', accounts[j]!.data) as any;
+          modCounts.set(batch[j], decoded.proposalIdCounter);
+        } catch { /* skip */ }
+      }
+    }
+    // Derive all proposal PDAs, then batch fetch
+    const tasks: { dao: typeof allDaos[0]; proposalId: number; pda: PublicKey }[] = [];
+    for (const [modPda, daos] of daosByMod) {
+      const count = modCounts.get(modPda) || 0;
+      const modPubkey = new PublicKey(modPda);
+      for (let i = 0; i < count; i++) {
+        const [pda] = readClient.deriveProposalPDA(modPubkey, i);
+        for (const dao of daos) {
+          tasks.push({ dao, proposalId: i, pda });
         }
+      }
+    }
 
-        if (proposalCount === 0) {
-          return [];
+    // Batch fetch all proposal accounts
+    const decoded: (any | null)[] = new Array(tasks.length).fill(null);
+    for (let i = 0; i < tasks.length; i += 100) {
+      const batch = tasks.slice(i, i + 100).map(t => t.pda);
+      const accounts = await connection.getMultipleAccountsInfo(batch);
+      for (let j = 0; j < accounts.length; j++) {
+        if (!accounts[j]) continue;
+        try { decoded[i + j] = coder.decode('proposalAccount', accounts[j]!.data); } catch { /* skip */ }
+      }
+    }
+    // Fetch IPFS metadata in parallel (cached permanently by fetchFromIPFS)
+    const ipfsPromises = new Map<string, Promise<{ title?: string; description?: string; options?: string[]; dao_pda?: string } | null>>();
+    for (let i = 0; i < tasks.length; i++) {
+      const account = decoded[i];
+      if (!account?.metadata) continue;
+      const cid = account.metadata;
+      if (!ipfsPromises.has(cid)) {
+        ipfsPromises.set(cid, fetchFromIPFS<any>(cid).catch(() => null));
+      }
+    }
+    const ipfsResults = new Map<string, any>();
+    for (const [cid, promise] of ipfsPromises) {
+      ipfsResults.set(cid, await promise);
+    }
+    // Assemble results
+    const proposals: any[] = [];
+    const countsByDao = new Map<string, number>();
+
+    for (let i = 0; i < tasks.length; i++) {
+      const account = decoded[i];
+      if (!account) continue;
+
+      const { dao, proposalId, pda } = tasks[i];
+      const parsedState = futarchy.parseProposalState(account.state);
+      if (parsedState.state === 'setup') continue;
+
+      let title = `Proposal #${proposalId}`;
+      let description = '';
+      let options: string[] = ['Pass', 'Fail'];
+      const metadataCid = account.metadata || null;
+
+      if (metadataCid) {
+        const metadata = ipfsResults.get(metadataCid);
+        if (metadata) {
+          title = metadata.title || title;
+          description = metadata.description || description;
+          options = metadata.options || options;
+          if ((metadata.dao_pda || null) !== dao.dao_pda) continue;
+        } else {
+          // Can't verify DAO ownership without metadata
+          continue;
         }
+      }
 
-        const proposals = await Promise.all(
-          Array.from({ length: proposalCount }, (_, i) => i).map(async (proposalId) => {
-            const [proposalPda] = readClient.deriveProposalPDA(moderatorPubkey, proposalId);
-            const proposalPdaStr = proposalPda.toBase58();
+      const lengthMin = account.config.length;
+      const createdAt = account.createdAt.toNumber() * 1000;
+      const endsAt = createdAt + (lengthMin * 60 * 1000);
 
-            let title = `Proposal #${proposalId}`;
-            let description = '';
-            let options: string[] = ['Pass', 'Fail'];
-            let status: 'Setup' | 'Pending' | 'Resolved' = 'Pending';
-            let finalizedAt: number | null = null;
-            let endsAt: number | null = null;
-            let createdAt: number = Date.now();
-            let metadataCid: string | null = null;
-            let metadataDaoPda: string | null = null;
-            let winningIndex: number | null = null;
-            let vault: string = '';
-            let marketBias: number = 0;
+      proposals.push({
+        id: proposalId,
+        proposalPda: pda.toBase58(),
+        title,
+        description,
+        options,
+        status: parsedState.state === 'resolved' ? 'Resolved' : 'Pending',
+        winningIndex: parsedState.state === 'resolved' ? parsedState.winningIdx : null,
+        vault: account.vault.toBase58(),
+        createdAt,
+        endsAt,
+        finalizedAt: parsedState.state === 'resolved' ? endsAt : null,
+        metadataCid,
+        marketBias: account.config.marketBias,
+        baseDecimals: decimalsMap.get(dao.token_mint) ?? null,
+        quoteDecimals: decimalsMap.get(dao.quote_mint) ?? null,
+        daoPda: dao.dao_pda,
+        daoName: dao.dao_name,
+        tokenMint: dao.token_mint,
+        tokenIcon: iconMap.get(dao.token_mint) || null,
+      });
 
-            try {
-              const proposalAccount = await readClient.fetchProposal(proposalPda);
-              const parsedState = futarchy.parseProposalState(proposalAccount.state);
+      countsByDao.set(dao.dao_pda, (countsByDao.get(dao.dao_pda) || 0) + 1);
+    }
 
-              // On-chain length is in minutes, convert to seconds then milliseconds
-              const proposalLengthMinutes = proposalAccount.config.length;
-              createdAt = proposalAccount.createdAt.toNumber() * 1000;
-              endsAt = createdAt + (proposalLengthMinutes * 60 * 1000);
-              metadataCid = proposalAccount.metadata || null;
-              vault = proposalAccount.vault.toBase58();
-              marketBias = proposalAccount.config.marketBias;
+    for (const [daoPda, count] of countsByDao) {
+      setCachedProposalCount(daoPda, count);
+    }
 
-              if (parsedState.state === 'setup') {
-                status = 'Setup';
-              } else if (parsedState.state === 'resolved') {
-                status = 'Resolved';
-                winningIndex = parsedState.winningIdx;
-                finalizedAt = endsAt;  // Use endsAt as proxy for finalization time
-              } else {
-                status = 'Pending';
-              }
-            } catch (err) {
-              console.warn(`Failed to fetch proposal ${proposalId} for DAO ${dao.dao_name}:`, err);
-              return null;
-            }
+    proposals.sort((a, b) => b.createdAt - a.createdAt);
 
-            let metadataFetchSucceeded = false;
-            if (metadataCid) {
-              try {
-                const metadata = await fetchFromIPFS<{ title?: string; description?: string; options?: string[]; dao_pda?: string }>(metadataCid);
-                title = metadata.title || title;
-                description = metadata.description || description;
-                options = metadata.options || options;
-                metadataDaoPda = metadata.dao_pda || null;
-                metadataFetchSucceeded = true;
-              } catch (err) {
-                console.warn(`Failed to fetch IPFS metadata for ${metadataCid}: ${err instanceof Error ? err.message : err}`);
-              }
-            }
-
-            if (metadataFetchSucceeded && metadataDaoPda !== dao.dao_pda) {
-              return null;
-            }
-
-            return {
-              id: proposalId,
-              proposalPda: proposalPdaStr,
-              title,
-              description,
-              options,
-              status,
-              winningIndex,
-              vault,
-              createdAt,
-              endsAt,
-              finalizedAt,
-              metadataCid,
-              marketBias,
-              // Token decimals from on-chain (skip if mint not found)
-              baseDecimals: decimalsMap.get(dao.token_mint) ?? null,
-              quoteDecimals: decimalsMap.get(dao.quote_mint) ?? null,
-              // DAO metadata for markets page
-              daoPda: dao.dao_pda,
-              daoName: dao.dao_name,
-              tokenMint: dao.token_mint,
-              tokenIcon: iconMap.get(dao.token_mint) || null,
-            };
-          })
-        );
-
-        const validProposals = proposals.filter((p): p is NonNullable<typeof p> => p !== null && p.status !== 'Setup');
-        setCachedProposalCount(dao.dao_pda, validProposals.length);
-
-        return validProposals;
-      })
-    );
-
-    const flattenedProposals = allProposals
-      .flat()
-      .sort((a, b) => b.createdAt - a.createdAt);
-
-    res.json({ proposals: flattenedProposals });
+    const result = { proposals };
+    responseCache.set('proposals:all', { data: result, expiry: Date.now() + CACHE_TTL });
+    res.json(result);
   } catch (error) {
     console.error('Error fetching all proposals:', error);
     res.status(500).json({ error: 'Failed to fetch proposals' });

@@ -81,6 +81,12 @@ const presaleClaimLimiter = rateLimit({
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Log all incoming requests
+app.use((req, _res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
+
 // Apply general rate limiter
 app.use(limiter);
 
