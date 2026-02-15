@@ -65,6 +65,7 @@ interface TradingRequestData {
   wallet: string;
   operation: 'swap' | 'deposit' | 'withdraw' | 'redeem';
   vaultType?: 'base' | 'quote';
+  inputAmount?: string;  // Amount for activity tracking
 }
 
 // Request storage for build/execute pattern (15 min TTL)
@@ -382,6 +383,7 @@ router.post('/:proposalPda/swap/build', async (req: Request, res: Response) => {
       poolAddress: poolPda.toBase58(),
       wallet,
       operation: 'swap',
+      inputAmount: quote.inputAmount.toString(),
     });
 
     // Serialize transaction (without signatures)
@@ -626,6 +628,7 @@ router.post('/:proposalPda/deposit/build', async (req: Request, res: Response) =
       wallet,
       operation: 'deposit',
       vaultType,
+      inputAmount: amountBN.toString(),
     });
 
     const serializedTx = tx.serialize({ requireAllSignatures: false });
@@ -741,6 +744,7 @@ router.post('/:proposalPda/deposit/execute', async (req: Request, res: Response)
 
     console.log(`Deposit executed for proposal ${proposalPda}: ${signature}`);
 
+
     res.json({
       success: true,
       signature,
@@ -852,6 +856,7 @@ router.post('/:proposalPda/withdraw/build', async (req: Request, res: Response) 
       wallet,
       operation: 'withdraw',
       vaultType,
+      inputAmount: amountBN.toString(),
     });
 
     const serializedTx = tx.serialize({ requireAllSignatures: false });
@@ -966,6 +971,7 @@ router.post('/:proposalPda/withdraw/execute', async (req: Request, res: Response
     tradingStorage.delete(requestId);
 
     console.log(`Withdraw executed for proposal ${proposalPda}: ${signature}`);
+
 
     res.json({
       success: true,
