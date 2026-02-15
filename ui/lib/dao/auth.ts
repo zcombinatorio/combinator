@@ -100,16 +100,13 @@ export function verifySignedTransaction(
     const hashHex = hash.toString('hex');
     const expectedMessage = `Combinator Authentication\n\nSign this message to verify your request.\n\nRequest hash: ${hashHex}`;
 
-    // Verify the transaction contains exactly one instruction (the Memo)
-    if (transaction.instructions.length !== 1) {
-      console.error('Transaction verification: expected exactly 1 instruction, got', transaction.instructions.length);
-      return false;
-    }
-
-    // Verify it's a Memo instruction with the expected auth message
-    const memoIx = transaction.instructions[0];
-    if (memoIx.programId.toBase58() !== MEMO_PROGRAM_ID) {
-      console.error('Transaction verification: instruction is not a Memo');
+    // Find the Memo instruction (wallets like Phantom may inject extra instructions
+    // e.g. ComputeBudget for priority fees — these are harmless since the tx is never submitted)
+    const memoIx = transaction.instructions.find(
+      ix => ix.programId.toBase58() === MEMO_PROGRAM_ID
+    );
+    if (!memoIx) {
+      console.error('Transaction verification: no Memo instruction found');
       return false;
     }
 
