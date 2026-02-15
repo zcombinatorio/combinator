@@ -24,7 +24,10 @@ import { Request, Response } from 'express';
 import * as nacl from 'tweetnacl';
 import * as crypto from 'crypto';
 import bs58 from 'bs58';
+import { Transaction, PublicKey } from '@solana/web3.js';
 import { isValidSolanaAddress } from '../validation';
+
+const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 
 /**
  * Verify a signed_hash for request authentication.
@@ -42,8 +45,8 @@ export function verifySignedHash(
   signedHash: string
 ): boolean {
   try {
-    // Reconstruct body without signed_hash
-    const { signed_hash: _, ...bodyWithoutHash } = body;
+    // Reconstruct body without auth fields
+    const { signed_hash: _, signed_transaction: __, ...bodyWithoutHash } = body;
 
     // Hash the stringified body
     const hash = crypto.createHash('sha256')
@@ -70,6 +73,75 @@ export function verifySignedHash(
 }
 
 /**
+ * Verify a signed Memo transaction for request authentication (Ledger fallback).
+ * Ledger's Solana app doesn't support signMessage, so the client signs a Memo
+ * transaction containing the auth message instead.
+ *
+ * Verification:
+ * 1. Deserialize the transaction
+ * 2. Verify it contains a Memo instruction with the expected auth message
+ * 3. Verify the transaction signature matches the wallet's public key
+ */
+export function verifySignedTransaction(
+  body: Record<string, unknown>,
+  wallet: string,
+  signedTransaction: string
+): boolean {
+  try {
+    // Deserialize the signed transaction
+    const txBytes = bs58.decode(signedTransaction);
+    const transaction = Transaction.from(txBytes);
+
+    // Reconstruct expected auth message from body (excluding auth fields)
+    const { signed_hash: _, signed_transaction: __, ...bodyWithoutAuth } = body;
+    const hash = crypto.createHash('sha256')
+      .update(JSON.stringify(bodyWithoutAuth))
+      .digest();
+    const hashHex = hash.toString('hex');
+    const expectedMessage = `Combinator Authentication\n\nSign this message to verify your request.\n\nRequest hash: ${hashHex}`;
+
+    // Verify the transaction contains exactly one instruction (the Memo)
+    if (transaction.instructions.length !== 1) {
+      console.error('Transaction verification: expected exactly 1 instruction, got', transaction.instructions.length);
+      return false;
+    }
+
+    // Verify it's a Memo instruction with the expected auth message
+    const memoIx = transaction.instructions[0];
+    if (memoIx.programId.toBase58() !== MEMO_PROGRAM_ID) {
+      console.error('Transaction verification: instruction is not a Memo');
+      return false;
+    }
+
+    const memoData = memoIx.data.toString('utf-8');
+    if (memoData !== expectedMessage) {
+      console.error('Transaction verification: memo data mismatch');
+      return false;
+    }
+
+    // Verify the transaction signature matches the wallet
+    const publicKey = new PublicKey(wallet);
+    const messageBytes = transaction.serializeMessage();
+    const sigEntry = transaction.signatures.find(
+      sig => sig.publicKey.equals(publicKey)
+    );
+    if (!sigEntry?.signature) {
+      console.error('Transaction verification: no signature from wallet');
+      return false;
+    }
+
+    return nacl.sign.detached.verify(
+      messageBytes,
+      sigEntry.signature,
+      publicKey.toBytes()
+    );
+  } catch (error) {
+    console.error('Transaction signature verification error:', error);
+    return false;
+  }
+}
+
+/**
  * Middleware to validate request authentication via signed_hash
  */
 export function requireSignedHash(
@@ -77,7 +149,7 @@ export function requireSignedHash(
   res: Response,
   next: () => void
 ): void {
-  const { wallet, signed_hash } = req.body;
+  const { wallet, signed_hash, signed_transaction } = req.body;
 
   if (!wallet || !signed_hash) {
     res.status(400).json({ error: 'Missing wallet or signed_hash' });
@@ -89,9 +161,18 @@ export function requireSignedHash(
     return;
   }
 
-  if (!verifySignedHash(req.body, wallet, signed_hash)) {
-    res.status(401).json({ error: 'Invalid signature' });
-    return;
+  // If signed_transaction is present, use transaction-based verification (Ledger fallback)
+  if (signed_transaction) {
+    if (!verifySignedTransaction(req.body, wallet, signed_transaction)) {
+      res.status(401).json({ error: 'Invalid transaction signature' });
+      return;
+    }
+  } else {
+    // Standard message-based verification
+    if (!verifySignedHash(req.body, wallet, signed_hash)) {
+      res.status(401).json({ error: 'Invalid signature' });
+      return;
+    }
   }
 
   next();
