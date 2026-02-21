@@ -57,8 +57,8 @@ CREATE TABLE IF NOT EXISTS cmb_daos (
   -- NULL means check current balance only, set value means check average over that period
   proposer_holding_period_hours INTEGER DEFAULT NULL CHECK (proposer_holding_period_hours IS NULL OR proposer_holding_period_hours > 0),
 
-  -- Withdrawal percentage (5-50%), default 12%
-  withdrawal_percentage INTEGER NOT NULL DEFAULT 12 CHECK (withdrawal_percentage >= 5 AND withdrawal_percentage <= 50),
+  -- Withdrawal percentage (5-50%), default 50%
+  withdrawal_percentage INTEGER NOT NULL DEFAULT 50 CHECK (withdrawal_percentage >= 5 AND withdrawal_percentage <= 50),
 
   -- Funding signature: SOL transfer tx that funded DAO creation (anti-replay protection)
   funding_signature TEXT

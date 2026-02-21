@@ -264,7 +264,7 @@ export interface Dao {
   proposer_token_threshold?: string; // Min token balance to propose (null = no requirement)
   proposer_holding_period_hours?: number; // Hours over which to calculate average balance (null = current balance only)
   // Liquidity withdrawal config
-  withdrawal_percentage: number; // Percentage of LP to withdraw for proposals (1-50, default 12)
+  withdrawal_percentage: number; // Percentage of LP to withdraw for proposals (1-50, default 50)
   // Funding
   funding_signature?: string; // Transaction signature of SOL transfer that funded DAO creation
   // Metadata

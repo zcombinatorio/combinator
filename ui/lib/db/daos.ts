@@ -783,7 +783,7 @@ export async function getWithdrawalPercentage(
 
   try {
     const result = await pool.query(query, [daoId]);
-    return result.rows.length > 0 ? result.rows[0].withdrawal_percentage : 12;
+    return result.rows.length > 0 ? result.rows[0].withdrawal_percentage : 50;
   } catch (error) {
     console.error('Error fetching withdrawal percentage:', error);
     throw error;

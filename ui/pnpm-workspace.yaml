@@ -1,0 +1,2 @@
+overrides:
+  '@zcomb/programs-sdk': link:../../programs/sdk
