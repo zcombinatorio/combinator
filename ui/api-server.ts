@@ -38,6 +38,7 @@ import dlmmFeeClaimRouter from './routes/dlmm-fee-claim';
 import { dammRouter as dammLiquidityRouter, dlmmRouter as dlmmLiquidityRouter } from './routes/liquidity';
 import icoRouter from './routes/ico';
 import daoRouter from './routes/dao';
+import dbcLaunchRouter from './routes/dbc-launch';
 
 const app = express();
 const PORT = process.env.API_PORT || 3001;
@@ -126,6 +127,9 @@ app.use('/ico', icoRouter);
 
 // Mount DAO routes
 app.use('/dao', daoRouter);
+
+// Mount DBC launch routes
+app.use('/dbc-launch', dbcLaunchRouter);
 
 // Launch token endpoint - returns unsigned transaction
 app.post('/launch', async (req: Request, res: Response) => {
@@ -405,6 +409,7 @@ async function startServer() {
       console.log(`  POST /dao/proposal                          - Create proposal for DAO`);
       console.log(`  POST /dao/redeem-liquidity                  - Redeem liquidity from resolved proposal`);
       console.log(`  POST /dao/deposit-back                      - Return liquidity to Meteora pool`);
+      console.log(`  POST /dbc-launch                            - Launch token on DBC (API key required)`);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
     });
   } catch (error) {
