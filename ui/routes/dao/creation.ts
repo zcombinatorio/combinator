@@ -21,7 +21,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { PublicKey, Connection, Transaction, ComputeBudgetProgram } from '@solana/web3.js';
+import { PublicKey, Connection, Transaction, ComputeBudgetProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import { futarchy } from '@zcomb/programs-sdk';
 
@@ -638,7 +638,9 @@ router.post('/reserve-admin', async (req: Request, res: Response) => {
 
       // Get next key index and allocate a new managed wallet
       const keyIdx = await getNextKeyIndex(pool);
-      const { publicKey: adminWallet } = await allocateKey(connection, keyIdx, false);
+      // Reserve flow should not spend protocol funds preemptively.
+      // The client is responsible for funding the managed admin wallet in their own tx flow.
+      const { publicKey: adminWallet } = await allocateKey(connection, keyIdx, true);
 
       // Register the key
       await registerKey(pool, {
@@ -710,7 +712,7 @@ router.post('/reserve-admin', async (req: Request, res: Response) => {
  * 4. Transfer treasury to DAO's treasury multisig
  * 5. transferAdmin to our managed admin wallet
  * 6. Transfer LP to our managed admin
- * 7. Fund admin wallet
+ * 7. Fund admin wallet (required, since reserve-admin does not pre-fund it)
  *
  * Once confirmed on-chain, the client calls this endpoint to:
  * - Verify the DAO exists on-chain with our admin wallet
@@ -779,6 +781,22 @@ router.post('/finalize-reserved', async (req: Request, res: Response) => {
         error: 'Admin mismatch: on-chain admin does not match reserved admin wallet',
         on_chain_admin: onChainDao.admin.toBase58(),
         expected_admin: dbRow.admin_wallet,
+      });
+    }
+
+    // Enforce minimum admin funding before finalization so the DAO is immediately
+    // usable for proposal creation and liquidity operations.
+    const MIN_ADMIN_BALANCE_SOL = 0.1;
+    const adminBalanceLamports = await connection.getBalance(new PublicKey(dbRow.admin_wallet));
+    const adminBalanceSol = adminBalanceLamports / LAMPORTS_PER_SOL;
+    if (adminBalanceSol < MIN_ADMIN_BALANCE_SOL) {
+      return res.status(400).json({
+        error: 'Reserved admin wallet underfunded',
+        reason: `Admin wallet has insufficient SOL balance: ${adminBalanceSol.toFixed(4)} SOL. Minimum required: ${MIN_ADMIN_BALANCE_SOL} SOL before finalizing reserved DAO.`,
+        check: 'admin_wallet_balance',
+        admin_wallet: dbRow.admin_wallet,
+        current_balance: adminBalanceSol,
+        required_balance: MIN_ADMIN_BALANCE_SOL,
       });
     }
 

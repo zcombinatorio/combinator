@@ -72,9 +72,11 @@ async function main() {
   const daoBalance = await connection.getBalance(daoWallet);
   console.log(`DAO wallet balance: ${(daoBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`);
 
-  // Fetch all DAOs
-  const daos = await getAllDaos(dbPool);
-  console.log(`Found ${daos.length} DAOs\n`);
+  // Fetch all DAOs, then limit to unfinalized reserved entries only
+  const allDaos = await getAllDaos(dbPool);
+  const daos = allDaos.filter((dao) => dao.dao_pda.startsWith('PENDING'));
+  console.log(`Found ${allDaos.length} total DAOs`);
+  console.log(`Pending reserved DAOs to process: ${daos.length}\n`);
 
   const results: RecoveryResult[] = [];
   let totalRecovered = 0;
