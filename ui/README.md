@@ -3,7 +3,6 @@
 Backend API for Combinator.
 
 ## Repository Structure
-
 ```
 ui/
 ├── app/api/          # Next.js API routes (see endpoints below)

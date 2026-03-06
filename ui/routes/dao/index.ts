@@ -157,7 +157,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // Validate proposal duration based on proposer role
     // Test DAOs: 1 minute to 7 days (for testing)
     // DAO owner: 18 hours to 7 days
-    // Others (whitelist/token threshold): 24 hours to 4 days
+    // Others (public/whitelist/token threshold): 24 hours to 3 days
     const TEST_DAOS = ['SURFTEST', 'TESTSURF', 'SUTESTRF', 'testext1'];
     // Visibility: 0=hidden, 1=internal test, 2=production, 3=client test
     const isTestDao = TEST_DAOS.includes(dao.dao_name) || dao.visibility === 3;
@@ -189,13 +189,13 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
         });
       }
     } else {
-      // Non-owner proposers: 24 hours to 4 days
+      // Non-owner proposers: 24 hours to 3 days
       const minDuration = ONE_DAY;
-      const maxDuration = 4 * ONE_DAY;
+      const maxDuration = 3 * ONE_DAY;
       if (length_secs < minDuration || length_secs > maxDuration) {
         return returnError(400, {
           error: 'Invalid proposal duration',
-          reason: `Proposers can create proposals from 24 hours to 4 days (${minDuration}-${maxDuration} seconds)`,
+          reason: `Proposers can create proposals from 24 hours to 3 days (${minDuration}-${maxDuration} seconds)`,
           provided: length_secs,
         });
       }
@@ -206,7 +206,8 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // ========== PROPOSAL VALIDATION CHECKS ==========
     // These checks ensure the DAO is ready to create proposals
 
-    // 0. Check proposer authorization using per-DAO settings (DB whitelist + token threshold)
+    // 0. Check proposer authorization using per-DAO settings
+    // (DB whitelist, token threshold, or public mode when both are unset)
     // Each DAO (parent or child) has independent settings managed via:
     //   - POST/DELETE /dao/:daoPda/proposers (wallet whitelist)
     //   - PUT /dao/:daoPda/proposer-config (token threshold and holding period)

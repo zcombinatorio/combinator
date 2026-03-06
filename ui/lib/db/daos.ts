@@ -557,6 +557,25 @@ export async function getProposersByDao(
   }
 }
 
+export async function getProposerCount(
+  pool: Pool,
+  daoId: number
+): Promise<number> {
+  const query = `
+    SELECT COUNT(*)::int AS proposer_count
+    FROM cmb_dao_proposers
+    WHERE dao_id = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [daoId]);
+    return result.rows[0]?.proposer_count ?? 0;
+  } catch (error) {
+    console.error('Error fetching proposer count:', error);
+    throw error;
+  }
+}
+
 // ============================================================================
 // Aggregation / Stats Functions
 // ============================================================================
@@ -789,4 +808,3 @@ export async function getWithdrawalPercentage(
     throw error;
   }
 }
-

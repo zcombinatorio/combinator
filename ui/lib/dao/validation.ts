@@ -26,13 +26,13 @@ import { getMint, getAccount, getAssociatedTokenAddress } from '@solana/spl-toke
 import { futarchy } from '@zcomb/programs-sdk';
 import { CpAmm } from '@meteora-ag/cp-amm-sdk';
 import DLMM from '@meteora-ag/dlmm';
-import { isProposer, getProposerThresholdConfig } from '../db/daos';
+import { isProposer, getProposerCount, getProposerThresholdConfig } from '../db/daos';
 import { getPool } from '../db';
 import { calculateAverageBalance } from '../historicalBalance';
 
 export interface ProposerAuthorizationResult {
   isAuthorized: boolean;
-  authMethod: 'whitelist' | 'token_balance' | null;
+  authMethod: 'whitelist' | 'token_balance' | 'public' | null;
   reason?: string;
 }
 
@@ -63,7 +63,8 @@ export function isDaoReadinessError(result: DaoReadinessResult): result is DaoRe
  * 2. If not whitelisted AND threshold is set, check token balance (RPC call)
  *    - If holding period is set, check time-weighted average balance via Helius
  *    - Otherwise check current balance
- * 3. Otherwise deny (creator is always on whitelist by default)
+ * 3. If no threshold is set and the whitelist is empty, allow public proposal creation
+ * 4. Otherwise deny
  */
 export async function checkDaoProposerAuthorization(
   connection: Connection,
@@ -81,7 +82,16 @@ export async function checkDaoProposerAuthorization(
   // 2. Get the DAO's token threshold and holding period settings
   const { threshold, holdingPeriodHours } = await getProposerThresholdConfig(pool, daoId);
 
-  // 3. If threshold is set, check token balance
+  // 3. If no threshold is set and the whitelist is empty, proposal creation is public.
+  // Owner-only access still works because isProposer() checks owner_wallet before this branch.
+  if (!threshold || threshold === '0') {
+    const proposerCount = await getProposerCount(pool, daoId);
+    if (proposerCount === 0) {
+      return { isAuthorized: true, authMethod: 'public' };
+    }
+  }
+
+  // 4. If threshold is set, check token balance
   // Both threshold and balances are in raw token units (smallest unit)
   if (threshold && threshold !== '0') {
     const minBalanceRaw = BigInt(threshold);
@@ -158,8 +168,7 @@ export async function checkDaoProposerAuthorization(
     }
   }
 
-  // 4. Not whitelisted and no token threshold set - deny
-  // (DAO creator is always added to whitelist on creation)
+  // 5. Not whitelisted, not public, and no token threshold set - deny
   return {
     isAuthorized: false,
     authMethod: null,
