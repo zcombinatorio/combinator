@@ -44,6 +44,8 @@ import {
   PROTOCOL_FEE_WALLET,
   PARTNER_DAO_PDA,
   PARTNER_TREASURY,
+  PARTNER_DAO_PROTOCOL_PERCENT,
+  PARTNER_DAO_TREASURY_PERCENT,
   PARTNER_REFERRED_DAO_PDAS,
   calculateProtocolFeePercent,
   FeeRecipient,
@@ -74,7 +76,7 @@ const LEGACY_POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
   // SurfCash
   'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': [
     { address: 'BmfaxQCRqf4xZFmQa5GswShBZhRBf4bED7hadFkpgBC3', percent: 34.375 },
-    { address: 'EtdhMR3yYHsUP3cm36X83SpvnL5jB48p5b653pqLC23C', percent: 34.375 },
+    { address: PARTNER_TREASURY, percent: 34.375 },
     { address: PROTOCOL_FEE_WALLET, percent: 31.25 },
   ],
 };
@@ -121,16 +123,17 @@ async function getPoolFeeConfig(
 
     // Check for special partner fee configurations
     if (dao.dao_pda === PARTNER_DAO_PDA) {
-      // Special partner: 0% protocol, 100% to their treasury
-      if (!dao.treasury_multisig) {
-        throw new Error(`Partner DAO "${dao.dao_name}" has no treasury configured. The DAO must set up a treasury before fees can be claimed.`);
+      // Special partner: 25% protocol, 75% to partner fee destination
+      if (!PARTNER_TREASURY) {
+        throw new Error(`Partner treasury not configured. Cannot process fee claim for partner DAO "${dao.dao_name}".`);
       }
 
-      console.log(`[Fee Claim] Partner DAO ${dao.dao_name}: 0% protocol, 100% DAO treasury`);
+      console.log(`[Fee Claim] Partner DAO ${dao.dao_name}: ${PARTNER_DAO_PROTOCOL_PERCENT.toFixed(2)}% protocol, ${PARTNER_DAO_TREASURY_PERCENT.toFixed(2)}% partner fee destination`);
 
       return {
         feeRecipients: [
-          { address: dao.treasury_multisig, percent: 100 },
+          { address: PROTOCOL_FEE_WALLET, percent: PARTNER_DAO_PROTOCOL_PERCENT },
+          { address: PARTNER_TREASURY, percent: PARTNER_DAO_TREASURY_PERCENT },
         ],
         lpOwnerKeypair,
         source: 'dao',

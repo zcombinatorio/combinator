@@ -39,11 +39,19 @@ export const METEORA_FEE_PERCENT = 0.20;  // Meteora takes 20% of collected fees
 // Partner Fee Configuration
 // ============================================================================
 
-// Special partner: 0% protocol fee, 100% to DAO treasury
+// Special partner DAO
 export const PARTNER_DAO_PDA = '6Eykhr9PfnjKFGWxgACCUKo1sy9zRKEBAQV8n94Qo33y';
 
-// Partner's treasury address (receives 3/7 of fees from referred DAOs)
-export const PARTNER_TREASURY = 'EtdhMR3yYHsUP3cm36X83SpvnL5jB48p5b653pqLC23C';
+// Partner fee claim destination.
+// Used for the partner DAO's own fee share and for partner-referred DAO revenue.
+// This is intentionally separate from the DAO's displayed treasury vault.
+export const PARTNER_TREASURY = '6CAvPzH1UjkhBzcWjyT8KVEkhYG5NcSJyxkqVZ4W5SR2';
+
+// Partner DAO pool split:
+// - 25% to protocol
+// - 75% to the partner fee claim destination
+export const PARTNER_DAO_PROTOCOL_PERCENT = 25;
+export const PARTNER_DAO_TREASURY_PERCENT = 75;
 
 // DAOs referred by the partner get special fee split:
 // - 1/7 (~14.29%) to protocol
