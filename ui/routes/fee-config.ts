@@ -61,6 +61,17 @@ export const PARTNER_REFERRED_DAO_PDAS: Set<string> = new Set([
   '4YrUf7URPvb6hFYuw8DSXGwtuwGB2Xn4p3MUJAULLANz',
 ]);
 
+// Per-DAO fee wallet overrides for standard DAOs.
+// Maps dao_pda -> wallet address that should receive the DAO's share of fees
+// instead of the DAO's on-chain treasury vault. Protocol share is unchanged.
+// Does not apply to the partner DAO or partner-referred DAOs above.
+export const STANDARD_DAO_FEE_WALLET_OVERRIDES: Record<string, string> = {
+  // ClawPilotDAO
+  '2QAy1hDLKH36UXeF9zwmsfZh7UNgm7uUQPmjWdUR6b7m': 'Dr2ME1sLQ6ZrqGcKEbfYe1guXV2ms4VBi1Pu2bq1ZFdP',
+  // PredictDAO
+  'BaLTMqeSen6efmNAcuf1oa9ZKtGoxhFsxqHZtTmCq2KL': 'CEieE6ki8y3jChba17G3J8nkdM865shWwAjSJ6U7at7v',
+};
+
 // ============================================================================
 // Helper Functions
 // ============================================================================

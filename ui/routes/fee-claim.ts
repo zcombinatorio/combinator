@@ -47,6 +47,7 @@ import {
   PARTNER_DAO_PROTOCOL_PERCENT,
   PARTNER_DAO_TREASURY_PERCENT,
   PARTNER_REFERRED_DAO_PDAS,
+  STANDARD_DAO_FEE_WALLET_OVERRIDES,
   calculateProtocolFeePercent,
   FeeRecipient,
 } from './fee-config';
@@ -204,13 +205,18 @@ async function getPoolFeeConfig(
 
     // Add DAO treasury if they get a share
     if (daoPercent > 0) {
-      if (!dao.treasury_multisig) {
+      const overrideWallet = STANDARD_DAO_FEE_WALLET_OVERRIDES[dao.dao_pda];
+      const daoRecipient = overrideWallet ?? dao.treasury_multisig;
+      if (!daoRecipient) {
         throw new Error(`DAO "${dao.dao_name}" is entitled to ${daoPercent.toFixed(2)}% of fees but has no treasury configured. The DAO must set up a treasury before fees can be claimed.`);
       }
       feeRecipients.push({
-        address: dao.treasury_multisig,  // This is actually treasury_vault (see dao.ts comment)
+        address: daoRecipient,
         percent: daoPercent,
       });
+      if (overrideWallet) {
+        console.log(`[Fee Claim] DAO ${dao.dao_name}: using fee wallet override ${overrideWallet} instead of treasury ${dao.treasury_multisig}`);
+      }
     }
 
     console.log(`[Fee Claim] DAO pool ${dao.dao_name}: pool fee ${poolFeeBps}bps, protocol ${protocolPercent.toFixed(2)}%, DAO ${daoPercent.toFixed(2)}%`);
