@@ -25,10 +25,10 @@ const MINT_ADDRESS = 'GVvPZpC6ymCoiHzYJ7CWZ8LhVn9tL2AUpRjSAsLh6jZC';
 // New metadata values (set to null to keep existing value)
 const NEW_NAME: string | null = 'Combinator';        // e.g., 'My New Token Name'
 const NEW_SYMBOL: string | null = 'ZC';      // e.g., 'NEW'
-const NEW_URI: string | null = 'https://olive-imaginative-aardvark-508.mypinata.cloud/ipfs/QmSULXToDvT2vtpvwyzV2fBpcXA7Cncz3WMFZ2v5Vnv1fC';         // e.g., 'https://arweave.net/...'
+const NEW_URI: string | null = 'https://b3ec853c.spicefi.xyz/token-metadata/zc/metadata.json' // 'https://olive-imaginative-aardvark-508.mypinata.cloud/ipfs/QmSULXToDvT2vtpvwyzV2fBpcXA7Cncz3WMFZ2v5Vnv1fC';         // e.g., 'https://arweave.net/...'
 
 async function updateTokenMetadata() {
-  const PAYER_PRIVATE_KEY = process.env.DAO_PRIVATE_KEY;
+  const PAYER_PRIVATE_KEY = process.env.PROTOCOL_PRIVATE_KEY;
   const RPC_URL = process.env.RPC_URL;
 
   if (!PAYER_PRIVATE_KEY) {
