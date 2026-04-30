@@ -155,18 +155,32 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     // Validate proposal duration based on proposer role
+    // Special production DAO owner override: 2 minutes to 7 days
     // Test DAOs: 1 minute to 7 days (for testing)
     // DAO owner: 18 hours to 7 days
     // Others (public/whitelist/token threshold): 24 hours to 3 days
+    const SPECIAL_OWNER_LENGTH_DAOS = ['6Eykhr9PfnjKFGWxgACCUKo1sy9zRKEBAQV8n94Qo33y'];
     const TEST_DAOS = ['SURFTEST', 'TESTSURF', 'SUTESTRF', 'testext1'];
     // Visibility: 0=hidden, 1=internal test, 2=production, 3=client test
     const isTestDao = TEST_DAOS.includes(dao.dao_name) || dao.visibility === 3;
     const isOwner = wallet === dao.owner_wallet;
+    const hasSpecialOwnerLength = isOwner && SPECIAL_OWNER_LENGTH_DAOS.includes(dao.dao_pda);
     const ONE_MINUTE = 60;
     const ONE_HOUR = 3600;
     const ONE_DAY = 24 * ONE_HOUR;
 
-    if (isTestDao) {
+    if (hasSpecialOwnerLength) {
+      // Special production DAO owner override: 2 minutes to 7 days
+      const minDuration = 2 * ONE_MINUTE;
+      const maxDuration = 7 * ONE_DAY;
+      if (length_secs < minDuration || length_secs > maxDuration) {
+        return returnError(400, {
+          error: 'Invalid proposal duration',
+          reason: `DAO owner can create proposals from 2 minutes to 7 days (${minDuration}-${maxDuration} seconds)`,
+          provided: length_secs,
+        });
+      }
+    } else if (isTestDao) {
       // Test DAOs: 1 minute to 7 days
       const minDuration = ONE_MINUTE;
       const maxDuration = 7 * ONE_DAY;
