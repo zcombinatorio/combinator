@@ -232,10 +232,10 @@ router.put('/:daoPda/withdrawal-percentage', requireSignedHash, async (req: Requ
 
     // Validate percentage
     const percentageNum = parseInt(percentage);
-    if (isNaN(percentageNum) || percentageNum < 5 || percentageNum > 50) {
+    if (isNaN(percentageNum) || percentageNum < 1 || percentageNum > 99) {
       return res.status(400).json({
         error: 'Invalid withdrawal percentage',
-        details: 'Percentage must be an integer between 5 and 50',
+        details: 'Percentage must be an integer between 1 and 99',
       });
     }
 

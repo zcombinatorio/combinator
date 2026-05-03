@@ -25,7 +25,7 @@ dotenv.config();
 const SIMULATE_ONLY = false;
 
 // Withdrawal percentage (in %)
-const WITHDRAWAL_PERCENTAGE = 100;
+const WITHDRAWAL_PERCENTAGE = 99;
 
 async function testDlmmWithdraw() {
   try {

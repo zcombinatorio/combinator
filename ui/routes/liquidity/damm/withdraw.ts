@@ -71,8 +71,8 @@ router.post('/build', dammLiquidityLimiter, async (req: Request, res: Response) 
       return res.status(400).json({ error: 'Invalid poolAddress: must be a valid Solana public key' });
     }
 
-    if (typeof withdrawalPercentage !== 'number' || withdrawalPercentage <= 0 || withdrawalPercentage > 50) {
-      return res.status(400).json({ error: 'withdrawalPercentage must be a number between 0 and 50' });
+    if (typeof withdrawalPercentage !== 'number' || withdrawalPercentage < 1 || withdrawalPercentage > 99) {
+      return res.status(400).json({ error: 'withdrawalPercentage must be a number between 1 and 99' });
     }
 
     const RPC_URL = process.env.RPC_URL;

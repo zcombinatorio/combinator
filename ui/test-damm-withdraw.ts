@@ -114,7 +114,7 @@ async function testDammWithdraw() {
     }
 
     // Calculate 12.5% = 125/1000 (only from unlocked liquidity)
-    const withdrawalPercentage = 12.5;
+    const withdrawalPercentage = 50;
     const liquidityDelta = positionState.unlockedLiquidity.muln(125).divn(1000);
 
     console.log(`  Total Liquidity: ${totalLiquidity.toString()}`);

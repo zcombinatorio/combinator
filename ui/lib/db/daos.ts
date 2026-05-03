@@ -761,7 +761,7 @@ export async function updateProposerHoldingPeriod(
 /**
  * Update the withdrawal percentage for a DAO.
  * Each DAO (parent or child) maintains its own independent withdrawal percentage.
- * Valid range: 1-50 (enforced by database constraint).
+ * Valid range: 1-99 (enforced by database constraint).
  */
 export async function updateWithdrawalPercentage(
   pool: Pool,
@@ -769,8 +769,8 @@ export async function updateWithdrawalPercentage(
   percentage: number
 ): Promise<void> {
   // Validate range before attempting update
-  if (percentage < 5 || percentage > 50) {
-    throw new Error('Withdrawal percentage must be between 5 and 50');
+  if (percentage < 1 || percentage > 99) {
+    throw new Error('Withdrawal percentage must be between 1 and 99');
   }
 
   const query = `
@@ -789,7 +789,7 @@ export async function updateWithdrawalPercentage(
 
 /**
  * Get the withdrawal percentage for a DAO.
- * Returns the percentage (1-50) or 12 as default if not found.
+ * Returns the percentage (1-99) or 50 as default if not found.
  */
 export async function getWithdrawalPercentage(
   pool: Pool,
@@ -802,7 +802,7 @@ export async function getWithdrawalPercentage(
 
   try {
     const result = await pool.query(query, [daoId]);
-    return result.rows.length > 0 ? result.rows[0].withdrawal_percentage : 12;
+    return result.rows.length > 0 ? result.rows[0].withdrawal_percentage : 50;
   } catch (error) {
     console.error('Error fetching withdrawal percentage:', error);
     throw error;

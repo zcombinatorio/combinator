@@ -42,7 +42,7 @@ async function testWithdrawalPercentage() {
 
     // 3. Test updateWithdrawalPercentage function
     console.log('\n=== Test 3: updateWithdrawalPercentage function ===');
-    const newPct = currentPct === 12 ? 25 : 12; // Toggle between 12 and 25
+    const newPct = currentPct === 50 ? 25 : 50; // Toggle between 50 and 25
     console.log(`Updating to ${newPct}%...`);
     await updateWithdrawalPercentage(pool, testDao.id!, newPct);
 
@@ -68,23 +68,23 @@ async function testWithdrawalPercentage() {
 
     let rejectedBelowMin = false;
     try {
-      await updateWithdrawalPercentage(pool, testDao.id!, 4);
-      console.log('✗ Should have rejected 4% (below minimum of 5%)');
+      await updateWithdrawalPercentage(pool, testDao.id!, 0);
+      console.log('✗ Should have rejected 0% (below minimum of 1%)');
     } catch (e) {
-      console.log('✓ Correctly rejected 4% (below minimum of 5%)');
+      console.log('✓ Correctly rejected 0% (below minimum of 1%)');
       rejectedBelowMin = true;
     }
 
-    let rejected51 = false;
+    let rejected100 = false;
     try {
-      await updateWithdrawalPercentage(pool, testDao.id!, 51);
-      console.log('✗ Should have rejected 51%');
+      await updateWithdrawalPercentage(pool, testDao.id!, 100);
+      console.log('✗ Should have rejected 100%');
     } catch (e) {
-      console.log('✓ Correctly rejected 51%');
-      rejected51 = true;
+      console.log('✓ Correctly rejected 100%');
+      rejected100 = true;
     }
 
-    if (rejectedBelowMin && rejected51) {
+    if (rejectedBelowMin && rejected100) {
       console.log('\n=== All tests passed! ===');
     } else {
       console.log('\n=== Some validation tests failed ===');

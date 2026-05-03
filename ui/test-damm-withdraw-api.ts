@@ -8,7 +8,7 @@
  * Required ENV variables:
  * - API_URL: The API server URL (e.g., http://localhost:3001)
  * - MANAGER_PRIVATE_KEY: Private key of the manager wallet (Base58)
- * - WITHDRAWAL_PERCENTAGE: Percentage to withdraw (0-100), defaults to 12.5
+ * - WITHDRAWAL_PERCENTAGE: Percentage to withdraw (1-99), defaults to 50
  */
 
 import dotenv from 'dotenv';
@@ -20,7 +20,7 @@ dotenv.config();
 // Configuration
 const API_URL = process.env.API_URL || 'https://api.zcombinator.io';
 const MANAGER_PRIVATE_KEY = process.env.MANAGER_PRIVATE_KEY;
-const WITHDRAWAL_PERCENTAGE = parseFloat(process.env.WITHDRAWAL_PERCENTAGE || '1');
+const WITHDRAWAL_PERCENTAGE = parseFloat(process.env.WITHDRAWAL_PERCENTAGE || '50');
 
 interface BuildResponse {
   success: boolean;
@@ -65,8 +65,8 @@ async function testDammWithdrawApi() {
       throw new Error('MANAGER_PRIVATE_KEY not set in environment');
     }
 
-    if (WITHDRAWAL_PERCENTAGE <= 0 || WITHDRAWAL_PERCENTAGE > 100) {
-      throw new Error('WITHDRAWAL_PERCENTAGE must be between 0 and 100');
+    if (WITHDRAWAL_PERCENTAGE < 1 || WITHDRAWAL_PERCENTAGE > 99) {
+      throw new Error('WITHDRAWAL_PERCENTAGE must be between 1 and 99');
     }
 
     // Initialize manager keypair

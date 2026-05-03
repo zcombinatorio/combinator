@@ -89,7 +89,7 @@ interface DaoConfig {
   adminWallet: string;        // Managed wallet for signing (from MANAGER_WALLET_*)
   ownerWallet: string;        // DAO owner (can manage settings, add proposers)
   initialProposers: string[]; // Wallets to add to proposer whitelist
-  withdrawalPercentage?: number; // LP withdrawal % for proposals (default: 12)
+  withdrawalPercentage?: number; // LP withdrawal % for proposals (default: 50)
 }
 
 const DAO_CONFIGS: Record<string, DaoConfig> = {
@@ -115,7 +115,7 @@ const DAO_CONFIGS: Record<string, DaoConfig> = {
       'FtV94i2JvmaqsE1rBT72C9YR58wYJXt1ZjRmPb4tDvMK',
       '4GctbRKwsQjECaY1nL8HiqkgvEUAi8EyhU1ezNmhB3hg',
     ],
-    withdrawalPercentage: 12,
+    withdrawalPercentage: 50,
   },
   TESTSURF: {
     name: 'TESTSURF',
@@ -138,7 +138,7 @@ const DAO_CONFIGS: Record<string, DaoConfig> = {
       'FgACAue3FuWPrL7xSqXWtUdHLne52dvVsKyKxjwqPYtr',
       'FtV94i2JvmaqsE1rBT72C9YR58wYJXt1ZjRmPb4tDvMK',
     ],
-    withdrawalPercentage: 12,
+    withdrawalPercentage: 50,
   },
   SUTESTRF: {
     name: 'SUTESTRF',
@@ -156,7 +156,7 @@ const DAO_CONFIGS: Record<string, DaoConfig> = {
       '2DxruuK1pTh9i1DruuuchJGAtjiczPtY2FAYtFQUBy27',
       'FtV94i2JvmaqsE1rBT72C9YR58wYJXt1ZjRmPb4tDvMK',
     ],
-    withdrawalPercentage: 12,
+    withdrawalPercentage: 50,
   },
 
   // ==========================================================================
@@ -204,7 +204,7 @@ const DAO_CONFIGS: Record<string, DaoConfig> = {
       '4GctbRKwsQjECaY1nL8HiqkgvEUAi8EyhU1ezNmhB3hg',
       'BV9MxX2veiQwLeWqwzPcMWPEhzV9r47G63b3W3qcDH7X',
     ],
-    withdrawalPercentage: 12,
+    withdrawalPercentage: 50,
   },
 };
 
@@ -400,7 +400,7 @@ async function migrateDao(
     mint_auth_multisig: config.mintAuthMultisig,
     treasury_cosigner: config.cosigner,
     dao_type: 'parent',
-    withdrawal_percentage: config.withdrawalPercentage || 12,
+    withdrawal_percentage: config.withdrawalPercentage || 50,
     // No funding_signature for historical DAOs
   });
 

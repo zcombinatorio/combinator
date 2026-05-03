@@ -287,7 +287,7 @@ router.post('/parent', requireSignedHash, async (req: Request, res: Response) =>
         mint_auth_multisig: mintVault,
         treasury_cosigner,
         dao_type: 'parent',
-        withdrawal_percentage: 12,
+        withdrawal_percentage: 50,
         funding_signature,
       }, clientTest ? 3 : undefined);
 
@@ -508,7 +508,7 @@ router.post('/child', requireSignedHash, async (req: Request, res: Response) => 
         treasury_cosigner,
         parent_dao_id: parentDao.id,
         dao_type: 'child',
-        withdrawal_percentage: 12,
+        withdrawal_percentage: 50,
         funding_signature,
       }, clientTest ? 3 : undefined);
 
@@ -669,7 +669,7 @@ router.post('/reserve-admin', async (req: Request, res: Response) => {
         mint_auth_multisig: `${pendingId}_mint`,
         treasury_cosigner,
         dao_type: 'parent',
-        withdrawal_percentage: 12,
+        withdrawal_percentage: 50,
         // No funding_signature - this flow doesn't use funding verification
       });
 
