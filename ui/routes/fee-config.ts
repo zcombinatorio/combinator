@@ -61,10 +61,20 @@ export const PARTNER_REFERRED_DAO_PDAS: Set<string> = new Set([
   '4YrUf7URPvb6hFYuw8DSXGwtuwGB2Xn4p3MUJAULLANz',
 ]);
 
+// DAOs directly managed by the partner get split:
+// - 0% to protocol
+// - 50% to partner treasury
+// - 50% to the DAO's own treasury
+export const PARTNER_MANAGED_DAO_PDAS: Set<string> = new Set([
+  '9bYFpahU1k9ejgJoMjrGD9pf1aPh2ca9vJvPRgXrw18m',
+]);
+export const PARTNER_MANAGED_PARTNER_PERCENT = 50;
+export const PARTNER_MANAGED_DAO_PERCENT = 50;
+
 // Per-DAO fee wallet overrides for standard DAOs.
 // Maps dao_pda -> wallet address that should receive the DAO's share of fees
 // instead of the DAO's on-chain treasury vault. Protocol share is unchanged.
-// Does not apply to the partner DAO or partner-referred DAOs above.
+// Does not apply to the partner DAO, partner-referred DAOs, or partner-managed DAOs above.
 export const STANDARD_DAO_FEE_WALLET_OVERRIDES: Record<string, string> = {
   // ClawPilotDAO
   '2QAy1hDLKH36UXeF9zwmsfZh7UNgm7uUQPmjWdUR6b7m': 'Dr2ME1sLQ6ZrqGcKEbfYe1guXV2ms4VBi1Pu2bq1ZFdP',

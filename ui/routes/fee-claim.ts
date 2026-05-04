@@ -47,6 +47,9 @@ import {
   PARTNER_DAO_PROTOCOL_PERCENT,
   PARTNER_DAO_TREASURY_PERCENT,
   PARTNER_REFERRED_DAO_PDAS,
+  PARTNER_MANAGED_DAO_PDAS,
+  PARTNER_MANAGED_PARTNER_PERCENT,
+  PARTNER_MANAGED_DAO_PERCENT,
   STANDARD_DAO_FEE_WALLET_OVERRIDES,
   calculateProtocolFeePercent,
   FeeRecipient,
@@ -135,6 +138,28 @@ async function getPoolFeeConfig(
         feeRecipients: [
           { address: PROTOCOL_FEE_WALLET, percent: PARTNER_DAO_PROTOCOL_PERCENT },
           { address: PARTNER_TREASURY, percent: PARTNER_DAO_TREASURY_PERCENT },
+        ],
+        lpOwnerKeypair,
+        source: 'dao',
+        daoName: dao.dao_name,
+      };
+    }
+
+    if (PARTNER_MANAGED_DAO_PDAS.has(dao.dao_pda)) {
+      // Partner-managed DAO: 0% protocol, 50% partner treasury, 50% DAO treasury
+      if (!dao.treasury_multisig) {
+        throw new Error(`Partner-managed DAO "${dao.dao_name}" has no treasury configured. The DAO must set up a treasury before fees can be claimed.`);
+      }
+      if (!PARTNER_TREASURY) {
+        throw new Error(`Partner treasury not configured. Cannot process fee claim for partner-managed DAO "${dao.dao_name}".`);
+      }
+
+      console.log(`[Fee Claim] Partner-managed DAO ${dao.dao_name}: ${PARTNER_MANAGED_PARTNER_PERCENT}% partner, ${PARTNER_MANAGED_DAO_PERCENT}% DAO, 0% protocol`);
+
+      return {
+        feeRecipients: [
+          { address: PARTNER_TREASURY, percent: PARTNER_MANAGED_PARTNER_PERCENT },
+          { address: dao.treasury_multisig, percent: PARTNER_MANAGED_DAO_PERCENT },
         ],
         lpOwnerKeypair,
         source: 'dao',
