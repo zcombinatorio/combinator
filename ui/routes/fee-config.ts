@@ -59,6 +59,7 @@ export const PARTNER_DAO_TREASURY_PERCENT = 75;
 // - 3/7 (~42.86%) to the DAO's own treasury
 export const PARTNER_REFERRED_DAO_PDAS: Set<string> = new Set([
   '4YrUf7URPvb6hFYuw8DSXGwtuwGB2Xn4p3MUJAULLANz',
+  'FQN8KF6Yy2VDCWJkUyMraDUo5Qk5oaMuSbfQ4rxXyqJ8',
 ]);
 
 // DAOs directly managed by the partner get split:
