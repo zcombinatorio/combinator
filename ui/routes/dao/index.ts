@@ -251,7 +251,13 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // was set up before migration and doesn't follow the standard pattern.
     // SURF still requires the check as it was set up with proper mint authority.
     const LEGACY_DAOS_SKIP_MINT_CHECK = ['ZC', 'SURFTEST', 'TESTSURF', 'SUTESTRF'];
-    const skipMintCheck = LEGACY_DAOS_SKIP_MINT_CHECK.includes(dao.dao_name);
+    // Star DAOs whose token mint authority was revoked before onboarding, so the
+    // standard authority check can never pass. Keyed by DAO PDA.
+    const STAR_DAOS_SKIP_MINT_CHECK = [
+      'FQN8KF6Yy2VDCWJkUyMraDUo5Qk5oaMuSbfQ4rxXyqJ8', // Apprentice AI (dao id 200)
+    ];
+    const skipMintCheck = LEGACY_DAOS_SKIP_MINT_CHECK.includes(dao.dao_name) ||
+      STAR_DAOS_SKIP_MINT_CHECK.includes(dao.dao_pda);
     if (!skipMintCheck) {
       const mintAuthCheck = await checkMintAuthority(connection, dao.mint_auth_multisig, dao.token_mint);
       if (isDaoReadinessError(mintAuthCheck)) {
