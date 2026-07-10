@@ -3,10 +3,13 @@
  *
  * Converts all non-ZC tokens in the fee wallet into ZC via Jupiter swaps.
  * The RewardsService (3pm ET cron) picks up the ZC balance and distributes it.
+ * RewardsService lives in the `percent` repo, not here — see
+ * percent/monitor/services/rewards.service.ts (scheduled inside percent/monitor/server.ts,
+ * not a separate systemd unit).
  *
  * Step 1 (fee-claim.ts) claims LP fees → deposits SOL, USDC, DAO tokens into fee wallet.
  * Step 2 (this script) swaps everything to ZC.
- * Step 3 (RewardsService) distributes ZC via merkle-tree-based postRewards.
+ * Step 3 (RewardsService, in percent) distributes ZC via merkle-tree-based postRewards.
  *
  * Usage: npx tsx fee-buyback.ts
  */
