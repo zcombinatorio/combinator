@@ -79,6 +79,8 @@ export const PARTNER_MANAGED_DAO_PERCENT = 50;
 export const STANDARD_DAO_FEE_WALLET_OVERRIDES: Record<string, string> = {
   // ClawPilotDAO
   '2QAy1hDLKH36UXeF9zwmsfZh7UNgm7uUQPmjWdUR6b7m': 'Dr2ME1sLQ6ZrqGcKEbfYe1guXV2ms4VBi1Pu2bq1ZFdP',
+  // PweDAO
+  'EUJGFitKrZfS2ex5k4QzvvdyzYpF8QZbQgZ3aVmK2ZLF': 'tkxY9HPQzLfWfpKPNK6UmsLgL81FXsQHEzLK1Pms8Mo',
   // PredictDAO
   'BaLTMqeSen6efmNAcuf1oa9ZKtGoxhFsxqHZtTmCq2KL': 'CEieE6ki8y3jChba17G3J8nkdM865shWwAjSJ6U7at7v',
   // BasketDAO
