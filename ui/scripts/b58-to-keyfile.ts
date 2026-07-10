@@ -8,7 +8,7 @@ if (!b58) {
   process.exit(1);
 }
 
-const out = resolve(process.argv[3] ?? "../../squads-multisig/member1.json");
+const out = resolve(process.argv[3] ?? "../../programs/member1.json"); //"../../squads-multisig/member1.json");
 const bytes = Array.from(bs58.decode(b58));
 
 if (bytes.length !== 64) {
