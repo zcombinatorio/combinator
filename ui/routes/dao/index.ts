@@ -255,6 +255,7 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     // standard authority check can never pass. Keyed by DAO PDA.
     const STAR_DAOS_SKIP_MINT_CHECK = [
       'FQN8KF6Yy2VDCWJkUyMraDUo5Qk5oaMuSbfQ4rxXyqJ8', // Apprentice AI (dao id 200)
+      'kUU645mYqeKNMthKwQUMwrXHvtbr4zDzJNVEbVSwtLH', // dao id 300
     ];
     const skipMintCheck = LEGACY_DAOS_SKIP_MINT_CHECK.includes(dao.dao_name) ||
       STAR_DAOS_SKIP_MINT_CHECK.includes(dao.dao_pda);
