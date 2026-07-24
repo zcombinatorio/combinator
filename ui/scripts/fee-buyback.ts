@@ -6,7 +6,8 @@
  * RewardsService lives in the `percent` repo, not here — see
  * percent/monitor/services/rewards.service.ts (scheduled inside percent/monitor/server.ts,
  * not a separate systemd unit).
- *
+ * Note: Turned off Jul 24 since getting disgustingly arbitraged and need to fix.
+ * 
  * Step 1 (fee-claim.ts) claims LP fees → deposits SOL, USDC, DAO tokens into fee wallet.
  * Step 2 (this script) swaps everything to ZC.
  * Step 3 (RewardsService, in percent) distributes ZC via merkle-tree-based postRewards.
