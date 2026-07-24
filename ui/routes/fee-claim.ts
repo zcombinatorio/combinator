@@ -72,11 +72,11 @@ interface PoolFeeConfigResult {
 
 // Legacy hardcoded pool configurations (for backward compatibility)
 const LEGACY_POOL_FEE_CONFIG: Record<string, FeeRecipient[]> = {
-  // SolPay
-  'BTYhoRPEUXs8ESYFjKDXRYf5qjH4chzZoBokMEApKEfJ': [
-    { address: '3KJab78N7AmVU8ZwRx5bVyVnSxHd9W1cKzvuwbx3sW1r', percent: 70 },
-    { address: PROTOCOL_FEE_WALLET, percent: 30 },
-  ],
+  // SolPay, transferred to Bennie
+  // 'BTYhoRPEUXs8ESYFjKDXRYf5qjH4chzZoBokMEApKEfJ': [ 
+    // { address: '3KJab78N7AmVU8ZwRx5bVyVnSxHd9W1cKzvuwbx3sW1r', percent: 70 }, 
+    // { address: PROTOCOL_FEE_WALLET, percent: 30 }, 
+  // ], 
   // SurfCash
   'Ez1QYeC95xJRwPA9SR7YWC1H1Tj43exJr91QqKf8Puu1': [
     { address: 'BmfaxQCRqf4xZFmQa5GswShBZhRBf4bED7hadFkpgBC3', percent: 34.375 },
