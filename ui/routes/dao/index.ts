@@ -247,18 +247,24 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
     }
 
     // 1. Check mint authority - mint_auth_multisig must be authority for token_mint
+    //
+    // TEMPORARY: disabled for ALL DAOs, so any DAO can create proposals regardless of
+    // who holds mint authority. Star wants to test and this is the easiest bandaid
+    // solution. To restore, set skipMintCheck back to the two allowlist checks below.
+    //
     // Skip for legacy historical DAOs (ZC, SURFTEST, TESTSURF) - their mint authority
     // was set up before migration and doesn't follow the standard pattern.
     // SURF still requires the check as it was set up with proper mint authority.
-    const LEGACY_DAOS_SKIP_MINT_CHECK = ['ZC', 'SURFTEST', 'TESTSURF', 'SUTESTRF'];
+    // const LEGACY_DAOS_SKIP_MINT_CHECK = ['ZC', 'SURFTEST', 'TESTSURF', 'SUTESTRF'];
     // Star DAOs whose token mint authority was revoked before onboarding, so the
     // standard authority check can never pass. Keyed by DAO PDA.
-    const STAR_DAOS_SKIP_MINT_CHECK = [
-      'FQN8KF6Yy2VDCWJkUyMraDUo5Qk5oaMuSbfQ4rxXyqJ8', // Apprentice AI (dao id 200)
-      'kUU645mYqeKNMthKwQUMwrXHvtbr4zDzJNVEbVSwtLH', // dao id 300
-    ];
-    const skipMintCheck = LEGACY_DAOS_SKIP_MINT_CHECK.includes(dao.dao_name) ||
-      STAR_DAOS_SKIP_MINT_CHECK.includes(dao.dao_pda);
+    // const STAR_DAOS_SKIP_MINT_CHECK = [
+    //   'FQN8KF6Yy2VDCWJkUyMraDUo5Qk5oaMuSbfQ4rxXyqJ8', // Apprentice AI (dao id 200)
+    //   'kUU645mYqeKNMthKwQUMwrXHvtbr4zDzJNVEbVSwtLH', // dao id 300
+    // ];
+    // const skipMintCheck = LEGACY_DAOS_SKIP_MINT_CHECK.includes(dao.dao_name) ||
+    //   STAR_DAOS_SKIP_MINT_CHECK.includes(dao.dao_pda);
+    const skipMintCheck = true;
     if (!skipMintCheck) {
       const mintAuthCheck = await checkMintAuthority(connection, dao.mint_auth_multisig, dao.token_mint);
       if (isDaoReadinessError(mintAuthCheck)) {
