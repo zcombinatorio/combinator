@@ -49,6 +49,32 @@ export function getConnection(): Connection {
   return new Connection(RPC_URL, 'confirmed');
 }
 
+/**
+ * Poll until an account created by an already-confirmed transaction is readable.
+ *
+ * Confirmation means the write landed, not that the next read can see it: the RPC
+ * provider load-balances across replicas, so a read can be served by a node several
+ * slots behind the one that accepted the write. A fixed sleep cannot cover that,
+ * because the lag belongs to whichever replica the next request happens to hit.
+ */
+export async function waitForAccount(
+  connection: Connection,
+  address: PublicKey,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const start = Date.now();
+
+  while (!(await connection.getAccountInfo(address, 'confirmed'))) {
+    if (Date.now() - start >= timeoutMs) {
+      throw new Error(`${label} ${address.toBase58()} not readable after ${timeoutMs}ms`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
+  console.log(`  ✓ ${label} readable after ${Date.now() - start}ms`);
+}
+
 export function createProvider(keypair: { publicKey: PublicKey; secretKey: Uint8Array }): AnchorProvider {
   const connection = getConnection();
   const wallet = {

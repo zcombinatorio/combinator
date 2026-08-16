@@ -55,7 +55,7 @@ import queriesRouter from './queries';
 import creationRouter from './creation';
 import proposersRouter from './proposers';
 import tradingRouter from './trading';
-import { daoLimiter, getConnection, createProvider } from './shared';
+import { daoLimiter, getConnection, createProvider, waitForAccount } from './shared';
 
 const router = Router();
 
@@ -659,8 +659,9 @@ router.post('/proposal', requireSignedHash, async (req: Request, res: Response) 
             blockhash: initBlockhash,
             lastValidBlockHeight: initLastValidBlockHeight,
           }, 'confirmed');
-          // Brief delay to let RPC nodes sync after initialize
-          await new Promise(resolve => setTimeout(resolve, 500));
+          // Confirmation only means the write landed - the next read may still be
+          // served by a replica that has not caught up. Wait for it to be readable.
+          await waitForAccount(provider.connection, initResult.proposalPda, 'Proposal');
         } catch (e) {
           console.error('  ✗ Initialize failed:', e);
           throw e;
