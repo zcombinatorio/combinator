@@ -61,6 +61,7 @@ export const PARTNER_REFERRED_DAO_PDAS: Set<string> = new Set([
   '4YrUf7URPvb6hFYuw8DSXGwtuwGB2Xn4p3MUJAULLANz',
   'FQN8KF6Yy2VDCWJkUyMraDUo5Qk5oaMuSbfQ4rxXyqJ8',
   'kUU645mYqeKNMthKwQUMwrXHvtbr4zDzJNVEbVSwtLH',
+  'AK8sdprP6mQAAzJr8cWag8b3EMXSfC9JiFiotHb99fVR',
 ]);
 
 // DAOs directly managed by the partner get split:
